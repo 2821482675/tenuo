@@ -1902,7 +1902,7 @@ class TestServerConstraintsWithPoP:
     """Server-level skill constraints are enforced when require_pop=True (the default)."""
 
     @staticmethod
-    def _server_and_warrant():
+    def _server_and_warrant(require_pop=True):
         core = pytest.importorskip("tenuo_core")
         key = core.SigningKey.generate()
         # Warrant allows any path; only the server-level constraint narrows it.
@@ -1919,7 +1919,7 @@ class TestServerConstraintsWithPoP:
             trusted_issuers=[key.public_key.to_bytes().hex()],
             require_warrant=True,
             require_audience=False,
-            require_pop=True,
+            require_pop=require_pop,
             check_replay=False,
             audit_log=None,
         )
@@ -1950,17 +1950,6 @@ class TestServerConstraintsWithPoP:
             return path
 
         assert await self._call(server, warrant, key, {"path": "/data/report.txt"}) is not None
-
-    @pytest.mark.asyncio
-    async def test_bare_constraint_class_is_declarative_with_pop(self):
-        """``constraints={"path": Subpath}`` (no bounds) keeps working with PoP."""
-        core, server, warrant, key = self._server_and_warrant()
-
-        @server.skill("read_file", constraints={"path": core.Subpath})
-        async def read_file(path: str) -> str:
-            return path
-
-        assert await self._call(server, warrant, key, {"path": "/etc/hosts"}) is not None
 
     @pytest.mark.asyncio
     async def test_server_constraint_denial_receipts_deny_not_allow(self):
@@ -2001,6 +1990,65 @@ class TestServerConstraintsWithPoP:
 
         await self._call(server, warrant, holder.signing_key, {"path": "/data/report.txt"})
         assert outcomes() == ["deny", "allow"]
+
+
+class TestBareConstraintClasses:
+    """A bare constraint class has no bounds and is refused; instances are enforced."""
+
+    _setup = staticmethod(TestServerConstraintsWithPoP._server_and_warrant)
+    _call = staticmethod(TestServerConstraintsWithPoP._call)
+
+    @pytest.mark.parametrize("name", ["Subpath", "UrlSafe", "Pattern"])
+    def test_bare_class_is_refused_at_registration(self, name):
+        core, server, _, _ = self._setup()
+        cls = getattr(core, name)
+
+        with pytest.raises(TypeError, match=rf"Skill 'read_file': constraint for 'path' is the class {name}"):
+
+            @server.skill("read_file", constraints={"path": cls})
+            async def read_file(path: str) -> str:
+                return path
+
+        assert "read_file" not in server._skills
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("require_pop", [True, False])
+    async def test_instance_is_enforced(self, require_pop):
+        core, server, warrant, key = self._setup(require_pop)
+
+        @server.skill("read_file", constraints={"path": core.Subpath("/data")})
+        async def read_file(path: str) -> str:
+            return path
+
+        assert await self._call(server, warrant, key, {"path": "/data/a.txt"}) is not None
+        with pytest.raises(ConstraintViolationError):
+            await self._call(server, warrant, key, {"path": "/etc/passwd"})
+
+    @pytest.mark.asyncio
+    async def test_plain_type_is_still_an_isinstance_check(self):
+        core, server, warrant, key = self._setup(require_pop=False)
+
+        @server.skill("read_file", constraints={"path": int})
+        async def read_file(path: int) -> int:
+            return path
+
+        with pytest.raises(ConstraintViolationError):
+            await self._call(server, warrant, key, {"path": "/data/a.txt"})
+
+    def test_agent_card_advertises_type_for_instances_and_plain_types(self, server):
+        from tenuo_core import Subpath
+
+        @server.skill("inst", constraints={"path": Subpath("/data")})
+        async def inst(path: str) -> str:
+            return path
+
+        @server.skill("typed", constraints={"count": int})
+        async def typed(count: int) -> int:
+            return count
+
+        skills = {s["id"]: s for s in server.get_agent_card_dict()["skills"]}
+        assert skills["inst"]["x-tenuo-constraints"]["path"]["type"] == "Subpath"
+        assert skills["typed"]["x-tenuo-constraints"]["count"]["type"] == "int"
 
 
 class TestAdversarialPoP:

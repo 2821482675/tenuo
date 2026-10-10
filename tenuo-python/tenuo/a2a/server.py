@@ -341,7 +341,8 @@ class SkillDefinition:
 
         constraint_infos = {}
         for key, constraint in self.constraints.items():
-            type_name = type(constraint).__name__
+            # A plain type such as ``str`` advertises its own name.
+            type_name = constraint.__name__ if isinstance(constraint, type) else type(constraint).__name__
             constraint_infos[key] = ConstraintInfo(type=type_name, required=True)
 
         return SkillInfo(
@@ -1020,15 +1021,26 @@ class A2AServer:
 
         Args:
             skill_id: Unique identifier for this skill
-            constraints: Map of parameter names to constraint types
+            constraints: Map of parameter names to constraint instances, enforced
+                on every call in addition to the warrant. A bare constraint class
+                (``Subpath`` rather than ``Subpath("/data")``) has no bounds and
+                raises ``TypeError``.
             name: Display name (defaults to skill_id)
 
         Example:
-            @server.skill("read_file", constraints={"path": Subpath})
+            @server.skill("read_file", constraints={"path": Subpath("/data")})
             async def read_file(path: str) -> str:
                 ...
         """
         constraints = constraints or {}
+
+        for param, constraint in constraints.items():
+            if _is_constraint_class_marker(constraint):
+                cls = constraint.__name__
+                raise TypeError(
+                    f"Skill '{skill_id}': constraint for '{param}' is the class {cls}, which has "
+                    f"no bounds. Pass an instance such as {cls}(...)."
+                )
 
         def decorator(func: Callable) -> Callable:
             # Register skill
@@ -1333,13 +1345,6 @@ class A2AServer:
         skill_def = self._skills.get(skill_id)
         if skill_def:
             for param, server_constraint in skill_def.constraints.items():
-                # A bare constraint class (e.g. ``Subpath`` rather than
-                # ``Subpath("/data")``) carries no bounds; it only declares the
-                # parameter's constraint type for the AgentCard. With PoP the
-                # warrant's own constraint is enforced by the Authorizer, so skip
-                # such markers there, as before. The no-PoP path is unchanged.
-                if self.require_pop and _is_constraint_class_marker(server_constraint):
-                    continue
                 if param in arguments:
                     value = arguments[param]
                     if not self._check_constraint(server_constraint, value, param):
