@@ -43,7 +43,7 @@ uv pip install tenuo
    - Yes -> Tier 2. The verifier checks issuer, holder, and narrowing delegation locally, in one process or across many.
 
 3. **Are you using the OpenAI Agents SDK?**
-   - Yes -> Use `create_tier1_guardrail()` or `create_tier2_guardrail()`
+   - Yes -> Use `guard_agent()`
    - No -> Use `guard()` or `GuardBuilder()`
 
 **TL;DR:** Tier 1 rejects out-of-policy calls in trusted code. Tier 2 adds signed, holder-bound authority an independent verifier can check. Run the check on the path that performs the effect.
@@ -422,57 +422,64 @@ for chunk in client.chat.completions.create(..., stream=True):
 
 ## OpenAI Agents SDK Integration
 
-Tenuo integrates with the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) via guardrails.
+`guard_agent()` checks every tool call an [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) agent makes, before the tool runs. It attaches a Tenuo [tool guardrail](https://openai.github.io/openai-agents-python/guardrails/) to each function tool, to each MCP server on the agent, and to every agent reachable through handoffs.
 
-### Tier 1: Constraint-Based Guardrails
+Requires `openai-agents` 0.3.3 or later.
+
+> **Use `guard_agent()`, not `input_guardrails`.** An agent's input guardrails only see the input it is given, never the tool calls the model makes during the run, so they can't enforce tool authorization. `TenuoToolGuardrail` raises a configuration error if you put it in `Agent(input_guardrails=...)`.
+
+### Tier 1: inline constraints
 
 ```python
 from agents import Agent, Runner
-from tenuo.openai import create_tier1_guardrail, Pattern
+from tenuo.openai import Pattern, guard_agent
 
-# Create guardrail with inline constraints
-guardrail = create_tier1_guardrail(
-    constraints={"send_email": {"to": Pattern("*@company.com")}}
+agent = guard_agent(
+    Agent(name="Assistant", instructions="Help with email", tools=[send_email, search]),
+    allow_tools=["send_email", "search"],
+    constraints={"send_email": {"to": Pattern("*@company.com")}},
 )
 
-# Attach to agent
-agent = Agent(
-    name="Assistant",
-    instructions="Help the user with email tasks",
-    input_guardrails=[guardrail],
-)
-
-# Run - unauthorized tool calls trigger tripwire
-result = await Runner.run(agent, "Send email to alice@company.com")
+result = await Runner.run(agent, "Email the Q3 summary to alice@company.com")
 ```
 
-### Tier 2: Warrant-Based Guardrails
+### Tier 2: warrants
 
 ```python
-from tenuo.openai import create_tier2_guardrail
-from tenuo import SigningKey, Warrant, Pattern
+from tenuo import Pattern, SigningKey, Warrant
+from tenuo.openai import guard_agent
 
-# Control plane issues warrant to agent
+# The control plane issues a warrant for this task to the agent's key.
 agent_key = SigningKey.generate()
-warrant = (Warrant.mint_builder()
-    .capability("send_email", {"to": Pattern("*@company.com")})
+warrant = (
+    Warrant.mint_builder()
+    .capability("send_email", to=Pattern("*@company.com"))
     .holder(agent_key.public_key)
     .ttl(3600)
-    .mint(control_plane_key))
-
-# Create Tier 2 guardrail with PoP
-guardrail = create_tier2_guardrail(
-    warrant=warrant,
-    signing_key=agent_key,
+    .mint(control_plane_key)
 )
 
-agent = Agent(
-    name="Authorized Assistant",
-    input_guardrails=[guardrail],
+agent = guard_agent(
+    Agent(name="Authorized Assistant", tools=[send_email]),
+    warrant=warrant,
+    signing_key=agent_key,
+    trusted_roots=[control_plane_key.public_key],
 )
 ```
 
-### Guardrail Options
+### What happens on a denial
+
+By default (`on_denial="reject"`), the tool doesn't run and the model receives the denial as the tool result, so the run continues and the model can choose another action. With `on_denial="raise"`, the run halts with `ToolInputGuardrailTripwireTriggered`.
+
+### What `guard_agent()` refuses
+
+It fails closed instead of leaving a tool unchecked:
+
+- **Hosted tools** that run on OpenAI's side (for example `WebSearchTool`) can't be intercepted, so `guard_agent()` raises `OpenAIConfigurationError`. Remove them or use a function tool.
+- **MCP servers** on an `openai-agents` release without MCP server guardrails raise the same error. Upgrade `openai-agents`.
+- **Handoffs** whose target agent can't be resolved raise the same error. Call `guard_agent()` on that agent directly.
+
+### Options
 
 | Parameter | Description |
 |-----------|-------------|
@@ -481,7 +488,9 @@ agent = Agent(
 | `constraints` | Per-tool argument constraints |
 | `warrant` | Tier 2 warrant (optional) |
 | `signing_key` | Required if warrant provided |
-| `tripwire` | If True, halt agent on violation (default: True) |
+| `trusted_roots` | Trusted issuer public keys for Tier 2 |
+| `on_denial` | `"reject"` (default) or `"raise"` |
+| `include_handoffs` | Also guard agents reachable through handoffs (default: True) |
 | `audit_callback` | Optional callback for audit events |
 
 ---

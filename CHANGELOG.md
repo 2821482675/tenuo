@@ -42,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OpenAI Agents SDK: `guard_agent()`.** Checks every tool call an agent
+  makes before the tool runs, by attaching a Tenuo tool guardrail to each
+  function tool, each MCP server and every agent reachable through handoffs.
+  Hosted tools, and MCP servers on SDK releases without tool guardrails, are
+  refused rather than left unchecked. Requires `openai-agents` 0.3.3 or later.
+  Agent input guardrails only see the agent's input, not the model's tool
+  calls, so `TenuoToolGuardrail` placed in `Agent(input_guardrails=...)` now
+  raises `OpenAIConfigurationError` pointing to `guard_agent()`. Switch
+  existing Agents SDK integrations to `guard_agent()`.
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed
