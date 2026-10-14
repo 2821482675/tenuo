@@ -471,6 +471,10 @@ agent = guard_agent(
 
 By default (`on_denial="reject"`), the tool doesn't run and the model receives the denial as the tool result, so the run continues and the model can choose another action. With `on_denial="raise"`, the run halts with `ToolInputGuardrailTripwireTriggered`.
 
+### Policies belong to agents, not tools
+
+Agents often share tool objects and MCP servers. The policy you pass to `guard_agent()` is registered for that agent, and every call is checked against the policy of the agent making it, so two agents built from the same tools keep separate policies. Calling `guard_agent()` again on an agent replaces its policy. A guarded tool denies calls from an agent that has no policy, including a copy made with `agent.clone()`, so guard clones too.
+
 ### What `guard_agent()` refuses
 
 It fails closed instead of leaving a tool unchecked:

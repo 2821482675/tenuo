@@ -202,3 +202,47 @@ def test_guarding_twice_does_not_stack(tools):
     guard_agent(agent, allow_tools=["search"])
     guard_agent(agent, allow_tools=["search"])
     assert [g.name for g in tools["search"].tool_input_guardrails] == ["tenuo"]
+
+
+@pytest.mark.asyncio
+async def test_agents_sharing_tools_keep_their_own_policy(tools, ran):
+    """The policy belongs to the agent: sharing tool objects must not merge policies."""
+    writer_model = ScriptedModel([[_call("delete_account", {"customer_id": "cus_1"}, "c1")]])
+    reader_model = ScriptedModel([[_call("delete_account", {"customer_id": "cus_2"}, "c2")]])
+    shared = [tools["search"], tools["delete_account"]]
+    writer = guard_agent(Agent(name="writer", model=writer_model, tools=shared), allow_tools=["delete_account"])
+    reader = guard_agent(Agent(name="reader", model=reader_model, tools=shared), allow_tools=["search"])
+    await Runner.run(writer, "delete")
+    await Runner.run(reader, "delete")
+    assert ran == [("delete_account", "cus_1")]
+
+
+@pytest.mark.asyncio
+async def test_guarding_again_replaces_the_policy(tools, ran):
+    model = ScriptedModel([[_call("delete_account", {"customer_id": "cus_1"}, "c1")]])
+    agent = Agent(name="a", model=model, tools=[tools["delete_account"]])
+    guard_agent(agent, allow_tools=["delete_account"])
+    guard_agent(agent, allow_tools=["search"])
+    await Runner.run(agent, "delete")
+    assert ran == []
+
+
+@pytest.mark.asyncio
+async def test_unguarded_agent_using_a_guarded_tool_is_denied(tools, ran):
+    guard_agent(Agent(name="guarded", tools=[tools["search"]]), allow_tools=["search"])
+    model = ScriptedModel([[_call("search", {"query": "x"}, "c1")]])
+    other = Agent(name="other", model=model, tools=[tools["search"]])
+    await Runner.run(other, "search")
+    assert ran == []
+
+
+@pytest.mark.asyncio
+async def test_clone_of_a_guarded_agent_needs_its_own_policy(tools, ran):
+    model = ScriptedModel([[_call("search", {"query": "x"}, "c1")]])
+    agent = guard_agent(Agent(name="a", model=model, tools=[tools["search"]]), allow_tools=["search"])
+    clone = agent.clone(name="a-copy")
+    await Runner.run(clone, "search")
+    assert ran == []
+    model.turns = [[_call("search", {"query": "y"}, "c2")]]
+    await Runner.run(guard_agent(clone, allow_tools=["search"]), "search")
+    assert ran == [("search", "y")]

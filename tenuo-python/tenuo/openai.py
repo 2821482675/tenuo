@@ -85,6 +85,8 @@ import hashlib
 import json
 import logging
 import time
+import weakref
+import threading
 import uuid
 from dataclasses import dataclass, field
 from typing import (
@@ -96,6 +98,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Tuple,
     Union,
 )
 # Import constraint types from tenuo core
@@ -2640,22 +2643,64 @@ def create_tier2_guardrail(
 # =============================================================================
 
 
-def _tenuo_tool_input_guardrail(guard: TenuoToolGuardrail, on_denial: str) -> Any:
-    """Build an Agents SDK ``ToolInputGuardrail`` that checks each tool call.
+# Policies registered by guard_agent(), keyed by the agent object. Tools and
+# MCP servers are often shared between agents, so the guardrail attached to
+# them looks up the policy of whichever agent is calling.
+_AGENT_POLICIES: Dict[int, Tuple["weakref.ReferenceType[Any]", TenuoToolGuardrail, str]] = {}
+_AGENT_POLICIES_LOCK = threading.Lock()
+_TOOL_GUARDRAIL: Any = None
 
-    It runs before every tool invocation with the tool's name and arguments and
-    uses the same decision path as the other OpenAI adapters. Any failure to
-    reach a decision denies the call.
+
+def _register_agent_policy(agent: Any, guard: TenuoToolGuardrail, on_denial: str) -> None:
+    key = id(agent)
+
+    def _forget(_ref: Any, key: int = key) -> None:
+        with _AGENT_POLICIES_LOCK:
+            entry = _AGENT_POLICIES.get(key)
+            if entry is not None and entry[0] is _ref:
+                del _AGENT_POLICIES[key]
+
+    with _AGENT_POLICIES_LOCK:
+        _AGENT_POLICIES[key] = (weakref.ref(agent, _forget), guard, on_denial)
+
+
+def _agent_policy(agent: Any) -> Optional[Tuple[TenuoToolGuardrail, str]]:
+    with _AGENT_POLICIES_LOCK:
+        entry = _AGENT_POLICIES.get(id(agent))
+    if entry is None or entry[0]() is not agent:
+        return None
+    return entry[1], entry[2]
+
+
+def _tenuo_tool_input_guardrail() -> Any:
+    """Return the shared Agents SDK ``ToolInputGuardrail`` used by guard_agent().
+
+    It runs before every tool invocation with the tool's name, arguments and
+    the calling agent, and authorizes the call against that agent's policy
+    using the same decision path as the other OpenAI adapters. An agent with
+    no registered policy, and any failure to reach a decision, is denied.
     """
+    global _TOOL_GUARDRAIL
+    if _TOOL_GUARDRAIL is not None:
+        return _TOOL_GUARDRAIL
+
     from agents.tool_guardrails import (  # type: ignore[import-not-found]
         ToolGuardrailFunctionOutput,
         ToolInputGuardrail,
     )
 
-    def _deny(tool_name: str, arguments: Dict[str, Any], reason: str, tier: str) -> Any:
+    def _deny(
+        guard: Optional[TenuoToolGuardrail],
+        on_denial: str,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        reason: str,
+        tier: str,
+    ) -> Any:
         logger.warning("Tenuo blocked tool call %s: %s", tool_name, reason)
-        guard._emit_audit(tool_name, arguments, "DENY", reason, tier=tier)
-        guard._emit_cp(tool_name, arguments, allowed=False, denial_reason=reason)
+        if guard is not None:
+            guard._emit_audit(tool_name, arguments, "DENY", reason, tier=tier)
+            guard._emit_cp(tool_name, arguments, allowed=False, denial_reason=reason)
         message = f"Tool call '{tool_name}' was blocked by Tenuo: {reason}"
         if on_denial == "raise":
             return ToolGuardrailFunctionOutput.raise_exception(output_info=message)
@@ -2663,13 +2708,25 @@ def _tenuo_tool_input_guardrail(guard: TenuoToolGuardrail, on_denial: str) -> An
 
     async def check_tool_call(data: Any) -> Any:
         tool_name = getattr(data.context, "tool_name", None) or "<unknown>"
+        policy = _agent_policy(getattr(data, "agent", None))
+        if policy is None:
+            agent_name = getattr(getattr(data, "agent", None), "name", "?")
+            return _deny(
+                None,
+                "reject",
+                tool_name,
+                {},
+                f"agent '{agent_name}' has no Tenuo policy; call guard_agent() on it",
+                "tier1",
+            )
+        guard, on_denial = policy
         raw = getattr(data.context, "tool_arguments", None)
         try:
             arguments = _loads_tool_arguments(raw) if raw else {}
         except Exception as e:  # malformed or duplicate-key JSON
-            return _deny(tool_name, {}, str(MalformedToolCall(tool_name, str(e))), "tier1")
+            return _deny(guard, on_denial, tool_name, {}, str(MalformedToolCall(tool_name, str(e))), "tier1")
         if not isinstance(arguments, dict):
-            return _deny(tool_name, {}, "tool arguments are not a JSON object", "tier1")
+            return _deny(guard, on_denial, tool_name, {}, "tool arguments are not a JSON object", "tier1")
         try:
             await verify_tool_call_async(
                 tool_name,
@@ -2685,14 +2742,15 @@ def _tenuo_tool_input_guardrail(guard: TenuoToolGuardrail, on_denial: str) -> An
                 warrant_chain=guard.warrant_chain,
             )
         except WarrantDenied as e:
-            return _deny(tool_name, arguments, str(e), "tier2")
+            return _deny(guard, on_denial, tool_name, arguments, str(e), "tier2")
         except Exception as e:  # fail closed on every other error
-            return _deny(tool_name, arguments, str(e), "tier1")
+            return _deny(guard, on_denial, tool_name, arguments, str(e), "tier1")
         guard._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
         guard._emit_cp(tool_name, arguments, allowed=True)
         return ToolGuardrailFunctionOutput.allow()
 
-    return ToolInputGuardrail(guardrail_function=check_tool_call, name="tenuo")
+    _TOOL_GUARDRAIL = ToolInputGuardrail(guardrail_function=check_tool_call, name="tenuo")
+    return _TOOL_GUARDRAIL
 
 
 def _handoff_target(handoff: Any) -> Any:
@@ -2732,6 +2790,12 @@ def guard_agent(
             tool result and continues the run. ``"raise"`` halts the run with
             ``ToolInputGuardrailTripwireTriggered``.
         include_handoffs: Also guard agents reachable through ``agent.handoffs``.
+
+    The policy belongs to the agent, not to its tools: agents that share
+    tool objects or MCP servers each keep their own policy, and calling
+    guard_agent() again on an agent replaces its policy. A tool that has been
+    guarded denies calls from any agent without a policy, including copies
+    made with ``agent.clone()``; guard those too.
 
     Raises:
         OpenAIConfigurationError: A tool can't be checked (for example a hosted
@@ -2775,11 +2839,11 @@ def guard_agent(
         approvals=approvals,
         warrant_chain=warrant_chain,
     )
-    tool_guardrail = _tenuo_tool_input_guardrail(guard, on_denial)
+    tool_guardrail = _tenuo_tool_input_guardrail()
 
     def attach(holder: Any) -> None:
         existing = list(getattr(holder, "tool_input_guardrails", None) or [])
-        if not any(getattr(g, "name", None) == "tenuo" for g in existing):
+        if not any(g is tool_guardrail for g in existing):
             holder.tool_input_guardrails = existing + [tool_guardrail]
 
     seen: set = set()
@@ -2789,6 +2853,7 @@ def guard_agent(
         if id(current) in seen:
             continue
         seen.add(id(current))
+        _register_agent_policy(current, guard, on_denial)
         for tool in getattr(current, "tools", None) or []:
             if not hasattr(tool, "tool_input_guardrails"):
                 raise OpenAIConfigurationError(
