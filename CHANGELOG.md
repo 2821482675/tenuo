@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An off-list Temporal signal no longer ends the workflow.** With
+  `authorized_signals` set, a signal name not on the list raised
+  `TemporalConstraintViolation`, which the plugin registers as a workflow
+  failure, so anyone who could signal the workflow could end the run. The
+  signal is now logged and dropped and the run continues.
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed
@@ -87,8 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sandbox blocks, including when the cache is full, so a long `cache_ttl`
   does not make them usable for PoP signing. Workflow workers sign with
   `signing_key=` or a resolver whose `resolve_sync` returns a key already in
-  memory. With `authorized_signals` set, a name off the list fails the
-  workflow run. `authorized_signals` and `authorized_updates` are worker
+  memory. `authorized_signals` and `authorized_updates` are worker
   settings, and an off-list update is rejected.
 - **Temporal history sizes count the chain header that is actually sent.**
   `x-tenuo-warrant` is the gzip-compressed leaf. `x-tenuo-warrant-chain` is

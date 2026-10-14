@@ -430,7 +430,7 @@ config = TenuoPluginConfig(
     max_chain_depth=10,                        # Max delegation depth
     audit_callback=on_audit,                   # Optional audit event handler
     metrics=TenuoMetrics(),                    # Optional Prometheus metrics
-    authorized_signals=["approve"],            # Worker-wide. A name off the list fails the workflow.
+    authorized_signals=["approve"],            # Worker-wide. A name off the list is dropped.
     authorized_updates=["update_config"],      # Worker-wide. A name off the list rejects that update.
 )
 ```
@@ -774,7 +774,7 @@ config = TenuoPluginConfig(
 
 `authorized_signals` and `authorized_updates` are optional settings on the worker config. One worker uses one pair of lists for every workflow it runs. Leave them unset (`None`, the default) and every signal and update name is allowed. Queries are not checked.
 
-With `authorized_signals` set, a name that is not on the list raises `TemporalConstraintViolation` during signal handling, including a signal that arrives with the first workflow task. The plugin registers that exception as a workflow failure type, so the signal fails the workflow run. A caller who can send a signal can end the run by choosing a name that is not on the list. Set the list when that outcome is acceptable. Workflows that need different names need separate worker configs.
+With `authorized_signals` set, a signal whose name is not on the list is dropped before it reaches the workflow, including a signal that arrives with the first workflow task. The run continues. The drop is decided again on replay, so adding or removing a name changes how signals already in history replay; treat a change to the list like a workflow code change. Workflows that need different names need separate worker configs.
 
 With `authorized_updates` set, the same check runs in the update validator when the update defines one, and in the update handler for every update, including an update with no validator. That failure rejects the update.
 
