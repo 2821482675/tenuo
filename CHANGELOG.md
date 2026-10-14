@@ -42,6 +42,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OpenAI `guard()` checks every tool call a client can return.** Clients
+  from `with_options()` and `copy()` were unwrapped, and
+  `beta.chat.completions.parse()` passed through unverified; both are now
+  guarded, and `with_raw_response`, `with_streaming_response`, `realtime`,
+  the raw HTTP methods and the rest of `beta` raise
+  `OpenAIConfigurationError` (`CFG_005`). Custom tool calls and Responses
+  `custom_tool_call`, `local_shell_call`, `shell_call`, `apply_patch_call` and
+  `computer_call` items were never checked; they are now authorized by name
+  and input and denied unless explicitly allowed. Chat streaming keys tool
+  calls by choice as well as index, so `n>1` streams can't mix calls, and
+  joins tool names split across chunks. Streamed calls, malformed and
+  duplicate-key arguments, and buffer overflows now emit audit events.
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed
