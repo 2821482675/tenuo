@@ -42,6 +42,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP: `MCPVerifier(config=...)` is closed-world.** With a
+  `CompiledMcpConfig`, arguments no extraction rule read (`follow_symlinks`,
+  a nested `query.where`) reached the tool unchecked, and a config `default`
+  was checked while the tool ran with its own default. Unread arguments are
+  now checked as unknown fields under their dotted path, as in raw mode, and
+  the tool receives the default that was checked. A config object that cannot
+  list its rules is refused. `CompiledMcpConfig.tool_rules(tool)` lists a
+  tool's extraction rules.
+- **MCP denial docs.** The middlewares return denials as `isError` tool
+  results with the code in `structuredContent.tenuo.code`, not JSON-RPC
+  errors; the docs now say so, and document `nonce_store` replay protection
+  and its effect on identical calls in one PoP window.
 - **MCP client tools deny calls with no warrant in scope.** Calling a
   `SecureMCPClient.tools[...]` wrapper (and the LangChain tools built from
   it) with neither a warrant nor a signing key in scope logged a warning and

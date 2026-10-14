@@ -4509,6 +4509,43 @@ impl PyCompiledMcpConfig {
         self.inner.validate()
     }
 
+    /// Extraction rules for a tool, or ``None`` if the tool is not configured.
+    ///
+    /// Each rule is a dict with ``field`` (constraint name), ``source``
+    /// (``"body"``, ``"literal"``, ...), ``path`` (dot notation) and
+    /// ``default`` (``None`` when the rule has none). ``MCPVerifier`` uses it
+    /// to check that every argument is read by some rule.
+    fn tool_rules(&self, py: Python<'_>, tool_name: &str) -> PyResult<Option<Py<PyAny>>> {
+        let Some(tool) = self.inner.tools.get(tool_name) else {
+            return Ok(None);
+        };
+        let json_loads = py.import("json")?.getattr("loads")?;
+        let mut fields: Vec<&String> = tool.extraction_rules.rules.keys().collect();
+        fields.sort();
+        let list = pyo3::types::PyList::empty(py);
+        for field in fields {
+            let rule = &tool.extraction_rules.rules[field].rule;
+            let entry = PyDict::new(py);
+            entry.set_item("field", field)?;
+            let source = serde_json::to_value(&rule.from)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            entry.set_item("source", source)?;
+            entry.set_item("path", &rule.path)?;
+            match &rule.default {
+                Some(value) => {
+                    let text = serde_json::to_string(value)
+                        .map_err(|e| py_validation_err(format!("Invalid default: {}", e)))?;
+                    entry.set_item("default", json_loads.call1((text,))?)?;
+                }
+                None => entry.set_item("default", py.None())?,
+            }
+            list.append(entry)?;
+        }
+        Ok(Some(list.into_any().unbind()))
+    }
+
     /// Extract constraints from an MCP tool call.
     ///
     /// Args:
