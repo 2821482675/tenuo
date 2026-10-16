@@ -83,7 +83,14 @@ async def call_tool_with_meta(
             "_meta": meta,
         }
     )
-    request = mt.ClientRequest(mt.CallToolRequest(method="tools/call", params=params))
+    call_request = mt.CallToolRequest(method="tools/call", params=params)
+    # MCP 1.x exposes ClientRequest as a RootModel wrapper.  In 2.x it is a
+    # union type and send_request accepts the concrete request directly.
+    request = (
+        mt.ClientRequest(call_request)
+        if isinstance(mt.ClientRequest, type)
+        else call_request
+    )
     return await session.send_request(request, mt.CallToolResult)
 
 
