@@ -3058,7 +3058,7 @@ def _tenuo_tool_input_guardrail() -> Any:
         guard._emit_cp(tool_name, arguments, allowed=True)
         return ToolGuardrailFunctionOutput.allow()
 
-    candidate = ToolInputGuardrail(guardrail_function=check_tool_call, name="tenuo")
+    candidate: Any = ToolInputGuardrail(guardrail_function=check_tool_call, name="tenuo")
     # guard_agent() may be called concurrently while an application builds its
     # agent graph. Publish one canonical guardrail so identity-based deduplication
     # still works for tools shared by those agents.
