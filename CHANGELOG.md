@@ -48,6 +48,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   called the server anyway. It now raises `ConfigurationError` and the server
   is not called, matching `call_tool(warrant_context=True)`. To keep the old
   behavior in development, configure `dev_mode=True, allow_passthrough=True`.
+  MCP 1.9.4 clients also keep working: calls omit the unsupported `meta`
+  keyword when empty and use the standard wire request when injecting warrant
+  metadata.
+- **OpenAI Agents SDK: `guard_agent()`.** Checks every tool call an agent
+  makes before the tool runs, by attaching a Tenuo tool guardrail to each
+  function tool, each MCP server and every agent reachable through handoffs.
+  Hosted tools, and MCP servers on SDK releases without tool guardrails, are
+  refused rather than left unchecked. Requires `openai-agents` 0.3.3 or later.
+  Agent input guardrails only see the agent's input, not the model's tool
+  calls, so `TenuoToolGuardrail` placed in `Agent(input_guardrails=...)` now
+  raises `OpenAIConfigurationError` (`CFG_006`) pointing to `guard_agent()`. Switch
+  existing Agents SDK integrations to `guard_agent()`.
+- **OpenAI `guard()` checks every tool call a client can return.** Clients
+  from `with_options()` and `copy()` were unwrapped, and
+  `beta.chat.completions.parse()` passed through unverified; both are now
+  guarded, and `with_raw_response`, `with_streaming_response`, `realtime`,
+  `conversations` (which can return stored tool calls), the raw HTTP methods,
+  and the rest of `beta` raise
+  `OpenAIConfigurationError` (`CFG_005`). Custom tool calls and Responses
+  `custom_tool_call`, `local_shell_call`, `shell_call`, `apply_patch_call` and
+  `computer_call` items, plus client-executed `tool_search_call` items, were
+  never checked; they are now authorized by name and input and denied unless
+  explicitly allowed. Chat streaming keys tool
+  calls by choice as well as index, so `n>1` streams can't mix calls, and
+  joins tool names split across chunks. Streamed calls, malformed and
+  duplicate-key arguments, and buffer overflows now emit audit events.
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed

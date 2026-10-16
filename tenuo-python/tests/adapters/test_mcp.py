@@ -391,7 +391,7 @@ class TestCallToolArgumentInjection:
         envelope = forwarded["_tenuo"]
         assert envelope["warrant"] == "warrant_b64"
         assert envelope["signature"] == "c2ln"
-        assert client.session.call_tool.call_args.kwargs["meta"] is None
+        assert "meta" not in client.session.call_tool.call_args.kwargs
         assert "encoding" in sign_meta.call_args.args[3]
         assert original == {"path": "/data/file.txt", "encoding": None}
 
@@ -650,6 +650,18 @@ class TestProtectedToolNoContextFailsClosed:
         protected = self._protected(client)
 
         with pytest.raises(ConfigurationError, match="No authorization context"):
+            await protected(path="/data/f.txt")
+
+        client.session.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_raises_and_does_not_call_server(self):
+        from tenuo.exceptions import ConfigurationError
+
+        client = _make_client()
+        protected = self._protected(client)
+
+        with pytest.raises(ConfigurationError, match="Tenuo not configured"):
             await protected(path="/data/f.txt")
 
         client.session.call_tool.assert_not_called()
