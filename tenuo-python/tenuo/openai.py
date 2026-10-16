@@ -63,7 +63,7 @@ Async Support:
     Async streaming has the same TOCTOU protections.
 
     async_client = guard(openai.AsyncOpenAI(), warrant=w, signing_key=k)
-    response = await async_client.chat.completions.acreate(...)
+    response = await async_client.chat.completions.create(...)
 
 OpenAI Agents SDK Integration:
     guard_agent() checks every tool call an OpenAI Agents SDK agent makes:
@@ -81,7 +81,9 @@ OpenAI Agents SDK Integration:
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import inspect
 import json
 import logging
 import time
@@ -761,6 +763,8 @@ class ToolCallBuffer:
     arguments_buffer: str = ""
     chunks: List[Any] = field(default_factory=list)  # Raw chunks to emit after verification
     is_complete: bool = False
+    # "function", "custom" (freeform input), or another tool call type
+    kind: str = "function"
 
     def append_arguments(self, chunk: str) -> None:
         self.arguments_buffer += chunk
@@ -770,7 +774,9 @@ class ToolCallBuffer:
         self.chunks.append(chunk)
 
     def get_arguments(self) -> Dict[str, Any]:
-        """Parse accumulated arguments as JSON."""
+        """Parse accumulated arguments as JSON (custom tools: ``{"input": ...}``)."""
+        if self.kind == "custom":
+            return {"input": self.arguments_buffer}
         if not self.arguments_buffer:
             return {}
         try:
@@ -780,6 +786,120 @@ class ToolCallBuffer:
 
     def size(self) -> int:
         return len(self.arguments_buffer.encode("utf-8"))
+
+
+def _field(obj: Any, name: str) -> Any:
+    """Read ``name`` from a model or a raw dict (unknown SDK fields stay dicts)."""
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
+
+
+def _stream_index(obj: Any) -> int:
+    """Index of a streamed choice or tool call delta (0 when absent)."""
+    index = getattr(obj, "index", 0)
+    return index if isinstance(index, int) else 0
+
+
+def _plain_args(obj: Any) -> Dict[str, Any]:
+    """Turn a tool call payload (model, dict or object) into an argument dict."""
+    if obj is None:
+        return {}
+    if hasattr(obj, "model_dump"):
+        data = obj.model_dump(exclude_none=True)
+    elif isinstance(obj, dict):
+        data = {k: v for k, v in obj.items() if v is not None}
+    elif hasattr(obj, "__dict__"):
+        data = {k: v for k, v in vars(obj).items() if v is not None and not k.startswith("_")}
+    else:
+        return {"value": obj}
+    return data if isinstance(data, dict) else {"value": data}
+
+
+def _require_explicit_allow(
+    tool_name: str,
+    kind: str,
+    allow_tools: Optional[List[str]],
+    warrant: Optional[Warrant],
+) -> None:
+    """Non-function tool calls (custom, shell, patch, computer...) need an explicit grant.
+
+    A denylist alone never authorizes them: Tier 1 needs the name in
+    ``allow_tools``; Tier 2 checks the name against the warrant.
+    """
+    if kind == "function" or warrant is not None:
+        return
+    if allow_tools is None or tool_name not in allow_tools:
+        raise ToolDenied(
+            tool_name,
+            f"'{kind}' tool calls must be explicitly allowed",
+            quick_fix=f'Add .allow("{tool_name}") to your GuardBuilder',
+        )
+
+
+def _chat_tool_call_parts(tool_call: Any) -> Tuple[str, str, Optional[str]]:
+    """Return (name, kind, raw_input) for a chat completion tool call."""
+    call_type = getattr(tool_call, "type", None)
+    func = getattr(tool_call, "function", None)
+    if func is not None and not (isinstance(call_type, str) and call_type != "function"):
+        return getattr(func, "name", "") or "", "function", getattr(func, "arguments", None)
+    custom = _field(tool_call, "custom")
+    if custom is not None:
+        return _field(custom, "name") or "", "custom", _field(custom, "input") or ""
+    kind = call_type if isinstance(call_type, str) and call_type else "unknown"
+    return kind, kind, None
+
+
+# Fields that describe a Responses output item rather than what it asks the app to do.
+_RESPONSE_ITEM_META = frozenset({"id", "call_id", "type", "status", "caller", "created_by"})
+
+
+def _is_app_executed_item(item: Any) -> bool:
+    """Whether a Responses output item asks the application to run something.
+
+    Items carrying a ``call_id`` (function_call, custom_tool_call, local_shell_call,
+    shell_call, apply_patch_call, computer_call, ...) are executed by the app and
+    must be authorized. Hosted tool items (web/file search, code interpreter,
+    image generation, MCP) run on OpenAI's side and have no ``call_id``.
+    """
+    item_type = getattr(item, "type", None)
+    if not isinstance(item_type, str):
+        return False
+    if item_type == "function_call":
+        return True
+    if item_type == "tool_search_call":
+        # Tool search can run either on OpenAI's servers or in the client. A
+        # client-executed call is actionable even when the SDK omits call_id.
+        return getattr(item, "execution", None) == "client"
+    if item_type.endswith("_output"):
+        return False
+    return bool(getattr(item, "call_id", None))
+
+
+def _responses_item_parts(item: Any) -> Tuple[str, str, Dict[str, Any]]:
+    """Return (tool_name, kind, arguments) for an app-executed Responses item.
+
+    Raises MalformedToolCall for unparseable function_call arguments.
+    """
+    item_type = item.type
+    if item_type == "function_call":
+        tool_name = getattr(item, "name", "") or ""
+        args_str = getattr(item, "arguments", "{}") or "{}"
+        try:
+            arguments = _loads_tool_arguments(args_str) if args_str else {}
+        except ValueError as e:
+            raise MalformedToolCall(tool_name, str(e))
+        return tool_name, "function", arguments
+    if item_type == "custom_tool_call":
+        return getattr(item, "name", "") or "", "custom", {"input": getattr(item, "input", "") or ""}
+    # local_shell_call -> "local_shell", shell_call -> "shell", apply_patch_call ->
+    # "apply_patch", computer_call -> "computer"; arguments are the action/operation.
+    tool_name = item_type[: -len("_call")] if item_type.endswith("_call") else item_type
+    payload = getattr(item, "action", None) or getattr(item, "operation", None)
+    if payload is not None:
+        return tool_name, item_type, _plain_args(payload)
+    arguments = {k: v for k, v in _plain_args(item).items() if k not in _RESPONSE_ITEM_META}
+    return tool_name, item_type, arguments
 
 
 # =============================================================================
@@ -834,17 +954,37 @@ class GuardedCompletions:
         self._control_plane = get_or_create()
 
     def create(self, *args, **kwargs) -> Any:
-        """Wrapped create method with guardrails."""
-        stream = kwargs.get("stream", False)
+        """Wrapped create method with guardrails.
 
+        Works with both sync and async clients. On an async client the
+        underlying create() returns an awaitable; we return a coroutine that
+        awaits it and verifies the result, so the raw (unverified) awaitable
+        never reaches the caller.
+        """
+        stream = kwargs.get("stream", False)
+        result = self._original.create(*args, **kwargs)
+
+        if inspect.isawaitable(result):
+            return self._guard_awaitable(result, stream)
         if stream:
             # Return guarded stream
-            original_stream = self._original.create(*args, **kwargs)
-            return self._guard_stream(original_stream)
-        else:
-            # Non-streaming: verify after response
-            response = self._original.create(*args, **kwargs)
-            return self._guard_response(response)
+            return self._guard_stream(result)
+        # Non-streaming: verify after response
+        return self._guard_response(result)
+
+    def parse(self, *args, **kwargs) -> Any:
+        """Wrapped structured-output parse(); tool calls are verified like create()."""
+        result = self._original.parse(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return self._guard_awaitable(result, False)
+        return self._guard_response(result)
+
+    async def _guard_awaitable(self, awaitable: Any, stream: bool) -> Any:
+        """Await an async client result, then apply the async guards."""
+        result = await awaitable
+        if stream:
+            return self._guard_stream_async(result)
+        return self._guard_response(result)
 
     def _guard_response(self, response: Any) -> Any:
         """Verify tool calls in a non-streaming response."""
@@ -878,21 +1018,30 @@ class GuardedCompletions:
         return response
 
     def _verify_single_tool_call(self, tool_call: Any) -> None:
-        """Verify a single tool call."""
-        if not hasattr(tool_call, "function"):
-            return
+        """Verify a single tool call (function, custom, or any other type)."""
+        tool_name, kind, raw = _chat_tool_call_parts(tool_call)
+        self._verify_call(tool_name, kind, raw)
 
-        func = tool_call.function
-        tool_name = func.name if hasattr(func, "name") else ""
-
-        # Parse arguments
-        args_str = func.arguments if hasattr(func, "arguments") else "{}"
+    @staticmethod
+    def _call_arguments(tool_name: str, kind: str, raw: Optional[str]) -> Dict[str, Any]:
+        """Turn a chat tool call's raw input into the argument dict to authorize."""
+        if not tool_name:
+            raise MalformedToolCall(tool_name, "tool call has no name")
+        if kind == "custom":
+            return {"input": raw or ""}
+        if kind != "function":
+            raise ToolDenied(tool_name, f"unsupported tool call type '{kind}'")
         try:
-            arguments = _loads_tool_arguments(args_str) if args_str else {}
+            return _loads_tool_arguments(raw) if raw else {}
         except ValueError as e:
             raise MalformedToolCall(tool_name, str(e))
 
+    def _verify_call(self, tool_name: str, kind: str, raw: Optional[str]) -> None:
+        """Authorize one chat tool call and audit the decision (allow or deny)."""
+        arguments: Dict[str, Any] = {}
         try:
+            arguments = self._call_arguments(tool_name, kind, raw)
+            _require_explicit_allow(tool_name, kind, self._allow_tools, self._warrant)
             verify_tool_call(
                 tool_name,
                 arguments,
@@ -906,13 +1055,44 @@ class GuardedCompletions:
                 self._approvals,
                 warrant_chain=self._warrant_chain,
             )
+        except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
+            self._record_decision(tool_name, arguments, e)
+            raise
+        self._record_decision(tool_name, arguments)
+
+    async def _verify_call_async(self, tool_name: str, kind: str, raw: Optional[str]) -> None:
+        """Async variant of _verify_call (awaits approval handlers)."""
+        arguments: Dict[str, Any] = {}
+        try:
+            arguments = self._call_arguments(tool_name, kind, raw)
+            _require_explicit_allow(tool_name, kind, self._allow_tools, self._warrant)
+            await verify_tool_call_async(
+                tool_name,
+                arguments,
+                self._allow_tools,
+                self._deny_tools,
+                self._constraints,
+                self._warrant,
+                self._signing_key,
+                self._trusted_roots,
+                self._approval_handler,
+                self._approvals,
+                warrant_chain=self._warrant_chain,
+            )
+        except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
+            self._record_decision(tool_name, arguments, e)
+            raise
+        self._record_decision(tool_name, arguments)
+
+    def _record_decision(self, tool_name: str, arguments: Dict[str, Any], error: Optional[Exception] = None) -> None:
+        """Emit the audit event and control-plane record for one decision."""
+        if error is None:
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
             self._emit_cp(tool_name, arguments, allowed=True)
-        except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
-            tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
-            self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier)
-            self._emit_cp(tool_name, arguments, allowed=False, denial_reason=str(e))
-            raise
+            return
+        tier = "tier2" if isinstance(error, WarrantDenied) else "tier1"
+        self._emit_audit(tool_name, arguments, "DENY", str(error), tier=tier)
+        self._emit_cp(tool_name, arguments, allowed=False, denial_reason=str(error))
 
     def _emit_audit(
         self,
@@ -988,7 +1168,9 @@ class GuardedCompletions:
             - Rare in practice: Models typically end with tools or final content
             Conservative approach prioritizes security over UX for edge cases.
         """
-        buffers: Dict[int, ToolCallBuffer] = {}
+        # Keyed by (choice index, tool call index): with n>1 every choice
+        # numbers its tool calls from 0.
+        buffers: Dict[Tuple[int, int], ToolCallBuffer] = {}
         pending_chunks: List[Any] = []  # Chunks waiting for verification
         in_tool_call = False  # Latch: once True, stays True (see STREAM-001)
 
@@ -1016,20 +1198,7 @@ class GuardedCompletions:
 
         for index, buffer in buffers.items():
             try:
-                arguments = buffer.get_arguments()
-                verify_tool_call(
-                    buffer.name,
-                    arguments,
-                    self._allow_tools,
-                    self._deny_tools,
-                    self._constraints,
-                    self._warrant,
-                    self._signing_key,
-                    self._trusted_roots,
-                    self._approval_handler,
-                    self._approvals,
-                    warrant_chain=self._warrant_chain,
-                )
+                self._verify_call(buffer.name, buffer.kind, buffer.arguments_buffer)
             except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 self._handle_denial(e)
                 if self._on_denial == "raise":
@@ -1051,9 +1220,13 @@ class GuardedCompletions:
     def _accumulate_tool_call_data(
         self,
         chunk: Any,
-        buffers: Dict[int, ToolCallBuffer],
+        buffers: Dict[Tuple[int, int], ToolCallBuffer],
     ) -> None:
-        """Accumulate tool call data from a chunk into buffers."""
+        """Accumulate tool call data from a chunk into buffers.
+
+        Fragments are concatenated the way the OpenAI SDK accumulates them,
+        including the tool name, so the verified call is the one the app runs.
+        """
         for choice in chunk.choices:
             if not hasattr(choice, "delta") or not choice.delta:
                 continue
@@ -1062,27 +1235,40 @@ class GuardedCompletions:
             if not hasattr(delta, "tool_calls") or not delta.tool_calls:
                 continue
 
+            choice_index = _stream_index(choice)
             for tc_delta in delta.tool_calls:
-                index = tc_delta.index if hasattr(tc_delta, "index") else 0
+                key = (choice_index, _stream_index(tc_delta))
 
                 # Initialize buffer if new tool call
-                if index not in buffers:
-                    tc_id = tc_delta.id if hasattr(tc_delta, "id") else f"tc_{index}"
-                    buffers[index] = ToolCallBuffer(id=tc_id)
+                if key not in buffers:
+                    tc_id = getattr(tc_delta, "id", None) or f"tc_{key[0]}_{key[1]}"
+                    buffers[key] = ToolCallBuffer(id=tc_id)
 
-                buffer = buffers[index]
+                buffer = buffers[key]
 
-                # Update name if present
-                if hasattr(tc_delta, "function") and tc_delta.function:
-                    func = tc_delta.function
-                    if hasattr(func, "name") and func.name:
-                        buffer.name = func.name
-                    if hasattr(func, "arguments") and func.arguments:
-                        buffer.append_arguments(func.arguments)
+                call_type = getattr(tc_delta, "type", None)
+                custom = _field(tc_delta, "custom")
+                if custom is not None or call_type == "custom":
+                    buffer.kind = "custom"
+                    name_part = _field(custom, "name") if custom is not None else None
+                    data_part = _field(custom, "input") if custom is not None else None
+                else:
+                    if isinstance(call_type, str) and call_type != "function":
+                        buffer.kind = call_type
+                    func = getattr(tc_delta, "function", None)
+                    name_part = getattr(func, "name", None) if func else None
+                    data_part = getattr(func, "arguments", None) if func else None
 
-                        # Check buffer size
-                        if buffer.size() > self._stream_buffer_limit:
-                            raise BufferOverflow(buffer.name, buffer.size(), self._stream_buffer_limit)
+                if name_part:
+                    buffer.name += name_part
+                if data_part:
+                    buffer.append_arguments(data_part)
+
+                    # Check buffer size
+                    if buffer.size() > self._stream_buffer_limit:
+                        overflow = BufferOverflow(buffer.name, buffer.size(), self._stream_buffer_limit)
+                        self._record_decision(buffer.name, {}, overflow)
+                        raise overflow
 
     def _has_tool_call_delta(self, chunk: Any) -> bool:
         """Check if chunk contains tool call data."""
@@ -1123,9 +1309,9 @@ class GuardedCompletions:
             delta = choice.delta
             if not hasattr(delta, "tool_calls") or not delta.tool_calls:
                 continue
+            choice_index = _stream_index(choice)
             for tc_delta in delta.tool_calls:
-                index = tc_delta.index if hasattr(tc_delta, "index") else 0
-                if index in denied_indices:
+                if (choice_index, _stream_index(tc_delta)) in denied_indices:
                     return None
 
         return chunk
@@ -1145,15 +1331,12 @@ class GuardedCompletions:
         handle_denial(pseudo_result, policy)
 
     async def acreate(self, *args, **kwargs) -> Any:
-        """Async wrapped create method with guardrails."""
-        stream = kwargs.get("stream", False)
+        """Async wrapped create method with guardrails.
 
-        if stream:
-            original_stream = await self._original.create(*args, **kwargs)
-            return self._guard_stream_async(original_stream)
-        else:
-            response = await self._original.create(*args, **kwargs)
-            return self._guard_response(response)
+        Equivalent to ``await create(...)`` on an async client.
+        """
+        stream = kwargs.get("stream", False)
+        return await self._guard_awaitable(self._original.create(*args, **kwargs), stream)
 
     async def _guard_stream_async(self, stream: AsyncIterator) -> AsyncIterator:
         """Async buffer-verify-emit pattern for streaming responses.
@@ -1161,7 +1344,7 @@ class GuardedCompletions:
         SECURITY: Same TOCTOU protection as sync version.
         Uses verify_tool_call_async for async approval handler support.
         """
-        buffers: Dict[int, ToolCallBuffer] = {}
+        buffers: Dict[Tuple[int, int], ToolCallBuffer] = {}
         pending_chunks: List[Any] = []
         in_tool_call = False
 
@@ -1186,20 +1369,7 @@ class GuardedCompletions:
 
         for index, buffer in buffers.items():
             try:
-                arguments = buffer.get_arguments()
-                await verify_tool_call_async(
-                    buffer.name,
-                    arguments,
-                    self._allow_tools,
-                    self._deny_tools,
-                    self._constraints,
-                    self._warrant,
-                    self._signing_key,
-                    self._trusted_roots,
-                    self._approval_handler,
-                    self._approvals,
-                    warrant_chain=self._warrant_chain,
-                )
+                await self._verify_call_async(buffer.name, buffer.kind, buffer.arguments_buffer)
             except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
                 self._handle_denial(e)
                 if self._on_denial == "raise":
@@ -1271,11 +1441,32 @@ class GuardedResponses:
     def create(self, *args, **kwargs) -> Any:
         """Wrapped create method with guardrails.
 
-        Note: Responses API streaming uses a different pattern than chat.completions.
-        Currently only non-streaming is fully supported.
+        Works with both sync and async clients. Streaming (``stream=True``) is
+        not supported under guard yet and raises OpenAIConfigurationError
+        before any request is sent, rather than returning an unverified stream.
         """
+        if kwargs.get("stream", False):
+            raise OpenAIConfigurationError(
+                "Streaming is not supported for responses.create() under Tenuo guard: "
+                "function calls in a Responses stream cannot be verified yet. "
+                "Use stream=False, or chat.completions.create(stream=True).",
+                "CFG_004",
+            )
         response = self._original.create(*args, **kwargs)
+        if inspect.isawaitable(response):
+            return self._guard_response_async(response)
         return self._guard_response(response)
+
+    def parse(self, *args, **kwargs) -> Any:
+        """Wrapped structured-output parse(); output items are verified like create()."""
+        response = self._original.parse(*args, **kwargs)
+        if inspect.isawaitable(response):
+            return self._guard_response_async(response)
+        return self._guard_response(response)
+
+    async def _guard_response_async(self, awaitable: Any) -> Any:
+        """Await an async client result, then verify it."""
+        return self._guard_response(await awaitable)
 
     def _guard_response(self, response: Any) -> Any:
         """Verify tool calls in a Responses API response."""
@@ -1290,7 +1481,7 @@ class GuardedResponses:
         # Build list of verified items, filtering denied ones in skip/log mode
         verified_items = []
         for item in output:
-            if hasattr(item, "type") and item.type == "function_call":
+            if _is_app_executed_item(item):
                 try:
                     self._verify_function_call(item)
                     verified_items.append(item)
@@ -1300,7 +1491,7 @@ class GuardedResponses:
                         raise
                     # skip or log: exclude from results (don't append)
             else:
-                # Non-function-call items pass through unchanged
+                # Messages, reasoning and hosted-tool items pass through unchanged
                 verified_items.append(item)
 
         # Update output with verified items only (mirrors chat.completions behavior)
@@ -1310,16 +1501,14 @@ class GuardedResponses:
         return response
 
     def _verify_function_call(self, item: Any) -> None:
-        """Verify a function call item from Responses API."""
-        tool_name = getattr(item, "name", "") or ""
-        args_str = getattr(item, "arguments", "{}") or "{}"
-
+        """Verify an app-executed Responses item (function, custom, shell, patch, computer...)."""
+        tool_name = getattr(item, "name", "") or getattr(item, "type", "") or ""
+        arguments: Dict[str, Any] = {}
         try:
-            arguments = _loads_tool_arguments(args_str) if args_str else {}
-        except ValueError as e:
-            raise MalformedToolCall(tool_name, str(e))
-
-        try:
+            tool_name, kind, arguments = _responses_item_parts(item)
+            if not tool_name:
+                raise MalformedToolCall(tool_name, "tool call has no name")
+            _require_explicit_allow(tool_name, kind, self._allow_tools, self._warrant)
             verify_tool_call(
                 tool_name,
                 arguments,
@@ -1335,7 +1524,7 @@ class GuardedResponses:
             )
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
             self._emit_cp(tool_name, arguments, allowed=True)
-        except (ToolDenied, WarrantDenied, OpenAIConstraintViolation) as e:
+        except (ToolDenied, WarrantDenied, OpenAIConstraintViolation, MalformedToolCall) as e:
             tier = "tier2" if isinstance(e, WarrantDenied) else "tier1"
             self._emit_audit(tool_name, arguments, "DENY", str(e), tier=tier)
             self._emit_cp(tool_name, arguments, allowed=False, denial_reason=str(e))
@@ -1407,6 +1596,62 @@ class GuardedResponses:
         handle_denial(pseudo_result, policy)
 
 
+# Client attributes that return model output without going through the guarded
+# chat/responses wrappers. Under guard they fail closed instead of passing through.
+_UNGUARDED_CLIENT_ATTRS = frozenset(
+    {
+        "conversations",
+        "with_raw_response",
+        "with_streaming_response",
+        "realtime",
+        "request",
+        "get",
+        "post",
+        "put",
+        "patch",
+        "delete",
+    }
+)
+
+
+class _UnguardedEndpoint(OpenAIConfigurationError, AttributeError):
+    """An endpoint the guard cannot verify was accessed through the guarded client.
+
+    Also an AttributeError so ``hasattr()`` / ``getattr(..., default)`` probes
+    report the endpoint as unavailable instead of raising.
+    """
+
+    def __init__(self, path: str):
+        super().__init__(
+            f"client.{path} is not available under Tenuo guard: tool calls it returns "
+            "would not be verified. Use chat.completions or responses on the guarded "
+            "client, or call the unguarded client directly for endpoints that "
+            "cannot return tool calls.",
+            "CFG_005",
+        )
+
+
+def _is_openai_client(obj: Any) -> bool:
+    """True for an OpenAI/AsyncOpenAI (or Azure) client instance."""
+    try:
+        import openai
+    except ImportError:  # pragma: no cover - openai is required to use guard()
+        return False
+    return isinstance(obj, (openai.OpenAI, openai.AsyncOpenAI))
+
+
+class GuardedBeta:
+    """Wrapped beta namespace: only beta.chat.completions is exposed (verified)."""
+
+    def __init__(self, chat: GuardedChat):
+        self.chat = chat
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        raise _UnguardedEndpoint(f"beta.{name}")
+
+
 class GuardedClient:
     """OpenAI client wrapper with Tenuo guardrails.
 
@@ -1433,10 +1678,26 @@ class GuardedClient:
         trusted_roots: Optional[list] = None,
         *,
         warrant_chain: Optional[List[Warrant]] = None,
+        session_id: Optional[str] = None,
     ):
         # warrant may also be a WarrantStack string or root-first list; split
         # it once so every wrapped endpoint verifies the same leaf and parents.
         warrant, warrant_chain = split_presented_warrant(warrant, warrant_chain)
+        # Kept so clients derived via with_options()/copy() get the same guard.
+        self._guard_config: Dict[str, Any] = dict(
+            allow_tools=allow_tools,
+            deny_tools=deny_tools,
+            constraints=constraints,
+            on_denial=on_denial,
+            stream_buffer_limit=stream_buffer_limit,
+            warrant=warrant,
+            signing_key=signing_key,
+            audit_callback=audit_callback,
+            approval_handler=approval_handler,
+            approvals=approvals,
+            trusted_roots=trusted_roots,
+            warrant_chain=warrant_chain,
+        )
         self._client = client
         self._allow_tools = allow_tools
         self._deny_tools = deny_tools
@@ -1452,8 +1713,32 @@ class GuardedClient:
         self._trusted_roots = trusted_roots
 
         # Generate session ID and constraint hash for audit trail
-        self.session_id = "sess_" + str(uuid.uuid4())[:8]
+        self.session_id = session_id or "sess_" + str(uuid.uuid4())[:8]
         self.constraint_hash = _compute_constraint_hash(allow_tools, deny_tools, constraints)
+
+        def guarded_completions(original: Any) -> GuardedCompletions:
+            return GuardedCompletions(
+                original,
+                allow_tools,
+                deny_tools,
+                constraints,
+                on_denial,
+                stream_buffer_limit,
+                warrant,
+                signing_key,
+                audit_callback,
+                self.session_id,
+                self.constraint_hash,
+                approval_handler,
+                approvals,
+                trusted_roots,
+                warrant_chain,
+            )
+
+        # Wrap beta.chat.completions (parse()); the rest of beta fails closed
+        beta = getattr(client, "beta", None)
+        if beta is not None and hasattr(beta, "chat") and hasattr(beta.chat, "completions"):
+            self.beta = GuardedBeta(GuardedChat(guarded_completions(beta.chat.completions)))
 
         # Wrap chat.completions
         if hasattr(client, "chat") and hasattr(client.chat, "completions"):
@@ -1497,10 +1782,34 @@ class GuardedClient:
             )
 
     def __getattr__(self, name: str) -> Any:
-        """Pass through non-wrapped attributes to underlying client."""
+        """Pass through non-wrapped attributes to underlying client.
+
+        Endpoints that would hand back unverified tool calls (raw responses,
+        raw HTTP verbs, realtime, unwrapped beta) fail closed, and a call that
+        returns a derived client (``with_options()``, ``copy()``) returns it
+        wrapped in the same guard.
+        """
         if name.startswith("_"):
             raise AttributeError(name)
-        return getattr(self._client, name)
+        if name in _UNGUARDED_CLIENT_ATTRS:
+            raise _UnguardedEndpoint(name)
+        value = getattr(self._client, name)
+        if _is_openai_client(value):
+            return self._rewrap(value)
+        if inspect.ismethod(value):
+            method = value
+
+            @functools.wraps(method)
+            def call(*args: Any, **kwargs: Any) -> Any:
+                result = method(*args, **kwargs)
+                return self._rewrap(result) if _is_openai_client(result) else result
+
+            return call
+        return value
+
+    def _rewrap(self, client: Any) -> "GuardedClient":
+        """Guard a client derived from this one with the same policy and session."""
+        return GuardedClient(client, **self._guard_config, session_id=self.session_id)
 
     def validate(self) -> None:
         """Validate configuration before first use.
@@ -2301,7 +2610,7 @@ class TenuoToolGuardrail:
             "TenuoToolGuardrail cannot enforce tool calls as an Agent input guardrail: "
             "input guardrails only see the agent's input, not the tool calls the model "
             "makes. Use tenuo.openai.guard_agent(agent, ...) to check every tool call.",
-            "CFG_004",
+            "CFG_006",
         )
 
     # The Agents SDK reads these from every entry in Agent(input_guardrails=...).
@@ -2749,8 +3058,14 @@ def _tenuo_tool_input_guardrail() -> Any:
         guard._emit_cp(tool_name, arguments, allowed=True)
         return ToolGuardrailFunctionOutput.allow()
 
-    _TOOL_GUARDRAIL = ToolInputGuardrail(guardrail_function=check_tool_call, name="tenuo")
-    return _TOOL_GUARDRAIL
+    candidate = ToolInputGuardrail(guardrail_function=check_tool_call, name="tenuo")
+    # guard_agent() may be called concurrently while an application builds its
+    # agent graph. Publish one canonical guardrail so identity-based deduplication
+    # still works for tools shared by those agents.
+    with _AGENT_POLICIES_LOCK:
+        if _TOOL_GUARDRAIL is None:
+            _TOOL_GUARDRAIL = candidate
+        return _TOOL_GUARDRAIL
 
 
 def _handoff_target(handoff: Any) -> Any:
@@ -2822,10 +3137,10 @@ def guard_agent(
         import agents.tool_guardrails  # type: ignore[import-not-found]  # noqa: F401
     except ImportError as e:
         raise OpenAIConfigurationError(
-            "guard_agent requires openai-agents 0.3.3 or later (tool guardrails).", "CFG_004"
+            "guard_agent requires openai-agents 0.3.3 or later (tool guardrails).", "CFG_006"
         ) from e
     if on_denial not in ("reject", "raise"):
-        raise OpenAIConfigurationError("on_denial must be 'reject' or 'raise'", "CFG_004")
+        raise OpenAIConfigurationError("on_denial must be 'reject' or 'raise'", "CFG_006")
 
     guard = TenuoToolGuardrail(
         allow_tools=allow_tools,
@@ -2861,7 +3176,7 @@ def guard_agent(
                     f"'{getattr(current, 'name', '?')}' can't be checked by Tenuo "
                     f"({type(tool).__name__} doesn't support tool guardrails). Remove it, "
                     "or replace it with a function tool.",
-                    "CFG_004",
+                    "CFG_006",
                 )
             attach(tool)
         for server in getattr(current, "mcp_servers", None) or []:
@@ -2870,7 +3185,7 @@ def guard_agent(
                     f"MCP server '{getattr(server, 'name', type(server).__name__)}' can't accept "
                     "tool guardrails with the installed openai-agents. Upgrade openai-agents to "
                     "a release with MCP server guardrails.",
-                    "CFG_004",
+                    "CFG_006",
                 )
             attach(server)
         if include_handoffs:
@@ -2881,7 +3196,7 @@ def guard_agent(
                         f"Can't resolve the agent behind handoff "
                         f"'{getattr(handoff, 'tool_name', handoff)}'. Call guard_agent on it "
                         "directly and pass include_handoffs=False here.",
-                        "CFG_004",
+                        "CFG_006",
                     )
                 pending.append(target)
     return agent

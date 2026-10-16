@@ -174,15 +174,23 @@ async def test_input_guardrail_misuse_fails_loudly(tools):
         tools=[tools["search"]],
         input_guardrails=[TenuoToolGuardrail(allow_tools=["search"])],
     )
-    with pytest.raises(OpenAIConfigurationError, match="guard_agent"):
+    with pytest.raises(OpenAIConfigurationError, match="guard_agent") as exc:
         await Runner.run(agent, "hi")
+    assert exc.value.code == "CFG_006"
 
 
 def test_hosted_tools_are_refused():
     from agents import WebSearchTool
 
-    with pytest.raises(OpenAIConfigurationError, match="can't be checked"):
+    with pytest.raises(OpenAIConfigurationError, match="can't be checked") as exc:
         guard_agent(Agent(name="a", tools=[WebSearchTool()]), allow_tools=["search"])
+    assert exc.value.code == "CFG_006"
+
+
+def test_invalid_denial_mode_has_agents_configuration_code():
+    with pytest.raises(OpenAIConfigurationError, match="on_denial") as exc:
+        guard_agent(Agent(name="a"), on_denial="continue")
+    assert exc.value.code == "CFG_006"
 
 
 def test_mcp_servers_receive_the_guardrail():

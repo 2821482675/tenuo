@@ -330,12 +330,12 @@ Tenuo provides two tiers of protection for OpenAI Agents:
 Tier 1 (Guardrails):
   - Rejects out-of-policy tool calls in trusted code
   - No cryptography needed
-  - Use: create_tier1_guardrail()
+  - Use: guard_agent(..., constraints=...)
 
 Tier 2 (Warrants):
   - The same policy checks, plus signed holder-bound authority
   - Proof-of-Possession on each call
-  - Use: create_tier2_guardrail()
+  - Use: guard_agent(..., warrant=..., signing_key=..., trusted_roots=...)
 
 Protect an agent's tool calls with guard_agent():
 
