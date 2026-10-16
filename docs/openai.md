@@ -615,16 +615,17 @@ Every output item your app is asked to run is checked, not only `function_call`.
 | `shell_call` | `shell` | fields of `action` (`commands`, ...) |
 | `apply_patch_call` | `apply_patch` | fields of `operation` (`type`, `path`, `diff`) |
 | `computer_call` | `computer` | fields of `action` |
+| client-executed `tool_search_call` | `tool_search` | `arguments` and `execution` |
 
 ```python
 client = guard(openai.OpenAI(), allow_tools=["search", "local_shell"])
 ```
 
-Under Tier 2 the warrant must grant the same tool name. Hosted tools that OpenAI runs itself (web search, file search, code interpreter, image generation, remote MCP) pass through unchanged.
+Under Tier 2 the warrant must grant the same tool name. Hosted tools that OpenAI runs itself (web search, file search, code interpreter, image generation, remote MCP, and server-executed tool search) pass through unchanged.
 
 ### Client surfaces
 
-`with_options()` and `copy()` return a client with the same guard and session. `chat.completions.parse()`, `beta.chat.completions.parse()` and `responses.parse()` are verified like `create()`. Endpoints guard can't verify fail closed with `OpenAIConfigurationError` (`CFG_005`): `with_raw_response`, `with_streaming_response`, `realtime`, the raw HTTP methods (`get`, `post`, ...), and everything under `beta` except `beta.chat.completions`. Use your unguarded client for endpoints that can't return tool calls.
+`with_options()` and `copy()` return a client with the same guard and session. `chat.completions.parse()`, `beta.chat.completions.parse()` and `responses.parse()` are verified like `create()`. Endpoints guard can't verify fail closed with `OpenAIConfigurationError` (`CFG_005`): `conversations` (whose stored items can include tool calls), `with_raw_response`, `with_streaming_response`, `realtime`, the raw HTTP methods (`get`, `post`, ...), and everything under `beta` except `beta.chat.completions`. Use your unguarded client for endpoints that can't return tool calls.
 
 ---
 

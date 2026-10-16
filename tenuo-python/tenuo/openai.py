@@ -869,6 +869,10 @@ def _is_app_executed_item(item: Any) -> bool:
         return False
     if item_type == "function_call":
         return True
+    if item_type == "tool_search_call":
+        # Tool search can run either on OpenAI's servers or in the client. A
+        # client-executed call is actionable even when the SDK omits call_id.
+        return getattr(item, "execution", None) == "client"
     if item_type.endswith("_output"):
         return False
     return bool(getattr(item, "call_id", None))
@@ -1598,6 +1602,7 @@ class GuardedResponses:
 # chat/responses wrappers. Under guard they fail closed instead of passing through.
 _UNGUARDED_CLIENT_ATTRS = frozenset(
     {
+        "conversations",
         "with_raw_response",
         "with_streaming_response",
         "realtime",

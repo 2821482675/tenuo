@@ -306,7 +306,9 @@ class TestParseHelpers:
 
 
 class TestUnverifiableSurfacesFailClosed:
-    @pytest.mark.parametrize("attr", ["with_raw_response", "with_streaming_response", "post", "request", "realtime"])
+    @pytest.mark.parametrize(
+        "attr", ["conversations", "with_raw_response", "with_streaming_response", "post", "request", "realtime"]
+    )
     def test_top_level(self, server: FakeServer, attr: str) -> None:
         client = guard(server.sync_client(), **policy())
         with pytest.raises(OpenAIConfigurationError) as exc:
@@ -389,6 +391,14 @@ APP_EXECUTED_ITEMS = {
         "input": "/data/x",
     },
     "local_shell_call": LOCAL_SHELL,
+    "tool_search_call": {
+        "type": "tool_search_call",
+        "id": "ts_1",
+        "call_id": None,
+        "execution": "client",
+        "status": "completed",
+        "arguments": {"query": "delete tools"},
+    },
     "shell_call": {
         "type": "shell_call",
         "id": "sh_1",
@@ -447,11 +457,19 @@ class TestResponsesAppExecutedItems:
 
     def test_hosted_items_pass_through(self, server: FakeServer) -> None:
         server.resp_items = [
-            {"type": "web_search_call", "id": "ws_1", "status": "completed", "action": {"type": "search", "query": "x"}}
+            {"type": "web_search_call", "id": "ws_1", "status": "completed", "action": {"type": "search", "query": "x"}},
+            {
+                "type": "tool_search_call",
+                "id": "ts_1",
+                "call_id": "server_call",
+                "execution": "server",
+                "status": "completed",
+                "arguments": {"query": "safe tools"},
+            },
         ]
         client = guard(server.sync_client(), **policy())
         resp = client.responses.create(model="m", input="x")
-        assert [i.type for i in resp.output] == ["web_search_call"]
+        assert [i.type for i in resp.output] == ["web_search_call", "tool_search_call"]
 
     def test_tier2_warrant_must_grant_local_shell(self, server: FakeServer) -> None:
         root, agent = SigningKey.generate(), SigningKey.generate()
