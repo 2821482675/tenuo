@@ -4576,6 +4576,25 @@ impl PyCompiledMcpConfig {
             .extract_constraints(tool_name, &args_value)
             .map_err(|e| py_validation_err(e.to_string()))?;
 
+        // Preserve which values came from defaults.  The Python MCP adapter
+        // needs this to pass exactly the values that were authorized to the
+        // tool; path presence alone is insufficient for wildcard/index paths.
+        let mut defaulted_fields: Vec<String> = result
+            .traces
+            .iter()
+            .filter(|trace| {
+                trace.result.is_none()
+                    && self
+                        .inner
+                        .tools
+                        .get(tool_name)
+                        .and_then(|tool| tool.extraction_rules.rules.get(&trace.field))
+                        .is_some_and(|rule| rule.rule.default.is_some())
+            })
+            .map(|trace| trace.field.clone())
+            .collect();
+        defaulted_fields.sort();
+
         // Convert extracted constraints to Python dict
         let dict = PyDict::new(py);
         for (key, value) in result.constraints {
@@ -4589,6 +4608,7 @@ impl PyCompiledMcpConfig {
             warrant_base64: result.warrant_base64,
             signature_base64: result.signature_base64,
             approvals_base64: result.approvals_base64,
+            defaulted_fields,
         })
     }
 }
@@ -4606,6 +4626,9 @@ pub struct PyExtractionResult {
     signature_base64: Option<String>,
     #[pyo3(get)]
     approvals_base64: Vec<String>,
+    /// Constraint fields whose configured default supplied the extracted value.
+    #[pyo3(get)]
+    defaulted_fields: Vec<String>,
 }
 
 #[pymethods]

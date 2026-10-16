@@ -415,6 +415,8 @@ Define how to extract constraints from MCP tool call arguments.
 
 > With a config, `MCPVerifier` is closed-world, as without one: an argument (or nested key) that no rule reads is checked as an unknown field under its dotted path (`follow_symlinks`, `query.where`), which the warrant denies unless it allows unknown fields. When a rule's `default` is used because the argument is missing, the tool receives that default, so it runs with the value that was checked.
 
+Defaults on wildcard or indexed body paths are denied when used because there is no unambiguous argument location at which to inject the checked value. Put defaults on ordinary object-field paths, or have the caller supply the value explicitly.
+
 > This configuration defines **extraction**, not **policy**. It tells Tenuo where to find the arguments in the JSON-RPC call. The actual limits (which paths are allowed, what ranges are valid) are defined in the Warrant. See [Argument Extraction](./constraints#argument-extraction) for a deep dive.
 
 ### Extraction Sources

@@ -214,6 +214,93 @@ def test_sdk_unread_arguments_are_denied(config: Any) -> None:
 # ------------------------------------------------------------------- verifier
 
 
+def test_verifier_passes_the_checked_nested_default(config: Any) -> None:
+    args = {"query": {"table": "reports", "operation": "select"}}
+    result = _verifier(config).verify(
+        "database_query", args, meta=_meta(_warrant(), "database_query", args)
+    )
+
+    assert result.allowed, result.denial_reason
+    assert result.clean_arguments["query"]["limit"] == 100
+
+
+def test_wildcard_default_is_denied_when_it_cannot_be_injected(
+    tmp_path: Any,
+) -> None:
+    path = tmp_path / "wildcard-default.yaml"
+    path.write_text(
+        '''version: "1"
+tools:
+  batch:
+    description: batch
+    constraints:
+      ids:
+        from: body
+        path: "items.*.id"
+        default: [safe]
+'''
+    )
+    cfg = CompiledMcpConfig.compile(McpConfig.from_file(str(path)))
+    args = {"items": [{}]}
+    result = _verifier(cfg).verify(
+        "batch", args, meta=_meta(_warrant(), "batch", args)
+    )
+
+    assert not result.allowed
+    assert result.jsonrpc_error_code == -32602
+    assert "cannot be passed to the tool" in result.denial_reason
+
+
+def test_conflicting_defaults_for_one_argument_path_are_denied(
+    tmp_path: Any,
+) -> None:
+    path = tmp_path / "conflicting-defaults.yaml"
+    path.write_text(
+        '''version: "1"
+tools:
+  conflicting:
+    description: conflicting
+    constraints:
+      first:
+        from: body
+        path: "option"
+        default: one
+      second:
+        from: body
+        path: "option"
+        default: two
+'''
+    )
+    cfg = CompiledMcpConfig.compile(McpConfig.from_file(str(path)))
+    warrant = (
+        Warrant.mint_builder()
+        .capability("conflicting", first=Wildcard(), second=Wildcard())
+        .holder(AGENT.public_key)
+        .ttl(60)
+        .mint(ROOT)
+    )
+    args: Dict[str, Any] = {}
+    result = _verifier(cfg).verify(
+        "conflicting", args, meta=_meta(warrant, "conflicting", args)
+    )
+
+    assert not result.allowed
+    assert result.jsonrpc_error_code == -32602
+    assert "cannot be passed to the tool" in result.denial_reason
+
+
+@pytest.mark.parametrize("items", [[], [{}]])
+def test_empty_containers_that_never_reach_a_rule_are_unread(
+    config: Any, items: List[Any]
+) -> None:
+    args = {"items": items}
+    result = _verifier(config).verify(
+        "batch", args, meta=_meta(_warrant(), "batch", args)
+    )
+
+    assert not result.allowed
+
+
 def test_unread_argument_named_like_a_constraint_is_refused(tmp_path: Any) -> None:
     path = tmp_path / "c.yaml"
     path.write_text('version: "1"\ntools:\n  read_file:\n    description: x\n    constraints:\n      path:\n        from: body\n        path: "file.path"\n')

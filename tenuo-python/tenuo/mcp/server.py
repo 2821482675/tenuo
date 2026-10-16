@@ -245,18 +245,28 @@ def _unread_arguments(args: Mapping[str, Any], rule_paths: List[List[str]]) -> L
     """
     unread: List[Tuple[str, Any]] = []
 
-    def walk(node: Any, prefix: List[str], candidates: List[List[str]]) -> None:
+    def walk(node: Any, prefix: List[str], candidates: List[List[str]]) -> bool:
+        """Walk a container and report whether any rule reached its value."""
+        read_any = False
         in_list = isinstance(node, list)
         items = enumerate(node) if in_list else node.items()
         for key, value in items:
             path = prefix + [str(key)]
             matched = [rest[1:] for rest in candidates if _segment_reads(rest[0], key, in_list)]
             if any(not rest for rest in matched):
+                read_any = True
                 continue
             if matched and isinstance(value, (Mapping, list)):
-                walk(value, path, matched)
+                unread_before = len(unread)
+                child_read = walk(value, path, matched)
+                read_any = read_any or child_read
+                # An empty container (or a chain of empty containers) never
+                # reaches the configured leaf and is therefore still unread.
+                if not child_read and len(unread) == unread_before:
+                    unread.append((".".join(path), value))
             else:
                 unread.append((".".join(path), value))
+        return read_any
 
     walk(args, [], [p for p in rule_paths if p])
     return unread
@@ -277,24 +287,19 @@ def _apply_default(arguments: Dict[str, Any], path: List[str], value: Any) -> bo
         node = node.setdefault(seg, {})
     if not isinstance(node, dict):
         return False
-    node.setdefault(path[-1], copy.deepcopy(value))
-    return True
-
-
-def _path_present(arguments: Mapping[str, Any], path: List[str]) -> bool:
-    node: Any = arguments
-    for seg in path:
-        if isinstance(node, Mapping) and seg in node:
-            node = node[seg]
-        elif isinstance(node, list) and _INDEX_SEGMENT.fullmatch(seg) and int(seg) < len(node):
-            node = node[int(seg)]
-        else:
-            return False
+    leaf = path[-1]
+    if leaf in node:
+        return node[leaf] == value
+    node[leaf] = copy.deepcopy(value)
     return True
 
 
 def _closed_world_config_view(
-    config: Any, tool_name: str, args: Dict[str, Any], extracted: Dict[str, Any]
+    config: Any,
+    tool_name: str,
+    args: Dict[str, Any],
+    extracted: Dict[str, Any],
+    defaulted_fields: List[str],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Make ``CompiledMcpConfig`` extraction closed-world, like raw mode.
 
@@ -321,14 +326,13 @@ def _closed_world_config_view(
         constraints[dotted] = value
 
     clean_arguments = copy.deepcopy(args)
+    defaulted = set(defaulted_fields)
     for rule in body_rules:
-        default = rule.get("default")
-        path = str(rule.get("path", "")).split(".")
-        if default is None or _path_present(args, path):
+        field = str(rule.get("field", ""))
+        if field not in defaulted:
             continue
-        if "*" in path:
-            continue  # Nothing to place it in; no item carries the field.
-        if not _apply_default(clean_arguments, path, default):
+        path = str(rule.get("path", "")).split(".")
+        if not _apply_default(clean_arguments, path, rule.get("default")):
             raise ValueError(f"Config default for '{rule.get('path')}' cannot be passed to the tool")
     return clean_arguments, constraints
 
@@ -872,7 +876,11 @@ class MCPVerifier:
             # that were checked.
             try:
                 clean_arguments, constraints = _closed_world_config_view(
-                    self._config, tool_name, args, dict(extraction.constraints)
+                    self._config,
+                    tool_name,
+                    args,
+                    dict(extraction.constraints),
+                    list(extraction.defaulted_fields),
                 )
             except Exception as exc:
                 return _emit_and_return(MCPVerificationResult(
