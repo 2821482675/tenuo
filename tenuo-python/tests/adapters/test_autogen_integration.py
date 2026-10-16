@@ -722,6 +722,155 @@ class TestStreamingTOCTOUProtection:
         joined = "".join(tc.function.arguments for tc in self._emitted_tool_calls(result_chunks))
         assert joined == original
 
+    def test_streaming_scopes_tool_call_indexes_to_each_choice(self):
+        """The same tool-call index in separate completion choices must not collide."""
+        chunks = [
+            MockStreamChunk(
+                id="chunk_0",
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0,
+                                    id="call_0",
+                                    function=MockFunction(name="search", arguments='{"query": "ok-0"}'),
+                                )
+                            ]
+                        ),
+                    ),
+                    MockStreamChoice(
+                        index=1,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0,
+                                    id="call_1",
+                                    function=MockFunction(name="search", arguments='{"query": "ok-1"}'),
+                                )
+                            ]
+                        ),
+                    ),
+                ],
+            ),
+            MockStreamChunk(
+                id="chunk_1",
+                choices=[
+                    MockStreamChoice(index=0, delta=MockStreamDelta(), finish_reason="tool_calls"),
+                    MockStreamChoice(index=1, delta=MockStreamDelta(), finish_reason="tool_calls"),
+                ],
+            ),
+        ]
+        guard = GuardBuilder().allow("search", query=Pattern("ok*")).build()
+
+        result_chunks = list(guard.guard_stream(iter(chunks)))
+
+        emitted = self._emitted_tool_calls(result_chunks)
+        assert [tc.id for tc in emitted] == ["call_0", "call_1"]
+        assert [json.loads(tc.function.arguments) for tc in emitted] == [
+            {"query": "ok-0"},
+            {"query": "ok-1"},
+        ]
+
+    def test_streaming_waits_for_unfinished_choice(self):
+        """A finished choice must not force verification of another choice's partial arguments."""
+        chunks = [
+            MockStreamChunk(
+                id="chunk_0",
+                choices=[
+                    MockStreamChoice(index=0, delta=MockStreamDelta(), finish_reason="stop"),
+                    MockStreamChoice(
+                        index=1,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0,
+                                    id="call_1",
+                                    function=MockFunction(name="search", arguments='{"query": "'),
+                                )
+                            ]
+                        ),
+                    ),
+                ],
+            ),
+            MockStreamChunk(
+                id="chunk_1",
+                choices=[
+                    MockStreamChoice(
+                        index=1,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0,
+                                    function=MockFunction(name="", arguments='ok"}'),
+                                )
+                            ]
+                        ),
+                        finish_reason="tool_calls",
+                    )
+                ],
+            ),
+        ]
+        guard = GuardBuilder().allow("search", query=Pattern("ok*")).build()
+
+        result_chunks = list(guard.guard_stream(iter(chunks)))
+
+        emitted = self._emitted_tool_calls(result_chunks)
+        assert len(emitted) == 2
+        assert json.loads("".join(tc.function.arguments for tc in emitted)) == {"query": "ok"}
+
+    @pytest.mark.parametrize(
+        ("second_name", "second_id", "reason"),
+        [
+            ("read_file", None, "Conflicting tool names"),
+            ("", "call_1", "Conflicting IDs"),
+        ],
+    )
+    def test_streaming_rejects_conflicting_call_identity(self, second_name, second_id, reason):
+        """One tool-call index cannot change its name or ID across deltas."""
+        chunks = [
+            MockStreamChunk(
+                id="chunk_0",
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0,
+                                    id="call_0",
+                                    function=MockFunction(name="search", arguments='{"query": "'),
+                                )
+                            ]
+                        ),
+                    )
+                ],
+            ),
+            MockStreamChunk(
+                id="chunk_1",
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0,
+                                    id=second_id,
+                                    function=MockFunction(name=second_name, arguments='ok"}'),
+                                )
+                            ]
+                        ),
+                        finish_reason="tool_calls",
+                    )
+                ],
+            ),
+        ]
+        guard = GuardBuilder().allow("search", query=Pattern("ok*")).build()
+
+        with pytest.raises(ConstraintViolation, match=reason):
+            list(guard.guard_stream(iter(chunks)))
+
 
 # =============================================================================
 # Tier 2: Streaming
