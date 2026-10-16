@@ -39,4 +39,8 @@ def test_denial_log_has_arg_keys_not_values(caplog):
     denials = [r.getMessage() for r in caplog.records if "Authorization denied" in r.getMessage()]
     assert denials
     assert "['query']" in denials[0]
+    assert "Error type:" in denials[0]
+    assert "Reason:" not in denials[0]
+    assert all("?s=" not in m for m in denials)
+    assert all(warrant.to_base64() not in m for m in denials)
     assert all(SECRET not in m for m in denials)

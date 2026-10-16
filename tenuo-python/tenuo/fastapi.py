@@ -602,10 +602,15 @@ class TenuoGuard:
             reason = enforcement.denial_reason or "Authorization denied"
 
             # Log detailed info for operators (never exposed to clients).
-            # Argument names only: request values stay out of logs.
+            # Argument names and a stable error type only: request values and
+            # free-form denial reasons stay out of logs.
             logger.warning(
-                f"[{request_id}] Authorization denied for tool '{self.tool}' "
-                f"with arg keys {sorted(auth_args)}. Reason: {reason}. Warrant ID: {warrant.id}"
+                "[%s] Authorization denied for tool '%s' with arg keys %s. Error type: %s. Warrant ID: %s",
+                request_id,
+                self.tool,
+                sorted(auth_args),
+                enforcement.error_type or "authorization_denied",
+                warrant.id,
             )
 
             # Check if detailed errors are allowed (dev mode only)
