@@ -77,6 +77,7 @@ def test_extract_constraints(mcp_config_file):
     constraints = dict(result.constraints)
     assert constraints["path"] == "/var/log/syslog"
     assert constraints["max_size"] == 5000
+    assert result.defaulted_fields == []
 
 
 def test_extract_constraints_default_value(mcp_config_file):
@@ -91,6 +92,7 @@ def test_extract_constraints_default_value(mcp_config_file):
     constraints = dict(result.constraints)
     assert constraints["path"] == "/var/log/syslog"
     assert constraints["max_size"] == 1048576  # Default value
+    assert result.defaulted_fields == ["max_size"]
 
 
 def test_extract_constraints_missing_required(mcp_config_file):
