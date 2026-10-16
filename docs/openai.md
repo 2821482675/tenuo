@@ -519,6 +519,8 @@ client = guard(
 | `constraint_hash` | Hash of Tier 1 config |
 | `warrant_id` | Warrant ID (Tier 2 only) |
 
+Every decision is recorded, including streamed tool calls, malformed or duplicate-key arguments, and streams cut off by the buffer limit.
+
 ---
 
 ## Developer Experience
@@ -578,7 +580,7 @@ except TenuoOpenAIError as e:
 | `OpenAIConstraintViolation` | 1+ | T1_002 | Argument fails constraint |
 | `WarrantDenied` | 2 | T2_001 | Warrant doesn't allow tool/args |
 | `MissingSigningKey` | 2 | T2_002 | Warrant provided without signing_key |
-| `OpenAIConfigurationError` | 1+ | CFG_002, CFG_003, CFG_004, C1_003 | Invalid guard() configuration |
+| `OpenAIConfigurationError` | 1+ | CFG_002, CFG_003, CFG_004, CFG_005, C1_003 | Invalid guard() configuration, or an endpoint guard can't verify |
 | `MalformedToolCall` | 1+ | T1_003 | Invalid JSON in tool arguments |
 | `BufferOverflow` | 1+ | T1_004 | Streaming buffer limit exceeded |
 
@@ -601,6 +603,29 @@ response = client.responses.create(...)
 
 > [!NOTE]
 > Streaming Responses (`responses.create(..., stream=True)`) isn't supported under guard yet. The call raises `OpenAIConfigurationError` (`CFG_004`) before any request is sent, so you never get an unverified stream.
+
+### Tool calls other than functions
+
+Every output item your app is asked to run is checked, not only `function_call`. Custom (freeform) tools, `local_shell_call`, `shell_call`, `apply_patch_call` and `computer_call` must be allowed by name. A denylist on its own never lets them through.
+
+| Item | Tool name to allow | Arguments checked |
+|------|--------------------|-------------------|
+| custom tool call (chat or Responses) | the tool's name | `input` |
+| `local_shell_call` | `local_shell` | fields of `action` (`command`, `env`, ...) |
+| `shell_call` | `shell` | fields of `action` (`commands`, ...) |
+| `apply_patch_call` | `apply_patch` | fields of `operation` (`type`, `path`, `diff`) |
+| `computer_call` | `computer` | fields of `action` |
+| client-executed `tool_search_call` | `tool_search` | `arguments` and `execution` |
+
+```python
+client = guard(openai.OpenAI(), allow_tools=["search", "local_shell"])
+```
+
+Under Tier 2 the warrant must grant the same tool name. Hosted tools that OpenAI runs itself (web search, file search, code interpreter, image generation, remote MCP, and server-executed tool search) pass through unchanged.
+
+### Client surfaces
+
+`with_options()` and `copy()` return a client with the same guard and session. `chat.completions.parse()`, `beta.chat.completions.parse()` and `responses.parse()` are verified like `create()`. Endpoints guard can't verify fail closed with `OpenAIConfigurationError` (`CFG_005`): `conversations` (whose stored items can include tool calls), `with_raw_response`, `with_streaming_response`, `realtime`, the raw HTTP methods (`get`, `post`, ...), and everything under `beta` except `beta.chat.completions`. Use your unguarded client for endpoints that can't return tool calls.
 
 ---
 
