@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import sys
 import os
 import tempfile
@@ -169,6 +170,21 @@ def _make_client() -> "SecureMCPClient":
 
     mock_session = MagicMock()
     mock_session.call_tool = AsyncMock(return_value=MagicMock(content="result"))
+    # These client tests exercise the modern public call path.  Give the mock
+    # an explicit signature so capability detection is stable across Python's
+    # changing AsyncMock introspection (the legacy SDK path is covered in
+    # test_mcp_sdk_compat.py).
+    mock_session.call_tool.__signature__ = inspect.Signature(
+        [
+            inspect.Parameter("name", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("arguments", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter(
+                "meta",
+                inspect.Parameter.KEYWORD_ONLY,
+                default=None,
+            ),
+        ]
+    )
     client.session = mock_session
     return client
 
