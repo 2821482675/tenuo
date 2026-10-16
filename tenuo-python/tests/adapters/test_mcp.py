@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import sys
 import os
 import tempfile
@@ -169,6 +170,21 @@ def _make_client() -> "SecureMCPClient":
 
     mock_session = MagicMock()
     mock_session.call_tool = AsyncMock(return_value=MagicMock(content="result"))
+    # These client tests exercise the modern public call path.  Give the mock
+    # an explicit signature so capability detection is stable across Python's
+    # changing AsyncMock introspection (the legacy SDK path is covered in
+    # test_mcp_sdk_compat.py).
+    mock_session.call_tool.__signature__ = inspect.Signature(
+        [
+            inspect.Parameter("name", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("arguments", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter(
+                "meta",
+                inspect.Parameter.KEYWORD_ONLY,
+                default=None,
+            ),
+        ]
+    )
     client.session = mock_session
     return client
 
@@ -391,7 +407,7 @@ class TestCallToolArgumentInjection:
         envelope = forwarded["_tenuo"]
         assert envelope["warrant"] == "warrant_b64"
         assert envelope["signature"] == "c2ln"
-        assert client.session.call_tool.call_args.kwargs["meta"] is None
+        assert "meta" not in client.session.call_tool.call_args.kwargs
         assert "encoding" in sign_meta.call_args.args[3]
         assert original == {"path": "/data/file.txt", "encoding": None}
 
@@ -650,6 +666,18 @@ class TestProtectedToolNoContextFailsClosed:
         protected = self._protected(client)
 
         with pytest.raises(ConfigurationError, match="No authorization context"):
+            await protected(path="/data/f.txt")
+
+        client.session.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_raises_and_does_not_call_server(self):
+        from tenuo.exceptions import ConfigurationError
+
+        client = _make_client()
+        protected = self._protected(client)
+
+        with pytest.raises(ConfigurationError, match="Tenuo not configured"):
             await protected(path="/data/f.txt")
 
         client.session.call_tool.assert_not_called()
