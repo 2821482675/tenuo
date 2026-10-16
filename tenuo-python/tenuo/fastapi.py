@@ -21,7 +21,6 @@ Usage:
 """
 
 import base64
-import functools
 import inspect
 import logging
 import types
@@ -692,31 +691,24 @@ def _is_list_annotation(annotation: Any) -> bool:
     return annotation is list or origin is list
 
 
-@functools.lru_cache(maxsize=512)
-def _type_adapter(annotation: Any) -> Any:
-    from pydantic import TypeAdapter
-
-    return TypeAdapter(annotation)
-
-
-def _coerce(annotation: Any, raw: Any) -> Any:
-    """Validate ``raw`` against ``annotation`` the way FastAPI would.
+def _coerce(field: Any, raw: Any) -> Any:
+    """Validate ``raw`` with FastAPI's own Pydantic field adapter.
 
     Returns ``raw`` unchanged when validation fails (the request is then
     authorized against the untyped string, which fails closed on numeric
     constraints, and FastAPI rejects it with 422 after the guard), or when
     the result is not a plain JSON value that a client can sign.
+
+    ``ModelField.validate`` is the compatibility boundary FastAPI itself
+    maintains across Pydantic 1 and 2. Reconstructing a ``TypeAdapter`` from
+    the annotation both loses ``Query``/``Path`` constraints and crashes on
+    FastAPI 0.100 installations that still use Pydantic 1.
     """
     try:
-        value = _type_adapter(annotation).validate_python(raw)
-    except TypeError:  # unhashable annotation: skip the cache
-        try:
-            from pydantic import TypeAdapter
-
-            value = TypeAdapter(annotation).validate_python(raw)
-        except Exception:
-            return raw
+        value, errors = field.validate(raw, {}, loc=(field.field_info.in_.value, field.alias))
     except Exception:
+        return raw
+    if errors:
         return raw
     if type(value) in _JSON_SCALARS:
         return value
@@ -740,17 +732,17 @@ def _default_extract_args(request: Request) -> Dict[str, Any]:
     for field in getattr(dependant, "path_params", []):
         key = field.alias
         if key in args:
-            args[key] = _coerce(field.field_info.annotation, args[key])
+            args[key] = _coerce(field, args[key])
 
     for field in getattr(dependant, "query_params", []):
         key = field.alias
         if key not in request.query_params:
             continue
-        annotation = field.field_info.annotation
+        annotation = getattr(field.field_info, "annotation", None) or getattr(field, "outer_type_", None)
         if _is_list_annotation(annotation):
-            args[key] = _coerce(annotation, request.query_params.getlist(key))
+            args[key] = _coerce(field, request.query_params.getlist(key))
         else:
-            args[key] = _coerce(annotation, args[key])
+            args[key] = _coerce(field, args[key])
     return args
 
 
