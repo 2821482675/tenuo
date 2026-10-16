@@ -42,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP client tools deny calls with no warrant in scope.** Calling a
+  `SecureMCPClient.tools[...]` wrapper (and the LangChain tools built from
+  it) with neither a warrant nor a signing key in scope logged a warning and
+  called the server anyway. It now raises `ConfigurationError` and the server
+  is not called, matching `call_tool(warrant_context=True)`. To keep the old
+  behavior in development, configure `dev_mode=True, allow_passthrough=True`.
+  MCP 1.9.4 clients also keep working: calls omit the unsupported `meta`
+  keyword when empty and use the standard wire request when injecting warrant
+  metadata.
 - **OpenAI Agents SDK: `guard_agent()`.** Checks every tool call an agent
   makes before the tool runs, by attaching a Tenuo tool guardrail to each
   function tool, each MCP server and every agent reachable through handoffs.
