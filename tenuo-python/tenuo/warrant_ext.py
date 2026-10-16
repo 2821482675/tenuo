@@ -38,6 +38,7 @@ import base64
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, Union, runtime_checkable
+from urllib.parse import quote
 
 try:
     from tenuo_core import WARRANT_HEADER as _WARRANT_HEADER  # type: ignore[attr-defined]
@@ -553,7 +554,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
         # Encode state: JSON -> Bytes -> Base64
         state_json = json.dumps(state)
         state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("ascii")
-        explorer_url = f"{playground_url}?s={state_b64}"
+        explorer_url = f"{playground_url}?s={quote(state_b64, safe='')}"
     except Exception:
         # Fallback if encoding fails: keep the bare Explorer link
         pass
@@ -615,14 +616,15 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
                 suggestion=f"{enhanced_suggestion}{playground_hint}",
                 explorer_url=explorer_url,
             )
-    except Exception as e:
-        # Fallback if check_constraints fails unexpectedly
+    except Exception:
+        # Do not include the exception text: constraint implementations may
+        # put the rejected argument value in their error messages.
         return WhyDenied(
             denied=True,
             deny_code=DenyCode.CONSTRAINT_MISMATCH,
             deny_path="constraints.error",
             tool=tool,
-            suggestion=f"Could not check constraints: {e}.{playground_hint}",
+            suggestion=f"Could not check constraints.{playground_hint}",
             explorer_url=explorer_url,
         )
 

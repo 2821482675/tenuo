@@ -12,8 +12,22 @@ from urllib.parse import parse_qs, urlparse
 from tenuo_core import Pattern, SigningKey, Warrant
 
 import tenuo.warrant_ext  # noqa: F401  (installs Warrant.why_denied)
+from tenuo.warrant_ext import _warrant_why_denied
 
 SECRET = "hunter2-secret-value"
+
+
+class _ExplodingWarrant:
+    tools = ["search"]
+
+    def to_base64(self):
+        return "w"
+
+    def is_expired(self):
+        return False
+
+    def check_constraints_detailed(self, _tool, args):
+        raise ValueError(f"rejected value: {args['query']}")
 
 
 def _warrant():
@@ -50,6 +64,24 @@ def test_explorer_url_keeps_prefilled_state():
     state = json.loads(base64.b64decode(state_b64))
     assert state["tool"] == "search"
     assert json.loads(state["args"]) == {"query": SECRET}
+
+
+def test_explorer_url_escapes_standard_base64_query_characters():
+    # This state encodes with a literal '+' in standard base64. It must be
+    # percent-escaped or URL query parsers turn it into a space.
+    why = _warrant_why_denied(_ExplodingWarrant(), "search", {"query": "0>"})
+    assert "%2B" in why.explorer_url
+    state_b64 = parse_qs(urlparse(why.explorer_url).query)["s"][0]
+    state = json.loads(base64.b64decode(state_b64))
+    assert json.loads(state["args"]) == {"query": "0>"}
+
+
+def test_constraint_error_suggestion_does_not_echo_exception_values():
+    warrant = _ExplodingWarrant()
+    why = _warrant_why_denied(warrant, "search", {"query": SECRET})
+    assert why.denied
+    assert "Could not check constraints" in why.suggestion
+    _assert_clean(why.suggestion, warrant)
 
 
 def test_allowed_has_no_explorer_url():
