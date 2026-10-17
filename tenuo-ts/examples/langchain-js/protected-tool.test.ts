@@ -13,7 +13,12 @@
 process.env.TENUO_ALLOW_DEV ??= "1";
 
 import { describe, expect, expectTypeOf, it } from "vitest";
-import { AuthorizationDeniedError, createTenuo, under } from "@tenuo/core";
+import {
+  AuthorizationDeniedError,
+  createTenuo,
+  TenuoConfigurationError,
+  under,
+} from "@tenuo/core";
 import { createHarness, runDemo } from "./protected-tool.ts";
 
 describe("langchain-js protected tool", () => {
@@ -88,7 +93,7 @@ describe("langchain-js protected tool", () => {
     const { protectedReadFile, executed } = createHarness();
     await expect(
       protectedReadFile.invoke({ path: "/data/reports/q3.pdf" }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(TenuoConfigurationError);
     expect(executed).toEqual([]);
   });
 
