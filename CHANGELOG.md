@@ -7,8 +7,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`ControlPlaneClient.status`.** Reports the connection state
+  (`registering`, `connected`, `degraded`, `standalone`, `stopped`), the last
+  error, and buffered, flushed and dropped audit event counts. It does no I/O,
+  so a health check can read it. Rust callers get the same through
+  `HeartbeatConfig::status`.
+- **Optional filesystem open on the Rust guard.** The `filesystem` feature
+  pins a local jail with `path_jail` 0.5 and opens an authorized `Subpath`
+  argument from `AuthorizedCall::open`. The logical ceiling and the host
+  directory are executor configuration. `Subpath` stays lexical. `atomic`
+  fails where the kernel cannot enforce the open. The open rejects a
+  non-regular file and extra hard links unless the caller turns those checks
+  off. Symlinks are always rejected. The open refuses an argument that is
+  not already normalized, so `//`, `.`, `..`, `\`, and a trailing slash cannot
+  bypass `Pattern` or `NotOneOf`. Every covering `Subpath` must sit inside the
+  executor ceiling. Creating a file requires Linux x86_64 or aarch64; elsewhere
+  the executor creates the file and the tool opens it with `write_truncate`.
+  Filesystem capabilities require an explicit access limit by default, with
+  narrow presets for read, existing-file write, append, and create-new access;
+  `allow_handler_selected_access` is the explicit opt-out. Filesystem types are
+  exported by `sdk::prelude`. `Workspace::new` probes descriptor-path support so
+  a misconfigured host fails at startup instead of on its first request.
+  `FilesystemError` converts to `std::io::Error` and keeps `NotFound` and
+  `PermissionDenied`. Linux x86_64 and aarch64 do not fall back when `openat2`
+  is unavailable. Every platform verifies the opened descriptor's exact path
+  spelling before returning or truncating it, including on case-folding
+  filesystems. Linux performs that check through `/proc/self/fd` and fails
+  closed if it is unavailable. Errors from the open do not include the host path. Python
+  and TypeScript callers are unchanged; Python still checks a path with
+  `path_jail` and then reads it, on every platform, which is not a
+  kernel-enforced open.
+
 ### Fixed
 
+- **MCP: `MCPVerifier(config=...)` is closed-world.** With a
+  `CompiledMcpConfig`, arguments no extraction rule read (`follow_symlinks`,
+  a nested `query.where`) reached the tool unchecked, and a config `default`
+  was checked while the tool ran with its own default. Unread arguments are
+  now checked as unknown fields under their dotted path, as in raw mode, and
+  the tool receives the default that was checked. A config object that cannot
+  list its rules is refused. A used default on a wildcard or indexed path is
+  refused when it cannot be injected unambiguously. `CompiledMcpConfig`
+  exposes rule listings and the fields defaulted by each extraction.
+- **MCP denial docs.** The middlewares return denials as `isError` tool
+  results with the code in `structuredContent.tenuo.code`, not JSON-RPC
+  errors; the docs now say so, and document `nonce_store` replay protection
+  and its effect on identical calls in one PoP window.
+- **MCP client tools deny calls with no warrant in scope.** Calling a
+  `SecureMCPClient.tools[...]` wrapper (and the LangChain tools built from
+  it) with neither a warrant nor a signing key in scope logged a warning and
+  called the server anyway. It now raises `ConfigurationError` and the server
+  is not called, matching `call_tool(warrant_context=True)`. To keep the old
+  behavior in development, configure `dev_mode=True, allow_passthrough=True`.
+  MCP 1.9.4 clients also keep working: calls omit the unsupported `meta`
+  keyword when empty and use the standard wire request when injecting warrant
+  metadata.
+- **OpenAI Agents SDK: `guard_agent()`.** Checks every tool call an agent
+  makes before the tool runs, by attaching a Tenuo tool guardrail to each
+  function tool, each MCP server and every agent reachable through handoffs.
+  Hosted tools, and MCP servers on SDK releases without tool guardrails, are
+  refused rather than left unchecked. Requires `openai-agents` 0.3.3 or later.
+  Agent input guardrails only see the agent's input, not the model's tool
+  calls, so `TenuoToolGuardrail` placed in `Agent(input_guardrails=...)` now
+  raises `OpenAIConfigurationError` (`CFG_006`) pointing to `guard_agent()`. Switch
+  existing Agents SDK integrations to `guard_agent()`.
+- **OpenAI `guard()` checks every tool call a client can return.** Clients
+  from `with_options()` and `copy()` were unwrapped, and
+  `beta.chat.completions.parse()` passed through unverified; both are now
+  guarded, and `with_raw_response`, `with_streaming_response`, `realtime`,
+  `conversations` (which can return stored tool calls), the raw HTTP methods,
+  and the rest of `beta` raise
+  `OpenAIConfigurationError` (`CFG_005`). Custom tool calls and Responses
+  `custom_tool_call`, `local_shell_call`, `shell_call`, `apply_patch_call` and
+  `computer_call` items, plus client-executed `tool_search_call` items, were
+  never checked; they are now authorized by name and input and denied unless
+  explicitly allowed. Chat streaming keys tool
+  calls by choice as well as index, so `n>1` streams can't mix calls, and
+  joins tool names split across chunks. Streamed calls, malformed and
+  duplicate-key arguments, and buffer overflows now emit audit events.
+- **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
+  timer outside the runtime, so every call from Python, including the
+  `atexit` hook that runs on every exit with a connected client, printed
+  `there is no reactor running` and skipped the stop signal. Shutdown now
+  closes the audit channel, signals the background task and waits for its
+  final flush, returning as soon as it finishes instead of sleeping the full
+  timeout. It releases the GIL while waiting and accepts any float timeout.
+  (#806)
+- **Audit events survive a control plane outage instead of being dropped
+  silently.** The audit task started only after registration, so while the
+  control plane was unreachable the channel filled at `audit_batch_size`
+  events and the rest were discarded without a log or count; the CLI
+  authorizer dropped every event emitted before registration. Events are now
+  buffered from startup (up to 10× `audit_batch_size`) and sent as soon as
+  registration succeeds, in requests of at most `audit_batch_size` events.
+  Past the cap, only the oldest events beyond it are dropped, instead of 90%
+  of the buffer at once. A rejected request drops only its own events. Failed
+  sends back off from 2s to 60s; shutdown still makes one immediate final
+  attempt rather than waiting out `Retry-After`. Every lost event is counted.
+- **Control plane outages print one notice instead of one line per retry.**
+  The client prints when it cannot reach the control plane, loses contact
+  after registering, reconnects, or drops unsent events. The per-attempt
+  registration lines and the `flushed N audit events` line now go to
+  `tracing` only. Registration retries are jittered so a fleet does not
+  reconnect in lockstep.
 - **`tenuo.testing` grant assertions check real grants.** `assert_can_grant`
   passed the parent's `timedelta` TTL to the grant builder, so every grant
   failed with `TypeError`, and `assert_cannot_grant` passed for any grant,
