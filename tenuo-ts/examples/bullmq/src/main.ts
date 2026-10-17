@@ -12,7 +12,10 @@ const queueName = "archive";
 // Both sides run in one process for the demo. In production the worker loads
 // its holder key and the producer's public key from its own configuration.
 const holderKey = createTenuo.generateHolderKey();
-const producer = createArchiveProducer(createTenuo.publicKeyFromHolderKey(holderKey));
+const producer = createArchiveProducer({
+  issuer: createTenuo.devRoot(),
+  workerPublicKey: createTenuo.publicKeyFromHolderKey(holderKey),
+});
 const archiver = createArchiveWorker({ rootPublicKey: producer.rootPublicKey, holderKey });
 
 const worker = new Worker<ArchiveJobData, string>(queueName, (job) => archiver.process(job), {
@@ -36,8 +39,10 @@ const bothSettled = new Promise<void>((resolve) => {
 });
 
 const queue = new Queue<ArchiveJobData>(queueName, { connection });
-await queue.add("archive", producer.jobFor("acme", "/tenants/acme/q3.pdf"));
-await queue.add("archive", producer.jobFor("acme", "/tenants/globex/q3.pdf"));
+const signed = producer.jobFor("acme", "/tenants/acme/q3.pdf");
+await queue.add("archive", signed);
+// The same warrant with `path` rewritten, as anyone who can write to the queue could do.
+await queue.add("archive", { ...signed, path: "/tenants/globex/q3.pdf" });
 
 await bothSettled;
 await worker.close();

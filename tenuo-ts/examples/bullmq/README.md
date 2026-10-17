@@ -10,10 +10,13 @@ Anyone who can write to the queue controls everything in a job, so the worker ne
 from job fields. The job carries a warrant signed by a trusted producer, and the worker verifies it.
 
 `createArchiveProducer()` (`src/producer.ts`) is the trusted side: the process that has already
-authenticated the tenant. For each job it mints a warrant allowing `archive_document` only
-`under("/tenants/<tenantId>")`, bound to the worker's public key, with a 300 second TTL and no further
-delegation. It refuses a tenant id that is not a single path segment, so `""` can never become
-`under("/tenants/")`.
+authenticated the tenant. It refuses a tenant id that is not a single path segment, and a path
+that is not already normalized and inside `/tenants/<tenantId>/`. For each job it then mints a warrant
+allowing `archive_document` for that `exact(path)` only, bound to the worker's public key, with a 300
+second TTL and no further delegation. A job rewritten in the queue cannot reuse the warrant for
+another document, even in the same tenant. The producer takes the key it signs with as `issuer`, so
+production passes an issuer key from configuration and only the demo and tests use
+`createTenuo.devRoot()`.
 
 `createArchiveWorker()` (`src/worker.ts`) runs once per worker process. It trusts only the producer's
 public key, and its `archive_document` tool has a host ceiling of `under("/tenants")` that is fixed at
@@ -26,7 +29,7 @@ startup and is not job authority. For each job:
 3. `tenuo.withSession(session, ...)` makes that warrant the authority for the call, and only for that
    job's async context.
 
-Authorization runs before `execute`. A path outside the warrant's tenant throws
+Authorization runs before `execute`. A path other than the one the warrant names throws
 `AuthorizationDeniedError` and the archive operation never runs, so the job fails in BullMQ the same
 way any other processor rejection does. Concurrent jobs on the same worker (`concurrency: 4` in
 `src/main.ts`) never see each other's authority.
@@ -40,7 +43,8 @@ npm test
 ```
 
 The tests call the processor directly with a plain object standing in for a BullMQ `Job`. They cover
-an allowed job, a denied path that proves the operation never ran, a warrant from an untrusted
+an allowed job, jobs whose path was rewritten to another tenant or another document in the same
+tenant (proving the operation never ran), paths the producer refuses to sign, a warrant from an untrusted
 producer, tenant ids that are not one path segment, and concurrent jobs that interleave inside their
 sessions before authorizing. No Redis and no external service.
 
@@ -53,7 +57,7 @@ docker run --rm -p 6379:6379 redis:8-alpine
 npm start
 ```
 
-It enqueues one allowed job and one job for another tenant's path, then prints the completion and
+It enqueues one allowed job and a copy of it with `path` rewritten to another tenant, then prints the completion and
 the denial. The demo runs the producer and the worker in one process with `createTenuo.devRoot()`,
 opted in with `TENUO_ALLOW_DEV=1`. In production they are separate processes: the producer signs with
 an issuer key, and the worker loads its holder key and the producer's public key from configuration.

@@ -10,13 +10,13 @@ const job = (data: ArchiveJobData) => ({ id: data.path, data }) as Job<ArchiveJo
 function setup() {
   const holderKey = createTenuo.generateHolderKey();
   const workerPublicKey = createTenuo.publicKeyFromHolderKey(holderKey);
-  const producer = createArchiveProducer(workerPublicKey);
+  const producer = createArchiveProducer({ issuer: createTenuo.devRoot(), workerPublicKey });
   const archiver = createArchiveWorker({ rootPublicKey: producer.rootPublicKey, holderKey });
   return { workerPublicKey, producer, archiver };
 }
 
 describe("archive worker", () => {
-  it("archives a path inside the warrant's tenant", async () => {
+  it("archives the path the warrant was signed for", async () => {
     const { producer, archiver } = setup();
 
     await expect(
@@ -25,19 +25,25 @@ describe("archive worker", () => {
     expect(archiver.archived).toEqual(["/tenants/acme/q3.pdf"]);
   });
 
-  it("denies another tenant's path without running the operation", async () => {
-    const { producer, archiver } = setup();
+  // Anyone who can write to the queue can rewrite `path`. The warrant still
+  // covers only the path the producer signed.
+  it.each(["/tenants/globex/q3.pdf", "/tenants/acme/payroll.pdf"])(
+    "denies a job rewritten to %s without running the operation",
+    async (path) => {
+      const { producer, archiver } = setup();
+      const signed = producer.jobFor("acme", "/tenants/acme/q3.pdf");
 
-    await expect(
-      archiver.process(job(producer.jobFor("acme", "/tenants/globex/q3.pdf"))),
-    ).rejects.toBeInstanceOf(AuthorizationDeniedError);
-    expect(archiver.archived).toEqual([]);
-  });
+      await expect(archiver.process(job({ ...signed, path }))).rejects.toBeInstanceOf(
+        AuthorizationDeniedError,
+      );
+      expect(archiver.archived).toEqual([]);
+    },
+  );
 
   it("rejects a warrant the trusted producer did not sign", async () => {
     const { workerPublicKey, archiver } = setup();
     // Anyone who can write to the queue can mint a warrant. Only the trusted root's are accepted.
-    const forger = createArchiveProducer(workerPublicKey);
+    const forger = createArchiveProducer({ issuer: createTenuo.devRoot(), workerPublicKey });
 
     await expect(
       archiver.process(job(forger.jobFor("globex", "/tenants/globex/q3.pdf"))),
@@ -51,12 +57,25 @@ describe("archive worker", () => {
     expect(() => producer.jobFor(tenantId, "/tenants/acme/q3.pdf")).toThrow("invalid tenant id");
   });
 
+  it.each([
+    "/tenants/globex/q3.pdf",
+    "/tenants/acmecorp/q3.pdf",
+    "/tenants/acme/../globex/q3.pdf",
+    "/tenants/acme//q3.pdf",
+    "/tenants/acme",
+  ])("refuses to mint for path %j outside the tenant", (path) => {
+    const { producer } = setup();
+
+    expect(() => producer.jobFor("acme", path)).toThrow("outside tenant acme");
+  });
+
   it("keeps concurrent jobs' authority isolated", async () => {
     const { producer, archiver } = setup();
+    const acme = producer.jobFor("acme", "/tenants/acme/q3.pdf");
 
     const settled = await Promise.allSettled([
-      archiver.process(job(producer.jobFor("acme", "/tenants/acme/q3.pdf"))),
-      archiver.process(job(producer.jobFor("globex", "/tenants/acme/q4.pdf"))),
+      archiver.process(job(acme)),
+      archiver.process(job({ ...acme, path: "/tenants/globex/q4.pdf" })),
       archiver.process(job(producer.jobFor("globex", "/tenants/globex/q4.pdf"))),
     ]);
 
