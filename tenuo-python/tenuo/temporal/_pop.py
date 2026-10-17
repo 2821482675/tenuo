@@ -46,12 +46,13 @@ def _add_workflow_id(
     the reserved name itself.
     """
     try:
-        caps = getattr(warrant, "capabilities", None)
-        fields = caps.get(tool_name) if isinstance(caps, dict) else None
-    except Exception:
-        # Without the injected value a constrained capability fails as a
-        # missing field, so this stays closed.
-        fields = None
+        caps = warrant.capabilities
+        # As core resolves a tool: its own capability, else the ``"*"`` one.
+        fields = caps.get(tool_name, caps.get("*"))
+    except Exception as exc:
+        raise TenuoContextError(
+            f"Cannot read the warrant's capabilities for {tool_name!r}"
+        ) from exc
     if not isinstance(fields, dict) or WORKFLOW_ID_ARG not in fields:
         return args
     if WORKFLOW_ID_ARG in args:

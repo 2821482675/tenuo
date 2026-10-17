@@ -157,10 +157,33 @@ def test_another_workflow_is_denied_before_the_body():
     # Nothing ran: the workflow ID is checked like any other constrained argument.
 
 
-def test_scheduling_from_another_workflow_is_denied_too():
+def test_headers_that_reach_another_workflow_are_denied():
+    # Signing checks argument names, not values; the Activity Worker denies it.
     s = Setup(Exact("refund-order-123"))
+    headers = s.schedule("some-other-workflow")
+    with pytest.raises(ApplicationError) as error:
+        s.execute(headers, "some-other-workflow")
+    assert error.value.non_retryable
+
+
+def test_a_wildcard_capability_can_constrain_it():
+    s = Setup()
+    s.warrant = (
+        Warrant.mint_builder()
+        .holder(s.holder.public_key)
+        .capability(
+            "*",
+            order_id=Exact("order-123"),
+            amount=Range(min=0, max=100),
+            _workflow_id=Exact("refund-order-123"),
+        )
+        .ttl(600)
+        .mint(s.issuer)
+    )
+    s.execute(s.schedule("refund-order-123"), "refund-order-123")
+    _pop_dedup_cache.clear()
     with pytest.raises(ApplicationError):
-        s.schedule("some-other-workflow")
+        s.execute(s.schedule("other"), "other")
 
 
 def test_a_pattern_admits_child_and_scheduled_workflow_ids():
@@ -183,8 +206,8 @@ def test_a_child_warrant_can_narrow_to_one_workflow_but_not_widen():
         },
         s.holder,
     )
-    assert child.capabilities["issue_refund"]["_workflow_id"] == Exact(
-        "refund-order-123/repair-2"
+    assert repr(child.capabilities["issue_refund"]["_workflow_id"]) == repr(
+        Exact("refund-order-123/repair-2")
     )
     with pytest.raises(Exception):
         s.warrant.attenuate(
