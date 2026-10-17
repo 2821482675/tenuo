@@ -49,7 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signal is now logged and dropped and the run continues.
 - **A dropped Temporal signal is now audited.** It emits one DENY
   `TemporalAuditEvent` (`tool="signal:<name>"`) and increments the denied
-  metric. Neither is emitted again on replay, and a raising callback or metric
+  metric under the fixed label `signal:<unlisted>`, so senders cannot grow
+  metric cardinality. Neither is emitted again on replay, and a raising callback or metric
   does not change the drop.
 - **MCP: `MCPVerifier(config=...)` is closed-world.** With a
   `CompiledMcpConfig`, arguments no extraction rule read (`follow_symlinks`,

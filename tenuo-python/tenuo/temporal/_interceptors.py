@@ -383,6 +383,8 @@ def _record_dropped_signal(config: "TenuoPluginConfig", tool: str, warrant_id: s
 
     This runs in workflow code, which re-runs on every replay, so it skips
     replays. A raising callback or metric is logged and never changes the drop.
+    The metric label is fixed: the sender picks the signal name, so one label
+    per name would let them grow metric cardinality without bound.
     """
     callback = config.audit_callback if config.audit_deny else None
     if config.metrics is None and callback is None:
@@ -396,7 +398,7 @@ def _record_dropped_signal(config: "TenuoPluginConfig", tool: str, warrant_id: s
     if config.metrics is not None:
         try:
             config.metrics.record_denied(
-                tool=tool, reason=reason, workflow_type=info.workflow_type, latency_seconds=0.0
+                tool="signal:<unlisted>", reason=reason, workflow_type=info.workflow_type, latency_seconds=0.0
             )
         except Exception:
             logger.error("Metrics failed for dropped %s", tool, exc_info=True)
