@@ -95,9 +95,7 @@ class Setup:
         )
         resolver = MagicMock()
         resolver.resolve_sync = MagicMock(return_value=self.holder)
-        self.config = TenuoPluginConfig(
-            key_resolver=resolver, trusted_roots=[self.issuer.public_key]
-        )
+        self.config = TenuoPluginConfig(key_resolver=resolver, trusted_roots=[self.issuer.public_key])
 
     def schedule(self, workflow_id, fn=issue_refund, args=("order-123", 25)):
         """Run the outbound interceptor in workflow ``workflow_id``; return its headers."""
@@ -128,12 +126,8 @@ class Setup:
         inbound = TenuoWorkerInterceptor(self.config).intercept_activity(body)
         loop = asyncio.new_event_loop()
         try:
-            with patch(
-                "temporalio.activity.info", return_value=ActivityInfo(workflow_id)
-            ):
-                loop.run_until_complete(
-                    inbound.execute_activity(ExecuteActivity(fn, args, headers))
-                )
+            with patch("temporalio.activity.info", return_value=ActivityInfo(workflow_id)):
+                loop.run_until_complete(inbound.execute_activity(ExecuteActivity(fn, args, headers)))
         finally:
             loop.close()
         return body
@@ -206,9 +200,7 @@ def test_a_child_warrant_can_narrow_to_one_workflow_but_not_widen():
         },
         s.holder,
     )
-    assert repr(child.capabilities["issue_refund"]["_workflow_id"]) == repr(
-        Exact("refund-order-123/repair-2")
-    )
+    assert repr(child.capabilities["issue_refund"]["_workflow_id"]) == repr(Exact("refund-order-123/repair-2"))
     with pytest.raises(Exception):
         s.warrant.attenuate(
             {
