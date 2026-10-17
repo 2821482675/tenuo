@@ -50,15 +50,12 @@ def _add_workflow_id(
         # As core resolves a tool: its own capability, else the ``"*"`` one.
         fields = caps.get(tool_name, caps.get("*"))
     except Exception as exc:
-        raise TenuoContextError(
-            f"Cannot read the warrant's capabilities for {tool_name!r}"
-        ) from exc
+        raise TenuoContextError(f"Cannot read the warrant's capabilities for {tool_name!r}") from exc
     if not isinstance(fields, dict) or WORKFLOW_ID_ARG not in fields:
         return args
     if WORKFLOW_ID_ARG in args:
         raise TenuoContextError(
-            f"Activity argument {WORKFLOW_ID_ARG!r} is reserved: the plugin fills it "
-            "from the running workflow's ID"
+            f"Activity argument {WORKFLOW_ID_ARG!r} is reserved: the plugin fills it from the running workflow's ID"
         )
     return {**args, WORKFLOW_ID_ARG: workflow_id}
 

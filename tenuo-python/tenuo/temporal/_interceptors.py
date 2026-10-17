@@ -1115,7 +1115,8 @@ class TenuoActivityInboundInterceptor:
 
         args = self._extract_arguments(input, headers)
         try:
-            args = _add_workflow_id(warrant, tool_name, args, info.workflow_id)
+            # No workflow (a standalone Activity) matches no workflow constraint.
+            args = _add_workflow_id(warrant, tool_name, args, info.workflow_id or "")
         except TenuoContextError as exc:
             self._emit_denial_event(
                 info=info,
