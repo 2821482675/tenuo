@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`tenuo.process`: run the command the warrant authorized.** `run` checks a
+  structured call (`subcommand`, `flags`, `paths`, `cwd` resolved with
+  `realpath`) against the warrant and executes exactly those values as argv,
+  without a shell and with a fixed environment. `run_command` does the same for
+  tools that take one command string. The `GIT` profile stops repository config
+  and `.gitattributes` from running programs. POSIX only.
 - **`ControlPlaneClient.status`.** Reports the connection state
   (`registering`, `connected`, `degraded`, `standalone`, `stopped`), the last
   error, and buffered, flushed and dropped audit event counts. It does no I/O,
