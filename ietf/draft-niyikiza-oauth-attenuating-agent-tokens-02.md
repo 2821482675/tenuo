@@ -36,6 +36,7 @@ normative:
   RFC8126:   # Guidelines for Writing an IANA Considerations Section
 
 informative:
+  I-D.ietf-oauth-status-list:
   RFC2693:   # SPKI Certificate Theory
   RFC8259:   # The JavaScript Object Notation (JSON) Data Interchange Format
   RFC7942:   # Improving Awareness of Running Code: The Implementation Status Section
@@ -81,6 +82,14 @@ informative:
     target: https://doc.biscuitsec.org/reference/specifications.html
     author:
       - org: Eclipse Foundation
+  UCAN:
+    title: "User Controlled Authorization Network (UCAN) Specification, Version 1.0.0"
+    author:
+      - name: Brooklyn Zelenka
+      - name: Irakli Gozalishvili
+      - name: Daniel Holmgren
+      - name: Philipp Krüger
+    target: https://github.com/ucan-wg/spec
   CEDAR:
     title: "Cedar Policy Language Reference Guide"
     target: https://docs.cedarpolicy.com/
@@ -257,7 +266,7 @@ that received token rather than under ambient authority of its own. AATs
 make this possible but do not force it: an agent that also holds a
 broader token can still act under that one. Deployments get the benefit
 by giving each agent only the token derived for its task, under its own
-holder key (Section 9.11); Section 9.1 describes the resulting
+holder key (Section 9.10); Section 9.1 describes the resulting
 guarantees and limits.
 
 An AAT combines four mechanisms that the rest of this document builds
@@ -353,7 +362,7 @@ after identity and consent have been established.
 1. **Least privilege at the invocation boundary.** An agent's
    authorization token encodes which tools it may call and with what
    argument constraints, scoped to the task, not to the full authority
-   of the calling principal.
+   of the user or agent that delegated it.
 
 2. **Offline derivation.** A token holder can derive a more restrictive
    token without contacting the root issuer.
@@ -366,27 +375,29 @@ after identity and consent have been established.
    authority than its parent, and this property can be verified from the
    signed chain.
 
-5. **JWT/JWS interoperability.** The primary encoding specified in this
-   document represents AATs as signed JWTs {{RFC7519}} using JWS
-   {{RFC7515}}, allowing deployments to verify chains using existing
-   JSON Object Signing and Encryption (JOSE) infrastructure without new
-   cryptographic dependencies.
+5. **JWT/JWS interoperability.** AATs are JWS-signed JWTs {{RFC7519}}
+   {{RFC7515}}, so deployments can verify chains with existing JSON
+   Object Signing and Encryption (JOSE) infrastructure and no new
+   cryptographic dependencies. Appendix D notes what a CBOR/CWT
+   encoding would need.
 
 ## Relationship to Prior Work
 
 Macaroons {{MACAROONS}} introduced the concept of attenuating tokens
 with contextual caveats. Macaroons use HMAC chaining, which provides
 attenuation but not proof of possession, and express caveats as
-free-form predicates evaluated at the target service at runtime. HMAC
-chaining also requires the verifier to hold, or to reach a service that
-holds, the root secret. AATs target enforcement points that are not the
-root issuer and that may sit in another trust domain, so verification
-must succeed against the root issuer's public key alone, with no shared
-secret and no call back to the issuer. AATs therefore use asymmetric
-signatures and proof of possession, and replace free-form caveats with
-typed constraints whose attenuation any party can check structurally
-(Section 4.5). Section 9.4 discusses what is lost relative to HMAC
-chaining.
+free-form predicates evaluated at the target service at runtime.
+Because caveats only add conditions, a Macaroon verifier needs no
+subsumption check, and third-party caveats, which AATs lack, can
+require proof from another service. HMAC chaining also requires the
+verifier to hold, or to reach a service that holds, the root secret.
+AATs target enforcement points that are not the root issuer and that
+may sit in another trust domain, so verification must succeed against
+the root issuer's public key alone, with no shared secret and no call
+back to the issuer. AATs therefore use asymmetric signatures and proof
+of possession, and replace free-form caveats with typed constraints
+whose attenuation any party can check structurally (Section 4.5).
+Section 9.4 discusses what is lost relative to HMAC chaining.
 
 SPKI/SDSI {{RFC2693}} defines public keys as principals, delegation
 certificates whose effective authority is the intersection of the
@@ -394,17 +405,30 @@ authority along the chain, and attenuation by reduction of a tag.
 AAT's `cnf.jwk` holder binding, chain verification against a root
 key, and the subsumption relation in Section 4.5 correspond to those
 three mechanisms, expressed over JWT claims and a typed constraint
-vocabulary rather than S-expression tags.
+vocabulary rather than S-expression tags. Where SPKI intersects tags,
+so a broader child certificate is silently narrowed, an enforcement
+point rejects a derived token that is not narrower, so every token's
+claims state its effective authority.
 
 Biscuit {{BISCUIT}} extends the Macaroons model with public-key
-signatures and offline attenuation. Biscuit expresses authorization
-policies in a Datalog variant, requiring a logic engine at verification
-time, and it is commonly used as a bearer credential. This
-specification uses structured constraint types decidable by structural
-analysis, and encodes in the token model the delegation-chain claims
-Biscuit does not natively carry (depth limits, parent-token linkage,
-chain position), together with holder-bound invocation-time proof of
-possession and attenuation invariants.
+signatures and offline attenuation: each block is signed with the
+private key whose public key the previous block carries. Biscuit
+expresses authorization policies in a Datalog variant, requiring a
+logic engine at verification time, and its specification describes it
+as a bearer token. This specification uses typed constraints decidable
+by structural analysis, bounds delegation depth, and requires
+holder-bound proof of possession at invocation.
+
+UCAN {{UCAN}} chains signed delegations, links them by content hash,
+and lets each delegation constrain the arguments of an eventual
+invocation, which the invoker signs. An invocation's arguments must
+satisfy the policy of every delegation in its chain, so UCAN attenuates
+by conjunction. AATs instead check at each hop that a derived token's
+constraints are subsumed by its parent's (Section 4.5), so the leaf
+token alone states the authority exercised and the enforcement point
+evaluates only its constraints. AAT root tokens are issued by an OAuth
+authorization server, and AATs profile RAR rather than using DIDs and
+DAG-CBOR envelopes.
 
 Recent OAuth work on transaction tokens {{OAUTH-TXN-TOKENS}} and
 identity and authorization chaining {{OAUTH-ID-CHAINING}} addresses the
@@ -430,8 +454,7 @@ F.
 {::boilerplate bcp14-tagged}
 
 **Attenuating Authorization Token (AAT):** A signed credential as defined
-in this document. The fully specified encoding in this document is a
-signed JWT. An AAT encodes tool-level capability claims and supports
+in this document. An AAT encodes tool-level capability claims and supports
 offline derivation of derived tokens with authority equal to or narrower
 than the parent's.
 
@@ -462,12 +485,16 @@ is the holder of the leaf token.
 corresponding to its `cnf.jwk` claim. The token holder is the party
 authorized to derive further tokens from it, subject to the chain's depth
 limits. The holder of the leaf token is also the party authorized to
-present the chain for tool invocation by signing the PoP JWT.
+present the chain for tool invocation by signing the PoP JWT. In agent
+systems, a token holder is typically an agent.
 
 **Derived Token:** An AAT produced by a token holder from a parent AAT,
 also referred to as a child token. A derived token's authority is a
 subset of its parent's authority (equal or narrower). Derivation does
 not require a round-trip to the root issuer.
+
+**Deriver:** The token holder that creates a derived token from its own
+token (Section 6.2).
 
 **Tool:** An addressable function or API operation that an agent may
 invoke. A tool is identified by a string identifier. Tool identifiers
@@ -494,7 +521,9 @@ signed by the private key corresponding to the leaf token's `cnf.jwk`.
 **Enforcement Point:** The component that receives a tool
 invocation request, verifies the presented token chain, evaluates
 argument constraints, and permits or denies execution. In OAuth terms,
-it plays the role of a resource server for the tools it guards.
+it plays the role of a resource server for the tools it guards. In
+agent systems, it typically fronts a tool server, such as an MCP server
+{{MCP}}.
 
 **Trust Anchor:** A public key, bound to the issuer identifier of the
 root issuer that holds the corresponding private key, that enforcement
@@ -551,7 +580,7 @@ Implementations MUST support Ed25519 {{RFC8032}}, JWS `alg` value
 `"Ed25519"` ({{RFC9864}}), with keys represented as OKP JWKs
 ({{RFC8037}}), for token signing and verification.
 Implementations MAY support additional asymmetric algorithms
-(Section 9.12).
+(Section 9.11).
 
 In AATs and PoP JWTs, NumericDate values and the integer claims
 `del_depth` and `del_max_depth` are JSON numbers with no fraction or
@@ -644,7 +673,7 @@ constraints without this member; Section 4.5 states separately how it
 attenuates.
 An omitted argument takes the tool's own default, which the enforcement
 point cannot see, so issuers mark an argument optional only when that
-default is acceptable (Section 9.13).
+default is acceptable (Section 9.12).
 
 **Unnamed arguments.** The reserved key `"*"` in a constraint map gives
 the constraint for every argument the map does not name. In this
@@ -656,7 +685,7 @@ way (Section 8, steps 4p and 6b). The key `"*"` does not name a tool
 argument; a tool argument literally named `"*"` is treated as unnamed.
 Because `"*"` admits any argument the tool accepts, including arguments
 added in later versions of the tool, issuers SHOULD NOT use it for tools
-with side effects (Section 9.13).
+with side effects (Section 9.12).
 
 For example, the following entry pins `path`, bounds the optional
 `head` and `tail` line counts without requiring them, and permits any
@@ -691,11 +720,8 @@ Any holder can add or change other claims and other
 MUST NOT derive authority from them in a derived token unless a profile
 defines how they attenuate.
 
-Root tokens and leaf tokens MUST contain exactly one entry with `type:
-"attenuating_agent_token"`. Non-leaf derived tokens MAY contain zero
-entries of this type, in which case they represent the empty capability
-set and can only derive further empty-capability tokens. Such a non-leaf
-derived token MAY carry an empty `authorization_details` array.
+Every AAT MUST contain exactly one entry with `type:
+"attenuating_agent_token"`.
 
 ### Tool Identifier Requirements
 
@@ -824,7 +850,7 @@ AATs are compact-serialization JWTs {{RFC7519}} signed as JWS
 
 | Header Parameter | Required | Description |
 |---|---|---|
-| `alg` | REQUIRED | Signature algorithm. MUST be on the enforcement point's allowlist (Section 9.12). |
+| `alg` | REQUIRED | Signature algorithm. MUST be on the enforcement point's allowlist (Section 9.11). |
 | `typ` | REQUIRED | JWT type. MUST be `aat+jwt`. |
 
 The JWS Protected Header of every PoP JWT MUST contain `alg` as above
@@ -960,11 +986,14 @@ enforcement points MUST reject any chain that violates any invariant.
 ## Capability Lattice Model (Non-Normative)
 
 This subsection gives an informal model, a capability lattice, for
-reading the normative invariants that follow.
+reading the normative invariants that follow. Verifiers check the
+structural rules of Section 4.5, not this relation; those rules are
+sound with respect to it, as Section 5.1 also requires of extension
+types.
 
 For a token `T`, define its capability set `C(T)` as the set of `(tool,
 args)` pairs that `T` authorizes (that is, the pairs for which `T` would
-permit invocation). The core security property of this protocol is:
+permit invocation). The core security property of this specification is:
 
 ~~~
 C(child) ⊆ C(parent)
@@ -988,12 +1017,8 @@ also satisfies `c_parent`. Section 4.5 defines the structural relation
 that are semantically subsuming, but some semantically subsuming pairs
 fail it.
 
-Two boundary cases complete the structure. The empty capability set
-`∅` is the bottom element: a token with no tools authorized is a
-valid token that cannot authorize tool invocations. If it is not the
-leaf, it can only derive further empty-capability tokens. The root
-token's capability set is the ceiling for the entire chain: no derived
-token at any depth can exceed what the root authorized.
+The root token's capability set is the ceiling for the entire chain:
+no derived token at any depth can exceed what the root authorized.
 
 Token lifetime (I3) is a mandatory attenuation dimension orthogonal to
 the capability lattice. A derived token with `C(child) == C(parent)` is
@@ -1485,9 +1510,7 @@ A holder of any AAT whose `del_depth` is strictly less than
 
 5. Set `authorization_details` to an array containing exactly one
    `attenuating_agent_token` entry whose `tools` member contains the
-   tools and constraint maps selected in steps 3 and 4. A non-leaf
-   token MAY instead carry no such entry, representing the empty
-   capability set (Section 3.3).
+   tools and constraint maps selected in steps 3 and 4.
 
 6. Set `del_depth` to `parent.del_depth + 1`.
 
@@ -1539,7 +1562,9 @@ obtains a copy of the token. In agent systems, tokens flow through
 model context, tool invocation results, and inter-agent message
 channels, all of which are observable by other components. PoP
 binds a specific invocation to the private key of the leaf
-token's holder.
+token's holder. It is also what makes attenuation hold: every token
+in a chain names a holder key, so a party that obtains the bytes of
+a broader ancestor token cannot invoke with it (Section 9.1.1).
 
 ## PoP JWT Structure
 
@@ -1550,7 +1575,7 @@ holder's private key. It MUST contain the required claims listed below.
 | Claim | Type | Required | Description |
 |---|---|---|---|
 | `jti` | string | REQUIRED | Fresh random identifier. The holder MUST NOT reuse a `jti` value across PoP JWTs it produces. When a UUID is used, it MUST be encoded as a lowercase hyphenated string per {{RFC9562}}. Whether an enforcement point can detect reuse depends on whether stateful `jti` tracking is deployed (see Section 9.5). |
-| `iat` | NumericDate | REQUIRED | Time of PoP creation. MUST reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (Section 9.10). |
+| `iat` | NumericDate | REQUIRED | Time of PoP creation. MUST reflect the actual time of creation. Enforcement points validate this against a clock tolerance window (Section 9.9). |
 | `aat_id` | string | REQUIRED | The `jti` of the leaf token being presented. |
 | `aat_hash` | string | REQUIRED | Base64url-encoded SHA-256 digest of the leaf token's signing input, computed as for `par_hash` (Section 4.6). Binds the proof to the exact leaf token presented, following the DPoP `ath` claim ({{RFC9449}} Section 4.2). |
 | `aat_tool` | string | REQUIRED | The tool identifier being invoked. MUST exactly match a key in the `tools` map of the leaf token's `authorization_details`. Tool identifier matching follows the exact-string comparison rules in Section 3.3.1. |
@@ -1772,15 +1797,14 @@ Algorithm:
    k. Verify child.iat <= now + MAX_IAT_SKEW.            (I3)
    l. Verify child.exp > child.iat.                      (I3)
    m. Verify child.del_depth <= child.del_max_depth.     (I2)
-   n. Verify child.authorization_details contains at most
+   n. Verify child.authorization_details contains exactly
       one entry with type "attenuating_agent_token", and that
-      such an entry's `tools` member is present and is a JSON
+      the entry's `tools` member is present and is a JSON
       object whose values are JSON objects. If not, DENY. For the
-      remaining checks in this
-      step, define child_aat and parent_aat as the child's and
-      the parent's "attenuating_agent_token" entry, or, where a
-      token has none, an entry with an empty `tools` object (the
-      empty capability set). Entries of other types are ignored.
+      remaining checks in this step, define child_aat and
+      parent_aat as the child's and the parent's
+      "attenuating_agent_token" entry. Entries of other types are
+      ignored.
    o. For each constraint in each constraint map in child_aat.tools,
       verify the constraint tree depth does not exceed
       MAX_CONSTRAINT_DEPTH, that every constraint in it is of a
@@ -1873,7 +1897,7 @@ Algorithm:
       JCS-canonical form of the args map for this invocation. If the
       canonical byte sequences differ, DENY.
    g. Verify pop_jwt.iat is within the clock tolerance
-      window (Section 9.10). If outside the window, DENY.
+      window (Section 9.9). If outside the window, DENY.
    h. If this enforcement point requires a nonce (Sec 9.5),
       verify pop_jwt.nonce is present and is a value this
       enforcement point issued and still accepts. If absent,
@@ -1900,9 +1924,6 @@ Notes on the algorithm:
   4g), and every `exp` is at most its token's `iat` plus
   MAX_TOKEN_LIFETIME (steps 3h, 4h, and 4j). Implementations MAY check
   them explicitly.
-- A non-leaf token with no "attenuating_agent_token" entry is the empty
-  capability set; step 4p accepts it as an attenuation, and step 6a
-  rejects it as a leaf. A root always has an entry (step 3m).
 - The lowercase form of UUID `jti` values (Section 3.2) binds producers
   and has no verification step.
 - Step 2c detects a token instance presented twice. The same holder key
@@ -1967,8 +1988,8 @@ agent cannot be steered outside the authority carried by the token. A
 token authorizing more than one resource can still be steered within its
 scope, so the holder deriving a leaf token SHOULD scope it as narrowly
 as the task permits. How a constraint value maps to the resource the
-tool acts on is defined by the tool contract: the protocol authorizes
-the presented invocation, and the tool remains responsible for resolving
+tool acts on is defined by the tool contract: an AAT authorizes the
+presented invocation, and the tool remains responsible for resolving
 it to the correct resource.
 
 **Privilege escalation and compromised sub-agents.** Authority can only
@@ -1986,12 +2007,12 @@ proves possession of the leaf token's key (I6, Section 7). A
 sub-agent that obtains the bytes of its parent's token, or of the
 root token, therefore cannot invoke with that token's authority and
 cannot present it as the leaf of a chain: doing either requires the
-parent holder's private key, which the protocol assumes is never
+parent holder's private key, which this specification assumes is never
 shared across a delegation boundary (Section 9.4).
 
 **Grant-context substitution.** The `par_hash` claim (I5) binds each
 derived token to the specific bytes of its parent token. Suppose a
-delegator key holds two parent tokens, `A` and `B`, issued for different
+holder key holds two parent tokens, `A` and `B`, issued for different
 tasks but authorizing compatible capabilities. The holder derives child
 token `C` from `A`. Without `par_hash`, a presenter could assemble the
 chain `(B, C)`. The link may satisfy delegation authority, depth,
@@ -2033,18 +2054,20 @@ and behavioral monitoring are complementary controls for this threat.
 The constraint vocabulary cannot express them, because constraints apply
 to argument values, not to sequences of invocations; a profile that
 defines invocation-level controls needs its own attenuation rules and
-enforcement state, as a profile defining approval gates would (Section
-9.9).
+enforcement state, as a profile defining approval gates would.
 
 **Compromised holder key.** Tokens bound to a stolen holder key are
 usable at their full scope until they expire or are revoked; short
 lifetimes bound the window (Section 9.4).
 
-**Model exfiltration and side-channel attacks.** An attacker who
-extracts an agent's model weights, system prompt, or in-context state
-may be able to predict or manipulate the agent's behavior independently
-of its token constraints. AATs operate at the authorization layer and
-have no visibility into the model layer.
+**Data exfiltration through authorized invocations.** An agent that can
+read sensitive data and also holds a token for a tool that sends data
+outward can leak that data in argument values the constraints permit,
+for example in the body of a message to an allowed recipient.
+Constraints can narrow where data goes, such as to exact recipients or
+hosts, but not what a permitted value encodes. Deployments that combine
+access to sensitive data with an outward channel need controls beyond
+AATs.
 
 ## Attenuation as the Security Invariant
 
@@ -2105,7 +2128,7 @@ exposure with holder binding on every chain position, attenuation at
 every hop, and short lifetimes (Appendix B.5), rather than by making
 parent tokens unrecoverable. Deployments that require a holder to be
 unable to exercise a parent's authority after delegating SHOULD derive
-the child to a fresh holder key (Section 9.11) and then destroy the
+the child to a fresh holder key (Section 9.10) and then destroy the
 private key bound to the parent token. The parent token remains
 cryptographically valid until its `exp`, but it can no longer be
 presented or used to derive further tokens. A holder that destroys
@@ -2117,7 +2140,7 @@ be used to derive children with any `iat` at or after the parent's,
 until the parent expires, so I3 bounds how long authority lasts but not
 when a derivation happened.
 
-The protocol assumes that holder private keys are not shared across
+This specification assumes that holder private keys are not shared across
 delegation boundaries. Key generation, storage, rotation, and recovery
 are deployment concerns and are outside the semantics of chain
 verification.
@@ -2126,7 +2149,7 @@ verification.
 
 The `iat` window alone bounds replay in time but does not prevent it: a
 captured PoP JWT can be replayed for up to about twice the clock tolerance, roughly 60
-seconds at the RECOMMENDED setting (Section 9.10). Section 7.3
+seconds at the RECOMMENDED setting (Section 9.9). Section 7.3
 therefore requires `jti` tracking for tool invocations that have side
 effects or are not idempotent, such as financial transactions, data
 deletion, writes to external systems, or anything that cannot be
@@ -2207,11 +2230,12 @@ only one ignores the other.
 
 ## Token Revocation
 
-Revocation of individual AATs, including derived tokens, is outside the
-scope of this specification. The offline delegation model trades
-per-token revocation granularity for verifiability without authorization
-server availability. This tradeoff is inherent in the verification
-model.
+This document defines no revocation mechanism. The offline delegation
+model trades per-token revocation granularity for verifiability without
+authorization server availability. Because an enforcement point
+verifies every token in a chain, a status mechanism for root tokens,
+such as {{I-D.ietf-oauth-status-list}}, revokes every chain that starts
+at a revoked root, and so every token derived from it.
 
 Deployments SHOULD use short token lifetimes to bound exposure after key
 compromise, token theft, or scope misconfiguration. A short-lived leaf
@@ -2223,14 +2247,6 @@ A companion document may define revocation enforced by the enforcement
 point that accepts a chain, invalidating a token and its descendants,
 but not unrelated tokens held by the same key, without requiring the
 root issuer to track derived tokens.
-
-## Approval Gates
-
-Deployments may require signed approvals before accepting particular
-tool invocations. Approvals are outside the base algorithm; a profile
-that defines them should specify how approval requirements are encoded
-and attenuated, what request data an approval signs, how freshness is
-checked, and which approvers and thresholds are trusted.
 
 ## Clock Skew
 
@@ -2262,8 +2278,8 @@ those runtime roles and SHOULD derive across that boundary with a fresh
 component and preserves operational accountability between components
 that decide what work should be done and components that invoke tools.
 
-Role-based key separation is deployment guidance, not a base protocol
-invariant. Enforcement points implementing this specification verify the
+Role-based key separation is deployment guidance, not an invariant of
+this specification. Enforcement points implementing this specification verify the
 holder-key chain, attenuation invariants, parent-token linkage, and leaf
 PoP proof; they do not infer agent runtime roles from token claims
 unless a deployment-specific profile defines such claims and
@@ -2523,28 +2539,6 @@ Niki Aimable Niyikiza, niki@tenuo.ai
 This document makes no request to the OAuth Parameters Registry. Root
 token issuance uses the existing `req_cnf` token request parameter.
 
-# Acknowledgments
-
-The author thanks Alan Karp for detailed review and discussion of
-capability-system semantics, confused deputy framing, delegation depth,
-revocation, and the relationship between AATs and prior capability
-systems.
-
-The author thanks Antoine Fressancourt for review and discussion of
-cross-domain privacy, transport binding, remote attestation, and
-constraint expressiveness.
-
-The author thanks Igor Kammer Grahl, whose independent implementation
-of -01 identified that closed-world mode left no way to constrain an
-optional argument and that JCS number canonicalization lets distinct
-integers collide, and documented several other places where -01
-underdetermined behavior.
-
-The author thanks Neil Madden for review of -01 on the OAuth list,
-including the comparison with HMAC-chained Macaroons, replay of parent
-and intermediate tokens, the absence of re-keying on attenuation, and
-the pointer to SPKI/SDSI.
-
 --- back
 
 # Relationship to DPoP (Non-Normative)
@@ -2629,8 +2623,8 @@ a child token.
 
 The claim semantics, attenuation invariants, constraint subsumption
 rules, and chain verification algorithm defined in this document are
-format-agnostic. They describe a protocol, not an encoding. JWT/JWS is
-the only fully specified token encoding in this document.
+independent of the token encoding. This document specifies AATs only as
+JWS-signed JWTs.
 
 A future CWT/COSE profile could represent the same semantic content
 using CBOR Web Tokens {{RFC8392}} and COSE message signing {{RFC9052}}.
@@ -2649,19 +2643,19 @@ at the time of submission, per the practice described in {{RFC7942}}.
 
 ## Reference Implementation
 
-Tenuo provides a reference implementation of this protocol. The chain
+Tenuo provides a reference implementation of this specification. The chain
 verification algorithm (Section 8) and token derivation procedure
 (Section 6.2) are both implemented. Tenuo also includes an
 implementation-specific CBOR/COSE wire representation, with Ed25519
 signatures carried in COSE_Sign1 structures. That implementation
-experience supports the format independence of the core protocol model,
+experience supports the format independence of the core model,
 but does not define a fully interoperable CWT profile; the CWT profile
 is deferred as described in Appendix D.
 
-The reference implementation's test suite covers monotonicity of the
-attenuation invariants under arbitrary sequences, normalization
-idempotence across encode/decode round-trips, and agreement between
-in-memory and deserialized constraint evaluation.
+Randomized property-based tests of the reference implementation check
+monotonicity of the attenuation invariants over generated derivation
+sequences, normalization idempotence across encode/decode round-trips,
+and agreement between in-memory and deserialized constraint evaluation.
 
 Byte-exact JWS test vectors for Section 8 are published as a
 machine-readable suite {{AAT-VECTORS}} and a readable companion with its
@@ -2703,3 +2697,26 @@ that break -01 implementations:
 
 Byte-exact JWS vectors covering the verifier changes are published in
 the suite described in Appendix E ({{AAT-VECTORS}}).
+
+# Acknowledgments
+{:numbered="false"}
+
+The author thanks Alan Karp for detailed review and discussion of
+capability-system semantics, confused deputy framing, delegation depth,
+revocation, and the relationship between AATs and prior capability
+systems.
+
+The author thanks Antoine Fressancourt for review and discussion of
+cross-domain privacy, transport binding, remote attestation, and
+constraint expressiveness.
+
+The author thanks Igor Kammer Grahl, whose independent implementation
+of -01 identified that closed-world mode left no way to constrain an
+optional argument and that JCS number canonicalization lets distinct
+integers collide, and documented several other places where -01
+underdetermined behavior.
+
+The author thanks Neil Madden for review of -01 on the OAuth list,
+including the comparison with HMAC-chained Macaroons, replay of parent
+and intermediate tokens, the absence of re-keying on attenuation, and
+the pointer to SPKI/SDSI.
