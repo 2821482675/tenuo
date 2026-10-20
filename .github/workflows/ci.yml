@@ -906,6 +906,13 @@ jobs:
         working-directory: tenuo-ts
         run: pnpm typecheck
 
+      # Exercise the checked-in binary before `pnpm test` rebuilds it. This is
+      # the artifact copied into the published @tenuo/core package.
+      - name: Test committed WASM security regressions
+        if: steps.lane.outputs.rust == 'true'
+        working-directory: tenuo-ts
+        run: pnpm --filter @tenuo/core exec vitest run test/parity.test.ts -t "cidr, urlPattern, and urlSafe"
+
       - name: Test (rebuilt WASM)
         if: steps.lane.outputs.rust == 'true'
         working-directory: tenuo-ts
