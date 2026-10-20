@@ -144,12 +144,40 @@ class TestShlexMergedOperatorTokens:
         assert constraint.matches('grep "a|&b" file')
         assert constraint.matches("grep 'x >| y' file")
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "grep '|&' file",
+            'grep \">|\" file',
+            r"grep \>\| file",
+            r"grep \>\|\&\;\(\) file",
+        ],
+    )
+    def test_operator_only_literal_arguments_still_allowed(self, command):
+        assert Shlex(allow=["grep"]).matches(command)
+
+    def test_unescaped_operator_after_literal_is_still_blocked(self):
+        constraint = Shlex(allow=["grep"])
+        assert not constraint.matches(r"grep \|& file")
+        assert not constraint.matches(r"grep '|'& file")
+
+    def test_operators_in_an_unquoted_comment_are_ignored(self):
+        assert Shlex(allow=["ls"]).matches("ls # |& ignored by the shell")
+
     def test_explain_reports_merged_operator(self):
         from tenuo.explain_constraint import _explain_shlex
 
         analysis = _explain_shlex(Shlex(allow=["ls"]), "ls |& sh")
         assert not analysis.safe
         assert "|&" in analysis.dangerous_tokens
+
+    @pytest.mark.parametrize("command", ["grep '|&' file", r"grep \>\| file"])
+    def test_explain_allows_operator_only_literal_arguments(self, command):
+        from tenuo.explain_constraint import _explain_shlex
+
+        analysis = _explain_shlex(Shlex(allow=["grep"]), command)
+        assert analysis.safe
+        assert analysis.dangerous_tokens == []
 
 
 class TestShlexExpansionBlocking:

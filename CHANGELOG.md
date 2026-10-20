@@ -154,9 +154,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Python `Shlex` rejects every unquoted shell operator.** The tokenizer
   merges adjacent operator characters into one token, and the check compared
   tokens against a fixed list, so combinations such as `|&`, `>|`, `&>`, `<>`
-  and `>&` were allowed. Any token made only of `();<>|&` is now rejected, in
-  `matches()` and in `explain`. The Rust `Shlex` used in warrants was not
-  affected.
+  and `>&` were allowed. Any unquoted run made only of `();<>|&` is now
+  rejected, in `matches()` and in `explain`, while quoted and escaped merged
+  literals retain their previous behavior. The Rust `Shlex` used in warrants
+  was not affected.
 - **`tenuo.testing` grant assertions check real grants.** `assert_can_grant`
   passed the parent's `timedelta` TTL to the grant builder, so every grant
   failed with `TypeError`, and `assert_cannot_grant` passed for any grant,

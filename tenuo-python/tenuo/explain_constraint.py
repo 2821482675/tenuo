@@ -367,10 +367,10 @@ def _explain_shlex(constraint: Any, value: Any) -> CommandAnalysis:
     bin_name = posixpath.basename(binary)
     binary_allowed = binary in constraint.allowed_bins or bin_name in constraint.allowed_bins
 
-    # Check for dangerous tokens
-    from tenuo.constraints import Shlex
-
-    dangerous_tokens_found = [t for t in tokens if Shlex.is_operator_token(t)]
+    # Keep the established conservative handling of standard operator tokens,
+    # then inspect the source for merged operators because POSIX tokenization
+    # removes quotes and escapes from literal operator-only arguments.
+    dangerous_tokens_found = constraint.dangerous_operator_tokens(value, tokens)
 
     # Determine safety
     safe = True

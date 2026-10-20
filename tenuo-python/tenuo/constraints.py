@@ -58,7 +58,7 @@ They're the core security building blocks across all Tenuo integrations.
 import logging
 import posixpath
 import shlex
-from typing import TYPE_CHECKING, Any, Dict, List, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 logger = logging.getLogger("tenuo.constraints")
 
@@ -431,8 +431,8 @@ class Shlex:
 
     # shlex with punctuation_chars=True emits every unquoted run of these
     # characters as one token, so "|&", ">|", "&>", "<>", ">&" and other
-    # combinations never equal a single entry in DANGEROUS_TOKENS. Any token
-    # made only of these characters is a shell operator and is rejected.
+    # combinations never equal a single entry in DANGEROUS_TOKENS. Any
+    # unquoted, unescaped run of these characters is rejected.
     OPERATOR_CHARS: frozenset = frozenset("();<>|&")
 
     # Characters that trigger shell expansion (checked in raw string)
@@ -472,11 +472,68 @@ class Shlex:
         self.allowed_bins: Set[str] = set(allow)
 
     @classmethod
-    def is_operator_token(cls, token: str) -> bool:
-        """True if a parsed token is a shell operator (any run of OPERATOR_CHARS)."""
-        return token in cls.DANGEROUS_TOKENS or (
-            bool(token) and all(ch in cls.OPERATOR_CHARS for ch in token)
-        )
+    def unquoted_operator_tokens(cls, value: str) -> List[str]:
+        r"""Return unquoted, unescaped runs of shell operator characters.
+
+        ``shlex`` removes quotes and escapes from its output, so inspecting its
+        tokens cannot distinguish the operator ``|&`` from the literal
+        arguments ``'|&'`` or ``\|\&``. Scan the original source while using
+        the same quote, escape, and comment boundaries as the parser.
+        """
+        operators: List[str] = []
+        current: List[str] = []
+        quote: Optional[str] = None
+        escaped = False
+
+        def flush() -> None:
+            if current:
+                operators.append("".join(current))
+                current.clear()
+
+        for char in value:
+            if escaped:
+                escaped = False
+                continue
+
+            if quote == "'":
+                # Backslashes are literal inside POSIX single quotes.
+                if char == quote:
+                    quote = None
+                continue
+
+            if quote == '"':
+                if char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+                continue
+
+            if char == "\\":
+                flush()
+                escaped = True
+            elif char in {"'", '"'}:
+                flush()
+                quote = char
+            elif char == "#":
+                # shlex treats the remainder of an unquoted comment as inert.
+                flush()
+                break
+            elif char in cls.OPERATOR_CHARS:
+                current.append(char)
+            else:
+                flush()
+
+        flush()
+        return operators
+
+    @classmethod
+    def dangerous_operator_tokens(cls, value: str, tokens: List[str]) -> List[str]:
+        """Return dangerous operators without misclassifying merged literals."""
+        dangerous = [token for token in tokens if token in cls.DANGEROUS_TOKENS]
+        for token in cls.unquoted_operator_tokens(value):
+            if token not in dangerous:
+                dangerous.append(token)
+        return dangerous
 
     def matches(self, value: Any) -> bool:
         """Check if command string is safe to execute.
@@ -545,10 +602,13 @@ class Shlex:
         # Because we used punctuation_chars=True, any unquoted operator
         # is guaranteed to be its own token, possibly merged with adjacent
         # operator characters (see OPERATOR_CHARS).
-        for token in tokens:
-            if self.is_operator_token(token):
-                logger.debug(f"Shlex rejected operator token '{token}' in: {value!r}")
-                return False
+        # Preserve the former conservative treatment of the standard operator
+        # tokens even when quoted or escaped (for example find's ``\;``), while
+        # using the raw source to distinguish newly covered merged operators
+        # from quoted/escaped literal arguments.
+        for token in self.dangerous_operator_tokens(value, tokens):
+            logger.debug(f"Shlex rejected operator token '{token}' in: {value!r}")
+            return False
 
         return True
 
