@@ -498,6 +498,10 @@ async def read_file(path: str) -> str:
     ...
 ```
 
+Pass constraint instances such as `Subpath("/data")`: the server checks them on
+every call, on top of the warrant. A bare class such as `Subpath` has no bounds,
+so registering it raises `TypeError`.
+
 **Constraint binding validation** happens at startup:
 
 ```python
