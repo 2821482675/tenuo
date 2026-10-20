@@ -531,18 +531,14 @@ class _TenuoWorkflowInboundInterceptor:
         if config and config.authorized_signals is not None:
             signal_name = getattr(input, "signal", None)
             if signal_name not in config.authorized_signals:
-                warrant_id = self._resolve_warrant_id()
+                # Drop, don't raise: a raised denial fails the run, so any
+                # caller who can signal could end the workflow.
                 logger.warning(
-                    "Signal '%s' denied (warrant_id=%s): not in authorized_signals",
+                    "Signal '%s' dropped (warrant_id=%s): not in authorized_signals",
                     signal_name,
-                    warrant_id,
+                    self._resolve_warrant_id(),
                 )
-                raise TemporalConstraintViolation(
-                    tool=f"signal:{signal_name}",
-                    arguments={},
-                    constraint=f"Signal not authorized: {signal_name}",
-                    warrant_id=warrant_id,
-                )
+                return
         return await self.next.handle_signal(input)
 
     async def handle_query(self, input: Any) -> Any:

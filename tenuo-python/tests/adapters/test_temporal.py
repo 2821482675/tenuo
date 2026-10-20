@@ -7,6 +7,7 @@ a running Temporal server.
 
 import asyncio
 import base64
+import contextlib
 import gzip
 import os
 import threading
@@ -5067,21 +5068,21 @@ class TestSignalAndUpdateRuntimeDenial:
             self._cleanup(wf_id)
         nxt.handle_signal.assert_called_once_with(sig_input)
 
-    def test_signal_outside_allowlist_denies_and_names_warrant(self):
+    def test_signal_outside_allowlist_is_dropped_and_logged(self, caplog):
+        """A raised denial would fail the run, so an off-list signal is dropped instead."""
         inbound, nxt, _, wf_id = self._stub_inbound(authorized_signals=["add"])
         sig_input = MagicMock(signal="drop_tables")
         try:
             with patch("temporalio.workflow.info", return_value=self._fake_wf_info(wf_id)):
                 loop = asyncio.new_event_loop()
                 try:
-                    with pytest.raises(TemporalConstraintViolation) as excinfo:
-                        loop.run_until_complete(inbound.handle_signal(sig_input))
+                    loop.run_until_complete(inbound.handle_signal(sig_input))
                 finally:
                     loop.close()
         finally:
             self._cleanup(wf_id)
 
-        assert "drop_tables" in str(excinfo.value)
+        assert "Signal 'drop_tables' dropped" in caplog.text
         nxt.handle_signal.assert_not_called()
 
     def test_update_allowed_passes_through(self):
@@ -5169,19 +5170,19 @@ class TestSignalAndUpdateRuntimeDenial:
         assert "ping" in str(excinfo.value)
         nxt.handle_update_handler.assert_not_called()
 
-    def test_signal_allowlist_applies_before_run_registration(self):
+    def test_signal_allowlist_applies_before_run_registration(self, caplog):
         inbound, nxt, run_id = self._unregistered_inbound(authorized_signals=["add"])
         sig_input = MagicMock(signal="drop_tables", headers={})
         try:
             with patch("temporalio.workflow.info", return_value=self._early_info(run_id)):
                 loop = asyncio.new_event_loop()
                 try:
-                    with pytest.raises(TemporalConstraintViolation):
-                        loop.run_until_complete(inbound.handle_signal(sig_input))
+                    loop.run_until_complete(inbound.handle_signal(sig_input))
                 finally:
                     loop.close()
         finally:
             self._cleanup_run(run_id)
+        assert "Signal 'drop_tables' dropped" in caplog.text
         nxt.handle_signal.assert_not_called()
 
     def test_start_headers_replace_empty_early_registration(self):
@@ -5245,8 +5246,10 @@ class TestSignalAndUpdateRuntimeDenial:
 
         getattr(nxt, method).side_effect = fail
         try:
+            # An off-list signal is dropped, not raised.
+            dropped = entrypoint == "signal" and failure == "denied"
             with patch("temporalio.workflow.info", return_value=info):
-                with pytest.raises(error_type):
+                with contextlib.nullcontext() if dropped else pytest.raises(error_type):
                     result = getattr(inbound, method)(inp)
                     if entrypoint != "validator":
                         asyncio.run(result)
