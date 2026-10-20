@@ -42,6 +42,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`UrlSafe` domain policy applies to every host.** `allow_domains` previously
+  constrained DNS hostnames but not public IP literals, so a warrant limited
+  to `api.example.com` could still authorize `https://8.8.8.8/`. Allow- and
+  deny-list patterns are now validated and canonicalized by the core, public
+  IPs require an explicit matching entry, and malformed patterns fail closed.
+  This is a v1 security erratum: existing allowlisted warrants become more
+  restrictive when evaluated by an updated verifier; their wire encoding is
+  unchanged.
 - **A2A audit timestamps are valid ISO 8601.** `AuditEvent.to_dict()` appended
   `Z` to an aware UTC `isoformat()`, so audit records carried
   `...+00:00Z`, which strict parsers reject. They now end in a single `Z`;
