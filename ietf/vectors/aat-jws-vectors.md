@@ -4,7 +4,7 @@
 
 ## Vector ids
 
-A vector's id is `J.<group>[.<n>]`, where the group is its topic (below). `cbor_twin`, where set, names the vector `A.x` in Tenuo's CBOR suite (`docs/spec/test-vectors.md`) that encodes the same scenario, with the same key seeds and timestamps. 29 of the 217 vectors have a twin; otherwise group numbers have no relation to the CBOR suite's section numbers.
+A vector's id is `J.<group>[.<n>]`, where the group is its topic (below). `cbor_twin`, where set, names the vector `A.x` in Tenuo's CBOR suite (`docs/spec/test-vectors.md`) that encodes the same scenario, with the same key seeds and timestamps. 29 of the 223 vectors have a twin; otherwise group numbers have no relation to the CBOR suite's section numbers.
 
 | Group | Topic | Vectors |
 |---|---|---|
@@ -13,10 +13,10 @@ A vector's id is `J.<group>[.<n>]`, where the group is its topic (below). `cbor_
 | J.3 | Valid three-level chain | 1 |
 | J.4 | I1 delegation authority (4b, 4c) | 3 |
 | J.5 | Expired root (3e) | 1 |
-| J.6 | PoP audience, nonce and chain audience (6c, 7d, 7h) | 10 |
-| J.7 | Explicit typing and header parameters (3a, 4a, 7a) | 14 |
+| J.6 | PoP audience, nonce and chain audience (6c, 7d, 7h) | 11 |
+| J.7 | Explicit typing and header parameters (3a, 4a, 7a) | 15 |
 | J.8 | Constraint maps, well-formedness and number admissibility (3n, 4o, 6b) | 24 |
-| J.9 | Closed-world leaf checks (6b) | 4 |
+| J.9 | Closed-world leaf checks (6b) | 5 |
 | J.10 | I2 delegation depth (4d-4m) | 6 |
 | J.11 | I4 capability monotonicity (4p) | 4 |
 | J.12 | I5 cryptographic linkage (4q) | 2 |
@@ -28,10 +28,10 @@ A vector's id is `J.<group>[.<n>]`, where the group is its topic (below). `cbor_
 | J.18 | Composites across kinds | 2 |
 | J.19 | The Section 4.5 subsumption table (4p2, 4p4) | 15 |
 | J.20 | PoP JWT failures and replay (7b-7i) | 16 |
-| J.21 | Root token claims (3b-3n) | 20 |
+| J.21 | Root token claims (3b-3n) | 21 |
 | J.22 | Optional and unnamed arguments (4p2, 4p3, 6b) | 23 |
 | J.23 | Presentation size and parsing (1, 2a-2c, 3b) | 4 |
-| J.24 | Derived token claims (2c, 4b) | 9 |
+| J.24 | Derived token claims (2c, 4b) | 11 |
 | J.25 | authorization_details entries (3m, 4b3, 4n) | 10 |
 | J.26 | Leaf check predicates (6b) | 12 |
 | J.27 | Inputs a verifier must accept, and a derived aud (6c) | 6 |
@@ -126,7 +126,7 @@ Vectors by expected step:
 | 2a | J.23.2 |
 | 2b | J.23.3 |
 | 2c | J.2, J.24.1 |
-| 3a | J.7.3, J.7.4, J.7.5, J.7.6, J.14.b |
+| 3a | J.7.3, J.7.4, J.7.5, J.7.6, J.7.15, J.14.b |
 | 3b | J.14, J.14.c, J.21.13, J.23.4 |
 | 3c | J.21.2, J.21.9 |
 | 3d | J.21.1 |
@@ -137,13 +137,13 @@ Vectors by expected step:
 | 3i | J.21.15, J.21.16, J.21.17, J.21.18 |
 | 3j | J.21.20 |
 | 3k | J.21.6 |
-| 3l | J.21.3 |
+| 3l | J.21.3, J.21.21 |
 | 3m | J.21.8, J.21.10, J.25.7, J.25.9 |
 | 3n | J.8.3, J.8.5, J.8.6, J.8.9, J.8.16, J.8.17, J.8.18, J.8.19, J.8.20, J.8.21, J.8.22, J.8.23, J.21.7, J.21.11, J.21.12, J.22.18, J.22.19, J.22.23 |
 | 4a | J.7.7, J.7.8, J.7.9 |
 | 4b | J.4, J.4.b, J.24.9 |
 | 4b1 | J.24.2 |
-| 4b2 | J.24.3 |
+| 4b2 | J.24.3, J.24.10, J.24.11 |
 | 4b3 | J.25.10 |
 | 4b4 | J.24.4, J.24.5 |
 | 4b5 | J.24.6, J.24.7, J.24.8 |
@@ -164,8 +164,8 @@ Vectors by expected step:
 | 4p3 | J.22.8 |
 | 4p4 | J.8.4, J.11, J.11.d, J.15.2, J.15.5, J.16.2, J.17.2, J.17.4, J.17.6, J.17.8, J.18.1, J.19.1, J.19.2, J.19.3, J.19.4, J.19.5, J.19.6, J.19.7, J.19.9, J.19.10, J.19.11, J.19.12, J.19.13 |
 | 4q | J.12, J.12.b |
-| 6b | J.8.7, J.8.10, J.8.14, J.9.1, J.9.2, J.9.3, J.15.6, J.16.5, J.20.3, J.22.3, J.22.5, J.22.6, J.22.9, J.22.12, J.22.22, J.25.2, J.26.1, J.26.2, J.26.3, J.26.4, J.26.5, J.26.6, J.26.7, J.26.8, J.26.9 |
-| 6c | J.6.9, J.6.10, J.27.5 |
+| 6b | J.8.7, J.8.10, J.8.14, J.9.1, J.9.2, J.9.3, J.9.5, J.15.6, J.16.5, J.20.3, J.22.3, J.22.5, J.22.6, J.22.9, J.22.12, J.22.22, J.25.2, J.26.1, J.26.2, J.26.3, J.26.4, J.26.5, J.26.6, J.26.7, J.26.8, J.26.9 |
+| 6c | J.6.9, J.6.10, J.6.11, J.27.5 |
 | 7a | J.7.1, J.7.2, J.7.10, J.7.11 |
 | 7b | J.20.1, J.20.12 |
 | 7c | J.20.2, J.20.7, J.20.8, J.20.13, J.20.14 |
@@ -198,6 +198,7 @@ Vectors by expected step:
 | J.6.8 | Root aud names this enforcement point | — | PERMIT |
 | J.6.9 | Root aud names another enforcement point | — | DENY at step 6c |
 | J.6.10 | Chain audience required, no token carries aud | — | DENY at step 6c |
+| J.6.11 | Chain audience array contains a non-string value | — | DENY at step 6c |
 | J.7.1 | PoP JWT missing typ | — | DENY at step 7a |
 | J.7.2 | AAT presented where a PoP is expected (type confusion) | — | DENY at step 7a |
 | J.7.3 | AAT with typ aat-pop+jwt in the chain | — | DENY at step 3a |
@@ -212,6 +213,7 @@ Vectors by expected step:
 | J.7.12 | Unrecognized header parameters are ignored | — | PERMIT |
 | J.7.13 | A header jwk on an AAT is ignored | — | PERMIT |
 | J.7.14 | A header jwk on the PoP JWT is ignored | — | PERMIT |
+| J.7.15 | crit is an empty array | — | DENY at step 3a |
 | J.8.1 | Empty parent map: derived introduces constraint keys (step 4p2) | — | PERMIT |
 | J.8.2 | Empty tool map at the leaf: extra arguments are permitted | — | PERMIT |
 | J.8.3 | Unknown constraint_type is fail-closed at the leaf | A.9.2 | DENY at step 3n |
@@ -240,6 +242,7 @@ Vectors by expected step:
 | J.9.2 | Closed-world: constrained argument absent | — | DENY at step 6b |
 | J.9.3 | Tool dropped at L2 cannot be invoked | — | DENY at step 6b |
 | J.9.4 | Prefix presentation of a valid chain | — | PERMIT |
+| J.9.5 | Invocation arguments repeat a member name | — | DENY at step 6b |
 | J.10 | I2 violation: del_depth skips a level | A.10 | DENY at step 4d |
 | J.10.b | I2 violation: del_max_depth raised above parent | A.10 | DENY at step 4g |
 | J.10.c | I2 violation: derivation from a terminal token | A.9.1 | DENY at step 4e |
@@ -334,6 +337,7 @@ Vectors by expected step:
 | J.21.18 | Root without del_max_depth | — | DENY at step 3i |
 | J.21.19 | Root del_max_depth equal to MAX_DELEGATION_DEPTH | — | PERMIT |
 | J.21.20 | Root jti is an empty string | — | DENY at step 3j |
+| J.21.21 | Root cnf.jwk has a key type inconsistent with Ed25519 | — | DENY at step 3l |
 | J.22.1 | Optional arguments may be omitted | — | PERMIT |
 | J.22.2 | A present optional argument is constrained | — | PERMIT |
 | J.22.3 | A present optional argument that violates its constraint | — | DENY at step 6b |
@@ -370,6 +374,8 @@ Vectors by expected step:
 | J.24.7 | Derived token without iss | — | DENY at step 4b5 |
 | J.24.8 | Derived token without par_hash | — | DENY at step 4b5 |
 | J.24.9 | Derived token repeats a tool identifier | — | DENY at step 4b |
+| J.24.10 | Derived cnf.jwk has the wrong curve | — | DENY at step 4b2 |
+| J.24.11 | Derived cnf.jwk has a short public-key value | — | DENY at step 4b2 |
 | J.25.1 | Root with an entry of another type alongside its AAT entry | — | PERMIT |
 | J.25.2 | A tool granted only by an entry of another type | — | DENY at step 6b |
 | J.25.3 | Leaf whose only entry has another type | — | DENY at step 4n |
@@ -401,7 +407,8 @@ Vectors by expected step:
 
 ## J.1 Minimal valid root token, single-token chain
 
-CBOR twin: A.1.  
+CBOR twin: A.1.
+
 Root issued by the trust anchor to the Orchestrator; read_file with a wildcard path. Presented alone (root = leaf) with a PoP from the Orchestrator.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -455,7 +462,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.2 Duplicate jti in chain (cycle detection, step 2c)
 
-CBOR twin: A.9.  
+CBOR twin: A.9.
+
 L1 reuses the root's jti. Detected before any signature is verified.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -531,7 +539,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.3 Valid 3-level chain
 
-CBOR twin: A.3.  
+CBOR twin: A.3.
+
 Root (Control Plane -> Orchestrator, del_max_depth 3) -> L1 (Orchestrator -> Worker, one_of narrowed, range max 100 -> 20, wildcard -> exact, del_max_depth 2) -> L2 (Worker -> Worker2, one_of -> exact, search_index dropped, terminal: del_depth == del_max_depth == 2).
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -629,7 +638,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.4 I1 violation: derived token signed by a key that does not hold the parent
 
-CBOR twin: A.4.  
+CBOR twin: A.4.
+
 L1 is signed by the Attacker and honestly sets iss to the Attacker's thumbprint URI. Signature verification under parent.cnf.jwk fails before the iss comparison is reached.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -705,7 +715,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.4.b I1 violation: iss claims the parent holder but signature is the Attacker's
 
-CBOR twin: A.4.  
+CBOR twin: A.4.
+
 Same as J.4 but iss is forged to the Orchestrator's thumbprint URI. Still fails at 4b.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -781,7 +792,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.4.c I1 violation: signature verifies, iss is not the parent holder thumbprint
 
-CBOR twin: A.4.  
+CBOR twin: A.4.
+
 L1 is signed by the Orchestrator (parent holder) so 4b passes; iss is the Attacker's thumbprint URI.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -857,7 +869,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.5 Expired root token
 
-CBOR twin: A.5.  
+CBOR twin: A.5.
+
 Root exp = 1704067400, verification time = 1704067500.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -911,7 +924,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.6.1 PoP without aat_aud, enforcement point requires audience
 
-CBOR twin: A.6.  
+CBOR twin: A.6.
+
 Same chain as J.3; the PoP omits aat_aud and this enforcement point's policy requires it (step 7d, third sentence).
 
 **Policy:** `require_pop_aud`=`True`
@@ -1013,7 +1027,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfaGFzaCI6IjZKUXBIX3pDT
 
 ## J.6.2 PoP aat_aud does not identify this enforcement point
 
-CBOR twin: A.6.  
+CBOR twin: A.6.
+
 Same chain as J.3; aat_aud is present but names https://evil.example.com. A present aat_aud MUST identify the receiving enforcement point regardless of policy (step 7d, first sentence).
 
 **Policy:** `require_pop_aud`=`True`
@@ -1847,6 +1862,59 @@ Payload (JCS; this exact byte string is base64url-encoded):
 Compact JWS:
 ```
 eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiNkpRcEhfekNPRllnSy1GNEVqT3JPOXlzc2RsQTI0WWdtM0pSSDZzdElkayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTAzIn0.D2IAsgnWGSZn2OTKpgvcofrN2n6Bfm3mS31yR7a1Yi0ap4mKbAicHYqkY6X821hIejwS0wccNJseDmoAgKJeCg
+```
+
+---
+
+## J.6.11 Chain audience array contains a non-string value
+
+The root aud array contains this enforcement point and the number 7. RFC 7519 permits a string or an array of strings, so membership alone is insufficient (step 6c).
+
+**Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
+**Expected:** **DENY** at step 6c
+
+**Chain[0] (del_depth 0)** (signed by `control_plane`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"aud":["https://tools.example.com",7],"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"one_of","values":["/data/q3-report.pdf","/data/q4-report.pdf"]}},"search_index":{"limit":{"constraint_type":"range","max":100},"query":{"constraint_type":"wildcard"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}},"del_depth":0,"del_max_depth":3,"exp":1704070800,"iat":1704067200,"iss":"https://auth.example.com","jti":"019471f8-0000-7000-8000-000000000024"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9` |
+| payload_b64 | `eyJhdWQiOlsiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsN10sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3sidG9vbHMiOnsicmVhZF9maWxlIjp7InBhdGgiOnsiY29uc3RyYWludF90eXBlIjoib25lX29mIiwidmFsdWVzIjpbIi9kYXRhL3EzLXJlcG9ydC5wZGYiLCIvZGF0YS9xNC1yZXBvcnQucGRmIl19fSwic2VhcmNoX2luZGV4Ijp7ImxpbWl0Ijp7ImNvbnN0cmFpbnRfdHlwZSI6InJhbmdlIiwibWF4IjoxMDB9LCJxdWVyeSI6eyJjb25zdHJhaW50X3R5cGUiOiJ3aWxkY2FyZCJ9fX0sInR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6ImdUbDNEcWg5RjE5V28xUm13MHgtek11TmlwRzA3amVpWGZZUFc0X0pzNVEifX0sImRlbF9kZXB0aCI6MCwiZGVsX21heF9kZXB0aCI6MywiZXhwIjoxNzA0MDcwODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6Imh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbSIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAyNCJ9` |
+| SHA-256(signing input), base64url | `2BHBBvUQ6PCaKJc1XhwSE6j7goXNgqo67rt6s9WXDZ8` |
+| signature_b64 | `8bRBFM5P8oomGR2TWZ-lWF5QHPHIJhlTTJy96hcUg0umRP95pJQhTlaqmrP5T-RQj8fLfGYnMK9_NWRwMijFAw` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdWQiOlsiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsN10sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3sidG9vbHMiOnsicmVhZF9maWxlIjp7InBhdGgiOnsiY29uc3RyYWludF90eXBlIjoib25lX29mIiwidmFsdWVzIjpbIi9kYXRhL3EzLXJlcG9ydC5wZGYiLCIvZGF0YS9xNC1yZXBvcnQucGRmIl19fSwic2VhcmNoX2luZGV4Ijp7ImxpbWl0Ijp7ImNvbnN0cmFpbnRfdHlwZSI6InJhbmdlIiwibWF4IjoxMDB9LCJxdWVyeSI6eyJjb25zdHJhaW50X3R5cGUiOiJ3aWxkY2FyZCJ9fX0sInR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6ImdUbDNEcWg5RjE5V28xUm13MHgtek11TmlwRzA3amVpWGZZUFc0X0pzNVEifX0sImRlbF9kZXB0aCI6MCwiZGVsX21heF9kZXB0aCI6MywiZXhwIjoxNzA0MDcwODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6Imh0dHBzOi8vYXV0aC5leGFtcGxlLmNvbSIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAyNCJ9.8bRBFM5P8oomGR2TWZ-lWF5QHPHIJhlTTJy96hcUg0umRP95pJQhTlaqmrP5T-RQj8fLfGYnMK9_NWRwMijFAw
+```
+
+**PoP JWT** (signed by `orchestrator`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat-pop+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"aat_aud":"https://tools.example.com","aat_hash":"2BHBBvUQ6PCaKJc1XhwSE6j7goXNgqo67rt6s9WXDZ8","aat_id":"019471f8-0000-7000-8000-000000000024","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000a0d"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiMkJIQkJ2VVE2UENhS0pjMVhod1NFNmo3Z29YTmdxbzY3cnQ2czlXWERaOCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAyNCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTBkIn0` |
+| SHA-256(signing input), base64url | `mK_L23_fbkhi-lwF8PSvwpVeLIEDwdFkpWWfuxgI1XM` |
+| signature_b64 | `lDni30hYrr4GoAj9fUriRIngCMvDJtcy7GfGCCcRqy_UlQS-3qLtY_XNsse4rIFJ2JfLTFqVwjFaBZO1A-Q-Cg` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiMkJIQkJ2VVE2UENhS0pjMVhod1NFNmo3Z29YTmdxbzY3cnQ2czlXWERaOCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAyNCIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYTBkIn0.lDni30hYrr4GoAj9fUriRIngCMvDJtcy7GfGCCcRqy_UlQS-3qLtY_XNsse4rIFJ2JfLTFqVwjFaBZO1A-Q-Cg
 ```
 
 ---
@@ -2901,6 +2969,59 @@ eyJhbGciOiJFZDI1NTE5IiwiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZHFG
 
 ---
 
+## J.7.15 crit is an empty array
+
+The root is otherwise valid, but RFC 7515 Section 4.1.11 requires crit to be a non-empty array (step 3a).
+
+**Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
+**Expected:** **DENY** at step 3a
+
+**Chain[0] (del_depth 0)** (signed by `control_plane`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","crit":[],"typ":"aat+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"one_of","values":["/data/q3-report.pdf","/data/q4-report.pdf"]}},"search_index":{"limit":{"constraint_type":"range","max":100},"query":{"constraint_type":"wildcard"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}},"del_depth":0,"del_max_depth":3,"exp":1704070800,"iat":1704067200,"iss":"https://auth.example.com","jti":"019471f8-0000-7000-8000-000000000083"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwiY3JpdCI6W10sInR5cCI6ImFhdCtqd3QifQ` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIiwiL2RhdGEvcTQtcmVwb3J0LnBkZiJdfX0sInNlYXJjaF9pbmRleCI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heCI6MTAwfSwicXVlcnkiOnsiY29uc3RyYWludF90eXBlIjoid2lsZGNhcmQifX19LCJ0eXBlIjoiYXR0ZW51YXRpbmdfYWdlbnRfdG9rZW4ifV0sImNuZiI6eyJqd2siOnsiY3J2IjoiRWQyNTUxOSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn19LCJkZWxfZGVwdGgiOjAsImRlbF9tYXhfZGVwdGgiOjMsImV4cCI6MTcwNDA3MDgwMCwiaWF0IjoxNzA0MDY3MjAwLCJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwODMifQ` |
+| SHA-256(signing input), base64url | `qifclJEwHEMjy3aSFXA2TrWZP6bzTqNDSSZmTW-07f4` |
+| signature_b64 | `JRvjGcEd-L6PR1DVSRRMwltN7rwkNEBPAgVT20I5SXzdlmPshu8lS2uiTSIdefuQHUA3nk_3CC5DjjLZpBvPBQ` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwiY3JpdCI6W10sInR5cCI6ImFhdCtqd3QifQ.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIiwiL2RhdGEvcTQtcmVwb3J0LnBkZiJdfX0sInNlYXJjaF9pbmRleCI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heCI6MTAwfSwicXVlcnkiOnsiY29uc3RyYWludF90eXBlIjoid2lsZGNhcmQifX19LCJ0eXBlIjoiYXR0ZW51YXRpbmdfYWdlbnRfdG9rZW4ifV0sImNuZiI6eyJqd2siOnsiY3J2IjoiRWQyNTUxOSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn19LCJkZWxfZGVwdGgiOjAsImRlbF9tYXhfZGVwdGgiOjMsImV4cCI6MTcwNDA3MDgwMCwiaWF0IjoxNzA0MDY3MjAwLCJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwODMifQ.JRvjGcEd-L6PR1DVSRRMwltN7rwkNEBPAgVT20I5SXzdlmPshu8lS2uiTSIdefuQHUA3nk_3CC5DjjLZpBvPBQ
+```
+
+**PoP JWT** (signed by `orchestrator`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat-pop+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"aat_aud":"https://tools.example.com","aat_hash":"qifclJEwHEMjy3aSFXA2TrWZP6bzTqNDSSZmTW-07f4","aat_id":"019471f8-0000-7000-8000-000000000083","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ae7"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoicWlmY2xKRXdIRU1qeTNhU0ZYQTJUcldaUDZielRxTkRTU1ptVFctMDdmNCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA4MyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWU3In0` |
+| SHA-256(signing input), base64url | `YTesIjG0UmqRK8BBu2liW1a2JDO2nvRu17L5SPEkGdU` |
+| signature_b64 | `ZiOeGuc5EIsCdK14oGvsPVDF02z89zgOI_pYFV_P-wEykkUGNsttumwSRJnpJYw4UAuzwrlJoMgLt4yERGEuAw` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoicWlmY2xKRXdIRU1qeTNhU0ZYQTJUcldaUDZielRxTkRTU1ptVFctMDdmNCIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDA4MyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWU3In0.ZiOeGuc5EIsCdK14oGvsPVDF02z89zgOI_pYFV_P-wEykkUGNsttumwSRJnpJYw4UAuzwrlJoMgLt4yERGEuAw
+```
+
+---
+
 ## J.8.1 Empty parent map: derived introduces constraint keys (step 4p2)
 
 Root authorizes read_file with an empty constraint map. L1 introduces path:exact. §4.5 / step 4p2 permits adding keys when the parent map is empty (an empty map is *).
@@ -3031,7 +3152,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.8.3 Unknown constraint_type is fail-closed at the leaf
 
-CBOR twin: A.9.2.  
+CBOR twin: A.9.2.
+
 Root carries path:{constraint_type: no_such_type}. Step 3n rejects constraint types the enforcement point does not implement when it walks the root's constraint trees.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -4622,9 +4744,107 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ---
 
+## J.9.5 Invocation arguments repeat a member name
+
+The invocation names path twice, first q4 and then q3. A parser that keeps the last value sees arguments that satisfy the leaf and match the PoP hta; step 6b rejects the duplicate before either comparison matters.
+
+**Invocation:** tool `read_file`, args `{"path":"/data/q4-report.pdf","path":"/data/q3-report.pdf"}`, now = `1704067500`
+**Expected:** **DENY** at step 6b
+
+**Chain[0] (del_depth 0)** (signed by `control_plane`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"one_of","values":["/data/q3-report.pdf","/data/q4-report.pdf"]}},"search_index":{"limit":{"constraint_type":"range","max":100},"query":{"constraint_type":"wildcard"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}},"del_depth":0,"del_max_depth":3,"exp":1704070800,"iat":1704067200,"iss":"https://auth.example.com","jti":"019471f8-0000-7000-8000-000000000010"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIiwiL2RhdGEvcTQtcmVwb3J0LnBkZiJdfX0sInNlYXJjaF9pbmRleCI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heCI6MTAwfSwicXVlcnkiOnsiY29uc3RyYWludF90eXBlIjoid2lsZGNhcmQifX19LCJ0eXBlIjoiYXR0ZW51YXRpbmdfYWdlbnRfdG9rZW4ifV0sImNuZiI6eyJqd2siOnsiY3J2IjoiRWQyNTUxOSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn19LCJkZWxfZGVwdGgiOjAsImRlbF9tYXhfZGVwdGgiOjMsImV4cCI6MTcwNDA3MDgwMCwiaWF0IjoxNzA0MDY3MjAwLCJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTAifQ` |
+| SHA-256(signing input), base64url | `BR0nHWoCPtlrdOSpY8vPj7ejvLGj1SSJfK97P-ZWV0g` |
+| signature_b64 | `6YxvFx29Q1Y2k_TI4bp4DujeluiXEBMRi0VaS9KPQnnBijGrzBaOy_G1riBOyR5ZW2JBWVoRwIU5aY5uy_s2BQ` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIiwiL2RhdGEvcTQtcmVwb3J0LnBkZiJdfX0sInNlYXJjaF9pbmRleCI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heCI6MTAwfSwicXVlcnkiOnsiY29uc3RyYWludF90eXBlIjoid2lsZGNhcmQifX19LCJ0eXBlIjoiYXR0ZW51YXRpbmdfYWdlbnRfdG9rZW4ifV0sImNuZiI6eyJqd2siOnsiY3J2IjoiRWQyNTUxOSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn19LCJkZWxfZGVwdGgiOjAsImRlbF9tYXhfZGVwdGgiOjMsImV4cCI6MTcwNDA3MDgwMCwiaWF0IjoxNzA0MDY3MjAwLCJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTAifQ.6YxvFx29Q1Y2k_TI4bp4DujeluiXEBMRi0VaS9KPQnnBijGrzBaOy_G1riBOyR5ZW2JBWVoRwIU5aY5uy_s2BQ
+```
+
+**Chain[1] (del_depth 1)** (signed by `orchestrator`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"one_of","values":["/data/q3-report.pdf"]}},"search_index":{"limit":{"constraint_type":"range","max":20},"query":{"constraint_type":"exact","value":"public filings"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"}},"del_depth":1,"del_max_depth":2,"exp":1704069000,"iat":1704067260,"iss":"urn:ietf:params:oauth:jwk-thumbprint:sha-256:aVBtapLd11SUVKIMGJfPzOEDuN0sXcmzJQNVT-_sKEU","jti":"019471f8-0000-7000-8000-000000000011","par_hash":"BR0nHWoCPtlrdOSpY8vPj7ejvLGj1SSJfK97P-ZWV0g"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIl19fSwic2VhcmNoX2luZGV4Ijp7ImxpbWl0Ijp7ImNvbnN0cmFpbnRfdHlwZSI6InJhbmdlIiwibWF4IjoyMH0sInF1ZXJ5Ijp7ImNvbnN0cmFpbnRfdHlwZSI6ImV4YWN0IiwidmFsdWUiOiJwdWJsaWMgZmlsaW5ncyJ9fX0sInR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifX0sImRlbF9kZXB0aCI6MSwiZGVsX21heF9kZXB0aCI6MiwiZXhwIjoxNzA0MDY5MDAwLCJpYXQiOjE3MDQwNjcyNjAsImlzcyI6InVybjppZXRmOnBhcmFtczpvYXV0aDpqd2stdGh1bWJwcmludDpzaGEtMjU2OmFWQnRhcExkMTFTVVZLSU1HSmZQek9FRHVOMHNYY216SlFOVlQtX3NLRVUiLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTEiLCJwYXJfaGFzaCI6IkJSMG5IV29DUHRscmRPU3BZOHZQajdlanZMR2oxU1NKZks5N1AtWldWMGcifQ` |
+| SHA-256(signing input), base64url | `3kFpxq53WreeYGKbIxNqnCqjRSmVjwNoHjjZKIuqRw0` |
+| signature_b64 | `su9i3gqLZBwNtQUCAjBlS3k0qU93MuabrktCl8L7VzsAA0bGiWBrULz-VcGByWeeI9Y5C5QkROLptkBGqOS3AA` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIl19fSwic2VhcmNoX2luZGV4Ijp7ImxpbWl0Ijp7ImNvbnN0cmFpbnRfdHlwZSI6InJhbmdlIiwibWF4IjoyMH0sInF1ZXJ5Ijp7ImNvbnN0cmFpbnRfdHlwZSI6ImV4YWN0IiwidmFsdWUiOiJwdWJsaWMgZmlsaW5ncyJ9fX0sInR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOOUUifX0sImRlbF9kZXB0aCI6MSwiZGVsX21heF9kZXB0aCI6MiwiZXhwIjoxNzA0MDY5MDAwLCJpYXQiOjE3MDQwNjcyNjAsImlzcyI6InVybjppZXRmOnBhcmFtczpvYXV0aDpqd2stdGh1bWJwcmludDpzaGEtMjU2OmFWQnRhcExkMTFTVVZLSU1HSmZQek9FRHVOMHNYY216SlFOVlQtX3NLRVUiLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTEiLCJwYXJfaGFzaCI6IkJSMG5IV29DUHRscmRPU3BZOHZQajdlanZMR2oxU1NKZks5N1AtWldWMGcifQ.su9i3gqLZBwNtQUCAjBlS3k0qU93MuabrktCl8L7VzsAA0bGiWBrULz-VcGByWeeI9Y5C5QkROLptkBGqOS3AA
+```
+
+**Chain[2] (del_depth 2)** (signed by `worker`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"exact","value":"/data/q3-report.pdf"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"ypOsFwUYcHHWe4PH_w7-gQjo7EUwV113JoeTM9vavnw"}},"del_depth":2,"del_max_depth":2,"exp":1704068400,"iat":1704067320,"iss":"urn:ietf:params:oauth:jwk-thumbprint:sha-256:nRIE2VmKdMjL1JD7tbV7fXVgXxmv0GKnMFWRUJMTf9Q","jti":"019471f8-0000-7000-8000-000000000012","par_hash":"3kFpxq53WreeYGKbIxNqnCqjRSmVjwNoHjjZKIuqRw0"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6ImV4YWN0IiwidmFsdWUiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoieXBPc0Z3VVljSEhXZTRQSF93Ny1nUWpvN0VVd1YxMTNKb2VUTTl2YXZudyJ9fSwiZGVsX2RlcHRoIjoyLCJkZWxfbWF4X2RlcHRoIjoyLCJleHAiOjE3MDQwNjg0MDAsImlhdCI6MTcwNDA2NzMyMCwiaXNzIjoidXJuOmlldGY6cGFyYW1zOm9hdXRoOmp3ay10aHVtYnByaW50OnNoYS0yNTY6blJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsInBhcl9oYXNoIjoiM2tGcHhxNTNXcmVlWUdLYkl4TnFuQ3FqUlNtVmp3Tm9IampaS0l1cVJ3MCJ9` |
+| SHA-256(signing input), base64url | `6JQpH_zCOFYgK-F4EjOrO9yssdlA24Ygm3JRH6stIdk` |
+| signature_b64 | `_GEf1gtu9TArrybn30V9ejlXCcOjAXdNAaC-uAUzrms2nrwsGlB1wUmz28w0jHgbgnKrZEweCD_msemMSeWDBA` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6ImV4YWN0IiwidmFsdWUiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoieXBPc0Z3VVljSEhXZTRQSF93Ny1nUWpvN0VVd1YxMTNKb2VUTTl2YXZudyJ9fSwiZGVsX2RlcHRoIjoyLCJkZWxfbWF4X2RlcHRoIjoyLCJleHAiOjE3MDQwNjg0MDAsImlhdCI6MTcwNDA2NzMyMCwiaXNzIjoidXJuOmlldGY6cGFyYW1zOm9hdXRoOmp3ay10aHVtYnByaW50OnNoYS0yNTY6blJJRTJWbUtkTWpMMUpEN3RiVjdmWFZnWHhtdjBHS25NRldSVUpNVGY5USIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsInBhcl9oYXNoIjoiM2tGcHhxNTNXcmVlWUdLYkl4TnFuQ3FqUlNtVmp3Tm9IampaS0l1cVJ3MCJ9._GEf1gtu9TArrybn30V9ejlXCcOjAXdNAaC-uAUzrms2nrwsGlB1wUmz28w0jHgbgnKrZEweCD_msemMSeWDBA
+```
+
+**PoP JWT** (signed by `worker2`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat-pop+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"aat_aud":"https://tools.example.com","aat_hash":"6JQpH_zCOFYgK-F4EjOrO9yssdlA24Ygm3JRH6stIdk","aat_id":"019471f8-0000-7000-8000-000000000012","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000ac5"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiNkpRcEhfekNPRllnSy1GNEVqT3JPOXlzc2RsQTI0WWdtM0pSSDZzdElkayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWM1In0` |
+| SHA-256(signing input), base64url | `xAq-KEZ-k51QU-E2Ecc5WG-YhhBIB6loIgp1DV1eoOg` |
+| signature_b64 | `G-6ba2-M2tVzSQE84PbLOG_RYUExVKXmx8J5HA_UhYjRZI6k0QS2sn5VsmMXWXw0sZJyr20jCQCWtH531hzqBQ` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiNkpRcEhfekNPRllnSy1GNEVqT3JPOXlzc2RsQTI0WWdtM0pSSDZzdElkayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYWM1In0.G-6ba2-M2tVzSQE84PbLOG_RYUExVKXmx8J5HA_UhYjRZI6k0QS2sn5VsmMXWXw0sZJyr20jCQCWtH531hzqBQ
+```
+
+---
+
 ## J.10 I2 violation: del_depth skips a level
 
-CBOR twin: A.10.  
+CBOR twin: A.10.
+
 L1 declares del_depth 2 under a root at depth 0.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -4700,7 +4920,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.10.b I2 violation: del_max_depth raised above parent
 
-CBOR twin: A.10.  
+CBOR twin: A.10.
+
 L1 declares del_max_depth 4 under a root with del_max_depth 3.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -4776,7 +4997,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.10.c I2 violation: derivation from a terminal token
 
-CBOR twin: A.9.1.  
+CBOR twin: A.9.1.
+
 L2 in J.3 is terminal (del_depth == del_max_depth == 2). L3 is a correctly signed child of it.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -5297,7 +5519,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.11 I4 violation: one_of widened
 
-CBOR twin: A.11.  
+CBOR twin: A.11.
+
 L1 adds /data/secret.pdf to read_file.path.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -5373,7 +5596,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.11.b I4 violation: tool not present in parent
 
-CBOR twin: A.11.  
+CBOR twin: A.11.
+
 L1 adds delete_file, which the root never authorized.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -5449,7 +5673,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.11.c I4 violation: constraint key dropped from a closed-world map
 
-CBOR twin: A.11.  
+CBOR twin: A.11.
+
 L1 drops search_index.limit, which the parent requires; a required key stays required (§4.5, step 4p2).
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -5525,7 +5750,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.11.d I4 violation: one_of relaxed to wildcard
 
-CBOR twin: A.11.  
+CBOR twin: A.11.
+
 A derived wildcard is valid only under a parent wildcard.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -5601,7 +5827,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.12 I5 violation: par_hash over a different parent
 
-CBOR twin: A.12.  
+CBOR twin: A.12.
+
 L1 is a valid child of the J.3 root in every respect except par_hash, which is SHA-256 of the J.1 root's signing input. Both roots have the same holder key, so only I5 catches the splice.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -5677,7 +5904,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.12.b I5 violation: par_hash over the payload segment only
 
-CBOR twin: A.12.  
+CBOR twin: A.12.
+
 par_hash is SHA-256 of BASE64URL(payload) instead of the full JWS Signing Input (header || '.' || payload). A common implementation mistake.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -5753,7 +5981,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.13 I3 violation: derived exp beyond parent exp
 
-CBOR twin: A.13.  
+CBOR twin: A.13.
+
 L1 exp = root exp + 3600.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -5829,7 +6058,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.13.b I3 violation: derived iat earlier than parent iat
 
-CBOR twin: A.13.  
+CBOR twin: A.13.
+
 L1 iat = root iat - 1.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -6205,7 +6435,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.14 Invalid signature: one bit flipped in the root signature
 
-CBOR twin: A.14.  
+CBOR twin: A.14.
+
 Header and payload are byte-identical to the J.3 root.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -6259,7 +6490,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.14.b alg: none rejected unconditionally
 
-CBOR twin: A.14.  
+CBOR twin: A.14.
+
 Same payload as the J.3 root with header {"alg":"none","typ":"aat+jwt"} and an empty signature (§9.11). The header is typed correctly, so alg is its only fault; a verifier that let alg choose the verification method would accept the unsigned token.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -9157,7 +9389,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.20.1 PoP signed by the wrong holder key
 
-CBOR twin: A.20.1.  
+CBOR twin: A.20.1.
+
 Valid J.3 chain; PoP signed by the Attacker instead of Worker2.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -9255,7 +9488,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.20.2 PoP aat_id references a different token
 
-CBOR twin: A.20.  
+CBOR twin: A.20.
+
 PoP signed correctly by Worker2 but aat_id is the L1 jti.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -9353,7 +9587,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.20.3 Leaf exact rejects invocation args before PoP hta is compared
 
-CBOR twin: A.20.  
+CBOR twin: A.20.
+
 PoP commits to {path: q3}; the invocation presents {path: q4}. Denied at 6b because q4 fails the L2 exact constraint. Step 7f is not reached. J.20.5 is the actual hta-mismatch case.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q4-report.pdf"}`, now = `1704067500`
@@ -9451,7 +9686,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.20.4 PoP iat outside the clock window
 
-CBOR twin: A.20.  
+CBOR twin: A.20.
+
 PoP iat = now - 31 with a ±30 s window.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -9549,7 +9785,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.20.5 PoP hta does not match invocation args
 
-CBOR twin: A.20.  
+CBOR twin: A.20.
+
 Leaf is the J.3 root (read_file.path is one_of[q3, q4]). Invocation path is q3, which passes step 6b. PoP hta commits to q4, so 7f fails.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
@@ -9603,7 +9840,8 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.20.6 PoP aat_tool does not match the invocation tool
 
-CBOR twin: A.20.  
+CBOR twin: A.20.
+
 Prefix [L0, L1] authorizes both read_file and search_index. Invocation is search_index with valid args; PoP aat_tool is read_file. Step 6b passes; 7e fails. hta matches the invocation so 7f is not the cause.
 
 **Invocation:** tool `search_index`, args `{"limit":5,"query":"public filings"}`, now = `1704067500`
@@ -11651,6 +11889,59 @@ Payload (JCS; this exact byte string is base64url-encoded):
 Compact JWS:
 ```
 eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoib2trVkQ5dzVOSkZVZEpwcHRNTzNNY2w2Y1JHUGZ5RDh1d2FuSXc1VUgxTSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzMTUxNSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDM5NTE0In0.Ukr7crMi6J_8i_hVQgiVumGqu15_xTXraydESKXQyv0PQ0GrWKIjAWCNUvSHC5QJg0_MF91VVZ5Swu39mPmuCw
+```
+
+---
+
+## J.21.21 Root cnf.jwk has a key type inconsistent with Ed25519
+
+The JWK declares kty RSA while retaining a valid Ed25519 crv and x. A verifier that uses x alone would accept the PoP; step 3l rejects the invalid public JWK.
+
+**Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
+**Expected:** **DENY** at step 3l
+
+**Chain[0] (del_depth 0)** (signed by `control_plane`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"wildcard"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"RSA","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}},"del_depth":0,"del_max_depth":3,"exp":1704070800,"iat":1704067200,"iss":"https://auth.example.com","jti":"019471f8-0000-7000-8000-000000031516"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJSU0EiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDMxNTE2In0` |
+| SHA-256(signing input), base64url | `1B0lhfpwThSj6462oIwAzM-br-Jr4-HPcOC9YD54rCk` |
+| signature_b64 | `NFK_vkK8X_BVTMwv04U2Hggk23NyHj53m2qbCnwuHhf36dfMKwOn4z0XEaJK0B9W5x1JLtE_usrmBsmqGBitCQ` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJSU0EiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDMxNTE2In0.NFK_vkK8X_BVTMwv04U2Hggk23NyHj53m2qbCnwuHhf36dfMKwOn4z0XEaJK0B9W5x1JLtE_usrmBsmqGBitCQ
+```
+
+**PoP JWT** (signed by `orchestrator`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat-pop+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"aat_aud":"https://tools.example.com","aat_hash":"1B0lhfpwThSj6462oIwAzM-br-Jr4-HPcOC9YD54rCk","aat_id":"019471f8-0000-7000-8000-000000031516","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000039515"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiMUIwbGhmcHdUaFNqNjQ2Mm9Jd0F6TS1ici1KcjQtSFBjT0M5WUQ1NHJDayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzMTUxNiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDM5NTE1In0` |
+| SHA-256(signing input), base64url | `dGi7B1r-S7EtfgrjIqPb0YcmBcMajVK2hS1BqdEqmzs` |
+| signature_b64 | `8R6PSwKQXBfK9tkh_bdTRj6zWqOK3s_nUiJ6xMgpX6ngqschOwaQFGFTescnHKcMuz9AlA4BWwDqjLQE3_OGBg` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiMUIwbGhmcHdUaFNqNjQ2Mm9Jd0F6TS1ici1KcjQtSFBjT0M5WUQ1NHJDayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzMTUxNiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDM5NTE1In0.8R6PSwKQXBfK9tkh_bdTRj6zWqOK3s_nUiJ6xMgpX6ngqschOwaQFGFTescnHKcMuz9AlA4BWwDqjLQE3_OGBg
 ```
 
 ---
@@ -14137,6 +14428,156 @@ Payload (JCS; this exact byte string is base64url-encoded):
 Compact JWS:
 ```
 eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiZ2xDaHZBcHVpUGtGM09hVXV5TzRxTmVSZnVrVkpzSlhEZnRIWTNoaTNQRSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzMTgwYSIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xNC1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDM5ODBhIn0.yKLpoUG3i2kn3TXVqem5FaoX5pfi8ircgHzGzTObqDBvPHDFJCy4IjF8JEy6Olp_iM9VR35JtU1fQJbXrilFAg
+```
+
+---
+
+## J.24.10 Derived cnf.jwk has the wrong curve
+
+L1's JWK declares X25519 while retaining the Worker's valid Ed25519 x. Step 4b2 rejects the invalid public JWK before its x can be used for PoP verification.
+
+**Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
+**Expected:** **DENY** at step 4b2
+
+**Chain[0] (del_depth 0)** (signed by `control_plane`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"one_of","values":["/data/q3-report.pdf","/data/q4-report.pdf"]}},"search_index":{"limit":{"constraint_type":"range","max":100},"query":{"constraint_type":"wildcard"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}},"del_depth":0,"del_max_depth":3,"exp":1704070800,"iat":1704067200,"iss":"https://auth.example.com","jti":"019471f8-0000-7000-8000-000000000010"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIiwiL2RhdGEvcTQtcmVwb3J0LnBkZiJdfX0sInNlYXJjaF9pbmRleCI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heCI6MTAwfSwicXVlcnkiOnsiY29uc3RyYWludF90eXBlIjoid2lsZGNhcmQifX19LCJ0eXBlIjoiYXR0ZW51YXRpbmdfYWdlbnRfdG9rZW4ifV0sImNuZiI6eyJqd2siOnsiY3J2IjoiRWQyNTUxOSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn19LCJkZWxfZGVwdGgiOjAsImRlbF9tYXhfZGVwdGgiOjMsImV4cCI6MTcwNDA3MDgwMCwiaWF0IjoxNzA0MDY3MjAwLCJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTAifQ` |
+| SHA-256(signing input), base64url | `BR0nHWoCPtlrdOSpY8vPj7ejvLGj1SSJfK97P-ZWV0g` |
+| signature_b64 | `6YxvFx29Q1Y2k_TI4bp4DujeluiXEBMRi0VaS9KPQnnBijGrzBaOy_G1riBOyR5ZW2JBWVoRwIU5aY5uy_s2BQ` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIiwiL2RhdGEvcTQtcmVwb3J0LnBkZiJdfX0sInNlYXJjaF9pbmRleCI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heCI6MTAwfSwicXVlcnkiOnsiY29uc3RyYWludF90eXBlIjoid2lsZGNhcmQifX19LCJ0eXBlIjoiYXR0ZW51YXRpbmdfYWdlbnRfdG9rZW4ifV0sImNuZiI6eyJqd2siOnsiY3J2IjoiRWQyNTUxOSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn19LCJkZWxfZGVwdGgiOjAsImRlbF9tYXhfZGVwdGgiOjMsImV4cCI6MTcwNDA3MDgwMCwiaWF0IjoxNzA0MDY3MjAwLCJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTAifQ.6YxvFx29Q1Y2k_TI4bp4DujeluiXEBMRi0VaS9KPQnnBijGrzBaOy_G1riBOyR5ZW2JBWVoRwIU5aY5uy_s2BQ
+```
+
+**Chain[1] (del_depth 1)** (signed by `orchestrator`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"one_of","values":["/data/q3-report.pdf"]}},"search_index":{"limit":{"constraint_type":"range","max":20},"query":{"constraint_type":"exact","value":"public filings"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"X25519","kty":"OKP","x":"7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"}},"del_depth":1,"del_max_depth":2,"exp":1704069000,"iat":1704067260,"iss":"urn:ietf:params:oauth:jwk-thumbprint:sha-256:aVBtapLd11SUVKIMGJfPzOEDuN0sXcmzJQNVT-_sKEU","jti":"019471f8-0000-7000-8000-00000003180b","par_hash":"BR0nHWoCPtlrdOSpY8vPj7ejvLGj1SSJfK97P-ZWV0g"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIl19fSwic2VhcmNoX2luZGV4Ijp7ImxpbWl0Ijp7ImNvbnN0cmFpbnRfdHlwZSI6InJhbmdlIiwibWF4IjoyMH0sInF1ZXJ5Ijp7ImNvbnN0cmFpbnRfdHlwZSI6ImV4YWN0IiwidmFsdWUiOiJwdWJsaWMgZmlsaW5ncyJ9fX0sInR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJYMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiN1Vrb3hpalJ3c2JxNlFNNGtGbVZZU2xaSnpwY1lfazJOc0ZHRkt5SE45RSJ9fSwiZGVsX2RlcHRoIjoxLCJkZWxfbWF4X2RlcHRoIjoyLCJleHAiOjE3MDQwNjkwMDAsImlhdCI6MTcwNDA2NzI2MCwiaXNzIjoidXJuOmlldGY6cGFyYW1zOm9hdXRoOmp3ay10aHVtYnByaW50OnNoYS0yNTY6YVZCdGFwTGQxMVNVVktJTUdKZlB6T0VEdU4wc1hjbXpKUU5WVC1fc0tFVSIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzMTgwYiIsInBhcl9oYXNoIjoiQlIwbkhXb0NQdGxyZE9TcFk4dlBqN2VqdkxHajFTU0pmSzk3UC1aV1YwZyJ9` |
+| SHA-256(signing input), base64url | `-FtajZOx43FfJ6badZQSIsM6Lkf4KBpClOX4Zdy8SaQ` |
+| signature_b64 | `ZjlBMvMqoevPwRN0uvcRyAiSqXBQQkFR7HF3MtzVSXJKe1sXMk9Mc0CtZsLeo76140hs9XWSGHCw5FcDZI8WAQ` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIl19fSwic2VhcmNoX2luZGV4Ijp7ImxpbWl0Ijp7ImNvbnN0cmFpbnRfdHlwZSI6InJhbmdlIiwibWF4IjoyMH0sInF1ZXJ5Ijp7ImNvbnN0cmFpbnRfdHlwZSI6ImV4YWN0IiwidmFsdWUiOiJwdWJsaWMgZmlsaW5ncyJ9fX0sInR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJYMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiN1Vrb3hpalJ3c2JxNlFNNGtGbVZZU2xaSnpwY1lfazJOc0ZHRkt5SE45RSJ9fSwiZGVsX2RlcHRoIjoxLCJkZWxfbWF4X2RlcHRoIjoyLCJleHAiOjE3MDQwNjkwMDAsImlhdCI6MTcwNDA2NzI2MCwiaXNzIjoidXJuOmlldGY6cGFyYW1zOm9hdXRoOmp3ay10aHVtYnByaW50OnNoYS0yNTY6YVZCdGFwTGQxMVNVVktJTUdKZlB6T0VEdU4wc1hjbXpKUU5WVC1fc0tFVSIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzMTgwYiIsInBhcl9oYXNoIjoiQlIwbkhXb0NQdGxyZE9TcFk4dlBqN2VqdkxHajFTU0pmSzk3UC1aV1YwZyJ9.ZjlBMvMqoevPwRN0uvcRyAiSqXBQQkFR7HF3MtzVSXJKe1sXMk9Mc0CtZsLeo76140hs9XWSGHCw5FcDZI8WAQ
+```
+
+**PoP JWT** (signed by `worker`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat-pop+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"aat_aud":"https://tools.example.com","aat_hash":"-FtajZOx43FfJ6badZQSIsM6Lkf4KBpClOX4Zdy8SaQ","aat_id":"019471f8-0000-7000-8000-00000003180b","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-00000003980b"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiLUZ0YWpaT3g0M0ZmSjZiYWRaUVNJc002TGtmNEtCcENsT1g0WmR5OFNhUSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzMTgwYiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDM5ODBiIn0` |
+| SHA-256(signing input), base64url | `0JXMJEc5XFQC2F8jj3KOIaY33e2oY7kCS1J9ehV6AHg` |
+| signature_b64 | `DAk1Fk654TmNlC0vZdGaO3GFXdJA3-IU-qvFFd8oUBa4Zw9PEfdbVIstCwZwzDPFRp2Lq6zTGFUIDJoP2wDECg` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiLUZ0YWpaT3g0M0ZmSjZiYWRaUVNJc002TGtmNEtCcENsT1g0WmR5OFNhUSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzMTgwYiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDM5ODBiIn0.DAk1Fk654TmNlC0vZdGaO3GFXdJA3-IU-qvFFd8oUBa4Zw9PEfdbVIstCwZwzDPFRp2Lq6zTGFUIDJoP2wDECg
+```
+
+---
+
+## J.24.11 Derived cnf.jwk has a short public-key value
+
+L1's x decodes to 31 bytes rather than the 32 bytes required for Ed25519. Step 4b2 rejects the malformed JWK.
+
+**Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
+**Expected:** **DENY** at step 4b2
+
+**Chain[0] (del_depth 0)** (signed by `control_plane`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"one_of","values":["/data/q3-report.pdf","/data/q4-report.pdf"]}},"search_index":{"limit":{"constraint_type":"range","max":100},"query":{"constraint_type":"wildcard"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}},"del_depth":0,"del_max_depth":3,"exp":1704070800,"iat":1704067200,"iss":"https://auth.example.com","jti":"019471f8-0000-7000-8000-000000000010"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIiwiL2RhdGEvcTQtcmVwb3J0LnBkZiJdfX0sInNlYXJjaF9pbmRleCI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heCI6MTAwfSwicXVlcnkiOnsiY29uc3RyYWludF90eXBlIjoid2lsZGNhcmQifX19LCJ0eXBlIjoiYXR0ZW51YXRpbmdfYWdlbnRfdG9rZW4ifV0sImNuZiI6eyJqd2siOnsiY3J2IjoiRWQyNTUxOSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn19LCJkZWxfZGVwdGgiOjAsImRlbF9tYXhfZGVwdGgiOjMsImV4cCI6MTcwNDA3MDgwMCwiaWF0IjoxNzA0MDY3MjAwLCJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTAifQ` |
+| SHA-256(signing input), base64url | `BR0nHWoCPtlrdOSpY8vPj7ejvLGj1SSJfK97P-ZWV0g` |
+| signature_b64 | `6YxvFx29Q1Y2k_TI4bp4DujeluiXEBMRi0VaS9KPQnnBijGrzBaOy_G1riBOyR5ZW2JBWVoRwIU5aY5uy_s2BQ` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIiwiL2RhdGEvcTQtcmVwb3J0LnBkZiJdfX0sInNlYXJjaF9pbmRleCI6eyJsaW1pdCI6eyJjb25zdHJhaW50X3R5cGUiOiJyYW5nZSIsIm1heCI6MTAwfSwicXVlcnkiOnsiY29uc3RyYWludF90eXBlIjoid2lsZGNhcmQifX19LCJ0eXBlIjoiYXR0ZW51YXRpbmdfYWdlbnRfdG9rZW4ifV0sImNuZiI6eyJqd2siOnsiY3J2IjoiRWQyNTUxOSIsImt0eSI6Ik9LUCIsIngiOiJnVGwzRHFoOUYxOVdvMVJtdzB4LXpNdU5pcEcwN2plaVhmWVBXNF9KczVRIn19LCJkZWxfZGVwdGgiOjAsImRlbF9tYXhfZGVwdGgiOjMsImV4cCI6MTcwNDA3MDgwMCwiaWF0IjoxNzA0MDY3MjAwLCJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJqdGkiOiIwMTk0NzFmOC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMTAifQ.6YxvFx29Q1Y2k_TI4bp4DujeluiXEBMRi0VaS9KPQnnBijGrzBaOy_G1riBOyR5ZW2JBWVoRwIU5aY5uy_s2BQ
+```
+
+**Chain[1] (del_depth 1)** (signed by `orchestrator`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"read_file":{"path":{"constraint_type":"one_of","values":["/data/q3-report.pdf"]}},"search_index":{"limit":{"constraint_type":"range","max":20},"query":{"constraint_type":"exact","value":"public filings"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHNw"}},"del_depth":1,"del_max_depth":2,"exp":1704069000,"iat":1704067260,"iss":"urn:ietf:params:oauth:jwk-thumbprint:sha-256:aVBtapLd11SUVKIMGJfPzOEDuN0sXcmzJQNVT-_sKEU","jti":"019471f8-0000-7000-8000-00000003180c","par_hash":"BR0nHWoCPtlrdOSpY8vPj7ejvLGj1SSJfK97P-ZWV0g"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIl19fSwic2VhcmNoX2luZGV4Ijp7ImxpbWl0Ijp7ImNvbnN0cmFpbnRfdHlwZSI6InJhbmdlIiwibWF4IjoyMH0sInF1ZXJ5Ijp7ImNvbnN0cmFpbnRfdHlwZSI6ImV4YWN0IiwidmFsdWUiOiJwdWJsaWMgZmlsaW5ncyJ9fX0sInR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOdyJ9fSwiZGVsX2RlcHRoIjoxLCJkZWxfbWF4X2RlcHRoIjoyLCJleHAiOjE3MDQwNjkwMDAsImlhdCI6MTcwNDA2NzI2MCwiaXNzIjoidXJuOmlldGY6cGFyYW1zOm9hdXRoOmp3ay10aHVtYnByaW50OnNoYS0yNTY6YVZCdGFwTGQxMVNVVktJTUdKZlB6T0VEdU4wc1hjbXpKUU5WVC1fc0tFVSIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzMTgwYyIsInBhcl9oYXNoIjoiQlIwbkhXb0NQdGxyZE9TcFk4dlBqN2VqdkxHajFTU0pmSzk3UC1aV1YwZyJ9` |
+| SHA-256(signing input), base64url | `oFUWW8AzXRKle6Qh9wh93yofmvgY8UeiMSa_-tRJc2Y` |
+| signature_b64 | `ieOC3cKXk83UagbjBagNBMnWjVdCAYMfYju5iwZw5bF7X4F0j9yVnp7ZSxzgdKrrvQ_VDz_ypOlS2GcQEJpSCw` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7InJlYWRfZmlsZSI6eyJwYXRoIjp7ImNvbnN0cmFpbnRfdHlwZSI6Im9uZV9vZiIsInZhbHVlcyI6WyIvZGF0YS9xMy1yZXBvcnQucGRmIl19fSwic2VhcmNoX2luZGV4Ijp7ImxpbWl0Ijp7ImNvbnN0cmFpbnRfdHlwZSI6InJhbmdlIiwibWF4IjoyMH0sInF1ZXJ5Ijp7ImNvbnN0cmFpbnRfdHlwZSI6ImV4YWN0IiwidmFsdWUiOiJwdWJsaWMgZmlsaW5ncyJ9fX0sInR5cGUiOiJhdHRlbnVhdGluZ19hZ2VudF90b2tlbiJ9XSwiY25mIjp7Imp3ayI6eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IjdVa294aWpSd3NicTZRTTRrRm1WWVNsWkp6cGNZX2syTnNGR0ZLeUhOdyJ9fSwiZGVsX2RlcHRoIjoxLCJkZWxfbWF4X2RlcHRoIjoyLCJleHAiOjE3MDQwNjkwMDAsImlhdCI6MTcwNDA2NzI2MCwiaXNzIjoidXJuOmlldGY6cGFyYW1zOm9hdXRoOmp3ay10aHVtYnByaW50OnNoYS0yNTY6YVZCdGFwTGQxMVNVVktJTUdKZlB6T0VEdU4wc1hjbXpKUU5WVC1fc0tFVSIsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzMTgwYyIsInBhcl9oYXNoIjoiQlIwbkhXb0NQdGxyZE9TcFk4dlBqN2VqdkxHajFTU0pmSzk3UC1aV1YwZyJ9.ieOC3cKXk83UagbjBagNBMnWjVdCAYMfYju5iwZw5bF7X4F0j9yVnp7ZSxzgdKrrvQ_VDz_ypOlS2GcQEJpSCw
+```
+
+**PoP JWT** (signed by `worker`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat-pop+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"aat_aud":"https://tools.example.com","aat_hash":"oFUWW8AzXRKle6Qh9wh93yofmvgY8UeiMSa_-tRJc2Y","aat_id":"019471f8-0000-7000-8000-00000003180c","aat_tool":"read_file","hta":{"path":"/data/q3-report.pdf"},"iat":1704067500,"jti":"019471f8-0000-7000-8000-00000003980c"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoib0ZVV1c4QXpYUktsZTZRaDl3aDkzeW9mbXZnWThVZWlNU2FfLXRSSmMyWSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzMTgwYyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDM5ODBjIn0` |
+| SHA-256(signing input), base64url | `40J-nf1woGls2h9x_6OpkYF1kGfFSxSsaYK_s_vljxA` |
+| signature_b64 | `qLqkIFQvl9allt8dyYicpmt1vhIv-2vCm4m-mO0cxHmIU2roI88PKbLFLM6jQ1bnSzcvG5kOy-_WSFfi-LFqBw` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoib0ZVV1c4QXpYUktsZTZRaDl3aDkzeW9mbXZnWThVZWlNU2FfLXRSSmMyWSIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzMTgwYyIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUwMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDM5ODBjIn0.qLqkIFQvl9allt8dyYicpmt1vhIv-2vCm4m-mO0cxHmIU2roI88PKbLFLM6jQ1bnSzcvG5kOy-_WSFfi-LFqBw
 ```
 
 ---

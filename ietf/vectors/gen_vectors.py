@@ -373,8 +373,8 @@ CHECKS = (
     "4g:max-depth", "4h:exp", "4i:exp", "4j:iat", "4k:iat", "4l:exp-iat", "4m:depth",
     "4n:one", "4n:tools", "4n:maps", "4o:walk", "4p1:tool", "4p2:named", "4p2:omit-required",
     "4p2:omit-star", "4p2:star", "4p3:required", "4p4:subsumes", "4q:par_hash", "5:length",
-    "6a:one", "6b:tool", "6b:numbers", "6b:check", "6b:star", "6b:closed", "6b:required",
-    "6c:aud", "6c:required",
+    "6a:one", "6b:tool", "6b:dup", "6b:numbers", "6b:check", "6b:star", "6b:closed", "6b:required",
+    "6c:type", "6c:aud", "6c:required",
     "7a:alg", "7a:typ", "7a:crit", "7b:sig", "7b:dup", "7c:jti", "7c:strings", "7c:iat", "7c:hta",
     "7c:aat_id", "7c:aat_hash", "7d:aud", "7d:required", "7e:tool", "7f:hta", "7g:past", "7g:future",
     "7h:nonce", "7i:replay",
@@ -438,6 +438,8 @@ def _sig_ok(jwk, signing_input: str, sig_b64: str) -> bool:
     """Ed25519 verification under a trust anchor's key or a cnf.jwk; never a header key.
     Every key the verifier accepts is an OKP Ed25519 key, so alg Ed25519 (3a, 4a, 7a)
     is consistent with it; a key that does not decode simply fails to verify."""
+    if not _is_jwk(jwk):
+        return False
     try:
         Ed25519PublicKey.from_public_bytes(b64u_dec(jwk["x"])).verify(b64u_dec(sig_b64),
                                                                      signing_input.encode("ascii"))
@@ -458,12 +460,15 @@ def _verify_jws(compact: str, jwk, hstep: str, sstep: str, typ: str) -> dict:
         raise Deny(hstep, "protected header is not JSON")
     if not isinstance(header, dict):
         raise Deny(hstep, "protected header is not a JSON object")
-    _chk(f"{hstep}:alg", header.get("alg") != "Ed25519", f"alg {header.get('alg')!r} is not on the allowlist")
+    _chk(f"{hstep}:alg", header.get("alg") != "Ed25519" or not _is_jwk(jwk),
+         f"alg {header.get('alg')!r} is not permitted or is inconsistent with the verification key")
     _chk(f"{hstep}:typ", header.get("typ") != typ, f"typ {header.get('typ')!r}, expected {typ!r}")
     crit = header.get("crit")
-    # This verifier understands no extension header parameter (Section 3.5, RFC 7515 Section 4.1.11).
-    _chk(f"{hstep}:crit", crit is not None and (not isinstance(crit, list) or len(crit) > 0),
-         f"crit lists parameters this verifier does not understand: {crit!r}")
+    # This verifier understands no extension header parameter. Any valid, non-empty
+    # crit list therefore names an unsupported parameter; an empty or malformed list
+    # is itself invalid under RFC 7515 Section 4.1.11.
+    _chk(f"{hstep}:crit", crit is not None,
+         f"crit is invalid or lists parameters this verifier does not understand: {crit!r}")
     _chk(f"{sstep}:sig", not _sig_ok(jwk, f"{h}.{p}", s), "signature does not verify")
     try:
         claims, dup = _loads(b64u_dec(p))
@@ -481,7 +486,15 @@ def _jwk_of(claims: dict):
 
 
 def _is_jwk(jwk) -> bool:
-    return isinstance(jwk, dict) and isinstance(jwk.get("kty"), str)
+    """True for a structurally valid public Ed25519 JWK (optional members allowed)."""
+    if not (isinstance(jwk, dict) and jwk.get("kty") == "OKP" and jwk.get("crv") == "Ed25519"
+            and isinstance(jwk.get("x"), str) and re.fullmatch(r"[A-Za-z0-9_-]{43}", jwk["x"])):
+        return False
+    try:
+        raw = b64u_dec(jwk["x"])
+        return len(raw) == 32 and b64u(raw) == jwk["x"]
+    except (ValueError, TypeError):
+        return False
 
 
 def _thumb_uri(jwk: dict) -> str:
@@ -732,7 +745,7 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, dict]], tool: 
                  max_token_size: int = MAX_TOKEN_SIZE, max_chain_size: int = MAX_CHAIN_SIZE,
                  require_pop_aud: bool = False, require_chain_aud: bool = False,
                  nonce: str | None = None, track_pop_jti: bool = False,
-                 accepted_pop_jtis: set[str] | None = None) -> str:
+                 accepted_pop_jtis: set[str] | None = None, args_dup: bool = False) -> str:
     """Returns 'PERMIT' or raises Deny(step). `args` must come from _loads so that
     numbers keep the exact value written in the invocation."""
     # 1, 2
@@ -832,6 +845,7 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, dict]], tool: 
     _chk("5:length", len(chain) != leaf["del_depth"] + 1, "len(chain) != leaf.del_depth + 1")
     _chk("6a:one", len(_aat_entries(leaf)) != 1, "leaf does not have exactly one attenuating_agent_token entry")
     _chk("6b:tool", tool not in leaf_tools, f"tool {tool!r} not authorized")
+    _chk("6b:dup", args_dup, "invocation arguments contain a duplicate JSON member name")
     _chk("6b:numbers", _inadmissible(args), "an argument number is not admissible (§3.4)")
     m = _norm(leaf_tools.get(tool, {}), "norm:leaf")
     for a, v in args.items():
@@ -849,7 +863,10 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, dict]], tool: 
     # the restriction but never remove one.
     for i, (c, _) in enumerate(toks):
         if "aud" in c:
-            vals = c["aud"] if isinstance(c["aud"], list) else [c["aud"]]
+            aud = c["aud"]
+            valid_aud = isinstance(aud, str) or (isinstance(aud, list) and all(isinstance(v, str) for v in aud))
+            _chk("6c:type", not valid_aud, f"token {i} aud is not a string or array of strings")
+            vals = aud if isinstance(aud, list) else [aud]
             _chk("6c:aud", audience not in vals, f"token {i} aud does not identify this enforcement point")
     _chk("6c:required", require_chain_aud and not any("aud" in c for c, _ in toks),
          "chain audience required by policy but no token carries aud")
@@ -937,8 +954,10 @@ VECTORS: list[dict] = []
 def _verdict(run: dict, replay_state: set[str] | None):
     """Verify one recorded presentation. Returns (verdict, step, check)."""
     try:
-        return verify_chain(run["chain"], TRUST, run["tool"], _loads(run["args_json"])[0], run["pop"],
-                            now=run["now"], accepted_pop_jtis=replay_state, **run["policy"], **run["params"]), None, None
+        args, args_dup = _loads(run["args_json"])
+        return verify_chain(run["chain"], TRUST, run["tool"], args, run["pop"],
+                            now=run["now"], accepted_pop_jtis=replay_state, args_dup=args_dup,
+                            **run["policy"], **run["params"]), None, None
     except Deny as e:
         return "DENY", e.step, e.check
 
@@ -1068,6 +1087,12 @@ add("J.6.10", "Chain audience required, no token carries aud", None,
     "Same chain as J.3, which carries no aud anywhere; this enforcement point's policy requires chain audience "
     "restriction (step 6c, last sentence).",
     [L0, L1, L2], POP3, "read_file", {"path": Q3}, "DENY", "6c", policy={"require_chain_aud": True})
+MIXED_AUD_ROOT = jws_sign(root_claims(uuid7ish(0x24), ROOT_TOOLS, ORCH, aud=[AUDIENCE, 7]), CP)
+add("J.6.11", "Chain audience array contains a non-string value", None,
+    "The root aud array contains this enforcement point and the number 7. RFC 7519 permits a string or an array "
+    "of strings, so membership alone is insufficient (step 6c).",
+    [MIXED_AUD_ROOT], pop_sign(pop_claims(uuid7ish(0xA0D), MIXED_AUD_ROOT, "read_file", {"path": Q3}), ORCH),
+    "read_file", {"path": Q3}, "DENY", "6c")
 
 # --- J.7 explicit typing (-02 proposal, RFC 8725 §3.11) ----------------------
 add("J.7.1", "PoP JWT missing typ", None,
@@ -1229,6 +1254,12 @@ add("J.7.6", "crit lists a header parameter the enforcement point does not under
     "parameter the enforcement point does not understand (RFC 7515 Section 4.1.11, step 3a).",
     [crit_root], pop_sign(pop_claims(uuid7ish(0xAE6), crit_root, "read_file", {"path": Q3}), ORCH),
     "read_file", {"path": Q3}, "DENY", "3a")
+empty_crit_root = jws_sign(root_claims(uuid7ish(0x83), ROOT_TOOLS, ORCH), CP,
+                           header={"alg": "Ed25519", "typ": "aat+jwt", "crit": []})
+add("J.7.15", "crit is an empty array", None,
+    "The root is otherwise valid, but RFC 7515 Section 4.1.11 requires crit to be a non-empty array (step 3a).",
+    [empty_crit_root], pop_sign(pop_claims(uuid7ish(0xAE7), empty_crit_root, "read_file", {"path": Q3}), ORCH),
+    "read_file", {"path": Q3}, "DENY", "3a")
 hdr_key_root = jws_sign(root_claims(uuid7ish(0x81), ROOT_TOOLS, ORCH), ATK,
                         header={"alg": "Ed25519", "typ": "aat+jwt", "jwk": ATK.jwk})
 add("J.14.c", "Header-supplied key is not used", None,
@@ -1322,6 +1353,12 @@ add("J.9.4", "Prefix presentation of a valid chain", None,
     [L0, L1], pop_sign(pop_claims(uuid7ish(0xAC4), L1, "search_index", {"query": "public filings", "limit": 5}), WK),
     "search_index", {"query": "public filings", "limit": 5}, "PERMIT",
     notes=["NOTES entry 6 in the Warden repo: prefix presentation is permitted and relies entirely on PoP."])
+dup_args_json = f'{{"path":"{Q4}","path":"{Q3}"}}'
+add("J.9.5", "Invocation arguments repeat a member name", None,
+    "The invocation names path twice, first q4 and then q3. A parser that keeps the last value sees arguments "
+    "that satisfy the leaf and match the PoP hta; step 6b rejects the duplicate before either comparison matters.",
+    [L0, L1, L2], pop_sign(pop_claims(uuid7ish(0xAC5), L2, "read_file", {"path": Q3}), WK2),
+    "read_file", {"path": Q3}, "DENY", "6b", args_json=dup_args_json)
 
 # --- J.2 cycle detection -----------------------------------------------------
 dup = jws_sign(derived_claims(uuid7ish(0x10), L0, ORCH, WK, L1_TOOLS, IAT_ROOT + 60, 1704069000, 2), ORCH)
@@ -2211,6 +2248,13 @@ add("J.21.20", "Root jti is an empty string", None,
     "non-empty one. The leaf's jti is ordinary, so the PoP is unaffected.",
     [empty_jti_root, ej_l1], pop_of(ej_l1, WK, "read_file", READ_Q3, P(21, 20)), "read_file", READ_Q3,
     "DENY", "3j")
+wrong_kty_claims = root_claims(T(21, 22), WILD_READ, ORCH)
+wrong_kty_claims["cnf"] = {"jwk": {**ORCH.jwk, "kty": "RSA"}}
+wrong_kty_root = jws_sign(wrong_kty_claims, CP)
+solo("J.21.21", "Root cnf.jwk has a key type inconsistent with Ed25519",
+     "The JWK declares kty RSA while retaining a valid Ed25519 crv and x. A verifier that uses x alone would "
+     "accept the PoP; step 3l rejects the invalid public JWK.",
+     wrong_kty_root, "read_file", READ_Q3, "DENY", "3l", P(21, 21))
 
 # --- J.24 derived-token claims (steps 2c, 4b) ---------------------------------
 num_jti_root = jws_sign(root_claims(2401, ROOT_TOOLS, ORCH), CP)
@@ -2263,6 +2307,17 @@ add("J.24.9", "Derived token repeats a tool identifier", None,
     "parser would deny at 6b.",
     [L0, dup_tool], pop_of(dup_tool, WK, "read_file", {"path": Q4}, P(24, 10)), "read_file", {"path": Q4},
     "DENY", "4b")
+wrong_crv_l1 = jws_sign(child_of_l0(11, cnf={"jwk": {**WK.jwk, "crv": "X25519"}}), ORCH)
+add("J.24.10", "Derived cnf.jwk has the wrong curve", None,
+    "L1's JWK declares X25519 while retaining the Worker's valid Ed25519 x. Step 4b2 rejects the invalid public "
+    "JWK before its x can be used for PoP verification.",
+    [L0, wrong_crv_l1], pop_of(wrong_crv_l1, WK, "read_file", READ_Q3, P(24, 11)),
+    "read_file", READ_Q3, "DENY", "4b2")
+short_x_l1 = jws_sign(child_of_l0(12, cnf={"jwk": {**WK.jwk, "x": b64u(WK.pub_raw[:-1])}}), ORCH)
+add("J.24.11", "Derived cnf.jwk has a short public-key value", None,
+    "L1's x decodes to 31 bytes rather than the 32 bytes required for Ed25519. Step 4b2 rejects the malformed JWK.",
+    [L0, short_x_l1], pop_of(short_x_l1, WK, "read_file", READ_Q3, P(24, 12)),
+    "read_file", READ_Q3, "DENY", "4b2")
 
 # --- J.25 authorization_details entries (steps 3m, 4b3, 4n) ------------------
 OTHER = {"type": "https://example.com/tool_access", "tools": {"delete_file": {}}}
@@ -2568,7 +2623,7 @@ for v in VECTORS:
     e = v["expected"]
     md.append(f"## {v['id']} {v['title']}\n")
     if v["cbor_twin"]:
-        md.append(f"CBOR twin: {v['cbor_twin']}.  ")
+        md.append(f"CBOR twin: {v['cbor_twin']}.\n")
     md.append(v["description"] + "\n")
     if v["policy"]:
         md.append("**Policy:** " + ", ".join(f"`{k}`=`{val}`" for k, val in v["policy"].items()) + "\n")
