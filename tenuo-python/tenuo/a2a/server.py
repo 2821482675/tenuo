@@ -1207,13 +1207,20 @@ class A2AServer:
                 if not is_new:
                     raise ReplayDetectedError(jti)
 
+        # Set when the shared PEP allowed the call. Its receipt is collected only
+        # after the A2A-local gates below pass, so a later local denial never
+        # leaves a signed allow behind.
+        enforcement = None
+        runtime = None
+
         # Verify Proof-of-Possession (I6)
         if self.require_pop:
             if pop_signature is None:
                 raise PopRequiredError()
 
             # Shared inbound PEP — same Authorizer + receipt path as MCP/FastAPI.
-            from tenuo._enforcement import verify_inbound_call
+            from tenuo._enforcement import EnforcementResult, verify_inbound_call
+            from tenuo.receipts import collect_enforcement_receipt
             from tenuo.runtime import bind_runtime, get_runtime
 
             runtime = self._runtime or get_runtime()
@@ -1228,15 +1235,10 @@ class A2AServer:
                         warrant_chain=_resolved_chain_parents or [],
                         approvals=approvals,
                     )
-                    from tenuo.receipts import collect_enforcement_receipt
-                    collect_enforcement_receipt(
-                        enforcement,
-                        getattr(enforcement, "chain_result", None),
-                        runtime=runtime,
-                    )
                 if enforcement.allowed:
                     logger.debug(f"PoP verified for skill '{skill_id}'")
                 else:
+                    collect_enforcement_receipt(enforcement, None, runtime=runtime)
                     _raise_a2a_from_enforcement(enforcement, skill_id, arguments)
             except (
                 ApprovalRequiredError,
@@ -1341,12 +1343,36 @@ class A2AServer:
                 if param in arguments:
                     value = arguments[param]
                     if not self._check_constraint(server_constraint, value, param):
+                        if enforcement is not None:
+                            # The Authorizer allowed the call, so its receipt was
+                            # held back; record this refusal instead.
+                            collect_enforcement_receipt(
+                                EnforcementResult(
+                                    allowed=False,
+                                    tool=skill_id,
+                                    arguments=arguments,
+                                    denial_reason="Value does not satisfy server constraint",
+                                    constraint_violated=param,
+                                    error_type="constraint_violation",
+                                    warrant_id=enforcement.warrant_id,
+                                    authorizer=enforcement.authorizer,
+                                    presented_chain=[*(_resolved_chain_parents or []), warrant],
+                                    verified_pop=pop_signature,
+                                    pop_auth_args=arguments,
+                                ),
+                                None,
+                                runtime=runtime,
+                            )
                         raise ConstraintViolationError(
                             param=param,
                             constraint_type=type(server_constraint).__name__,
                             value=value,
                             reason="Value does not satisfy server constraint",
                         )
+
+        # Every A2A gate has passed: only now record the Authorizer's allow.
+        if enforcement is not None:
+            collect_enforcement_receipt(enforcement, enforcement.chain_result, runtime=runtime)
 
         # Log audit event
         latency_ms = int((time.time() - start_time) * 1000)

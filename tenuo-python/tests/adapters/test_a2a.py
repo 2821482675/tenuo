@@ -1962,6 +1962,46 @@ class TestServerConstraintsWithPoP:
 
         assert await self._call(server, warrant, key, {"path": "/etc/hosts"}) is not None
 
+    @pytest.mark.asyncio
+    async def test_server_constraint_denial_receipts_deny_not_allow(self):
+        """The Authorizer's allow is held until the server constraint passes."""
+        core = pytest.importorskip("tenuo_core")
+        from tenuo import HolderIdentity, Runtime
+
+        root = core.SigningKey.generate()
+        holder = HolderIdentity.generate()
+        warrant = core.Warrant.mint(
+            keypair=root,
+            holder=holder.public_key,
+            capabilities={"read_file": {"path": core.Subpath("/")}},
+            ttl_seconds=300,
+        )
+        runtime = Runtime(identity=holder, trusted_roots=[root.public_key], receipts="collect")
+        server = A2AServer(
+            name="Receipt Agent",
+            url="https://receipts.example.com",
+            public_key=holder.public_key.to_bytes().hex(),
+            trusted_issuers=[root.public_key.to_bytes().hex()],
+            require_audience=False,
+            check_replay=False,
+            audit_log=None,
+            runtime=runtime,
+        )
+
+        @server.skill("read_file", constraints={"path": core.Subpath("/data")})
+        async def read_file(path: str) -> str:
+            return path
+
+        def outcomes():
+            return [core.verify_receipt(r).outcome for r in runtime.peek_receipts()]
+
+        with pytest.raises(ConstraintViolationError):
+            await self._call(server, warrant, holder.signing_key, {"path": "/etc/passwd"})
+        assert outcomes() == ["deny"]
+
+        await self._call(server, warrant, holder.signing_key, {"path": "/data/report.txt"})
+        assert outcomes() == ["deny", "allow"]
+
 
 class TestAdversarialPoP:
     """Tests for Proof-of-Possession attacks."""
