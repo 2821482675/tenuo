@@ -6,10 +6,10 @@ Design choices (recorded in the emitted document):
   * Keys are Ed25519 from the same 32-byte seeds as docs/spec/test-vectors.md
     (Control Plane / Orchestrator / Worker / Worker2 / Attacker), so each JWS
     vector is the twin of an existing CBOR vector where a twin exists.
-  * AAT payloads are JCS-canonical (RFC 8785). The draft only *requires* JCS
-    for the PoP payload (§7.2); for AATs it is a vector choice that makes the
-    signing input reproducible. Verifiers must accept the bytes as presented,
-    they must not re-canonicalize an AAT before verifying its signature.
+  * AAT and PoP payloads are JCS-canonical (RFC 8785) except where a negative
+    vector intentionally preserves inadmissible number syntax or duplicate
+    members. Each token records that status. Verifiers must accept the bytes as
+    presented and must not re-canonicalize before verifying a signature.
   * Headers carry explicit typing: {"alg":"Ed25519","typ":"aat+jwt"} for
     AATs and {"alg":"Ed25519","typ":"aat-pop+jwt"} for PoP JWTs (RFC 8725 §3.11).
   * aat_aud is OPTIONAL on the PoP; when present it MUST identify this
@@ -23,7 +23,7 @@ Design choices (recorded in the emitted document):
     PoP window = ±30 s, this enforcement point is "https://tools.example.com";
     audience and nonce are required only where a vector's policy says so.
 
-Every vector is checked by the independent §8 verifier in this file before it
+Every vector is checked by the self-checking §8 verifier in this file before it
 is written. A vector whose actual verdict differs from its expected verdict
 aborts generation.
 """
@@ -60,6 +60,8 @@ MAX_IAT_SKEW = 30
 MAX_TOKEN_LIFETIME = 90 * 24 * 3600
 MAX_DELEGATION_DEPTH = 8
 MAX_CONSTRAINT_DEPTH = 32
+MAX_TOKEN_SIZE = 2048
+MAX_CHAIN_SIZE = 4096
 POP_WINDOW = 30
 AUDIENCE = "https://tools.example.com"
 ROOT_ISS = "https://auth.example.com"
@@ -119,11 +121,12 @@ def _check_jcs_safe(v):
 
 
 def jcs(obj) -> bytes:
-    """RFC 8785 for the ASCII, integer-only subset used here.
+    """Exact compact JSON; RFC 8785 for the admissible subset used here.
 
-    With that subset, JCS == sorted keys, no whitespace, no escaping beyond
-    what JSON requires. Python's sort on ASCII keys equals UTF-16 code-unit
-    order, so the output is byte-exact JCS.
+    For admissible integers, JCS == sorted keys, no whitespace, and no escaping
+    beyond what JSON requires. J.8.7 and J.8.9 intentionally contain an
+    inadmissible integer; for those negative vectors this function preserves
+    the original mathematical value rather than claiming JCS canonicality.
     """
     _check_jcs_safe(obj)
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
@@ -165,12 +168,36 @@ POP_HEADER = {"alg": "Ed25519", "typ": "aat-pop+jwt"}
 
 def jws_sign(payload: dict, signer: Key, header: dict = HEADER) -> dict:
     h = b64u(jcs(header))
-    p = b64u(jcs(payload))
+    payload_json = jcs(payload).decode()
+    p = b64u(payload_json.encode())
     signing_input = f"{h}.{p}".encode("ascii")
     sig = signer.sign(signing_input)
     return {
         "header": header,
         "payload": payload,
+        "payload_json": payload_json,
+        "payload_jcs_canonical": not _has_big_int(payload),
+        "header_b64": h,
+        "payload_b64": p,
+        "signing_input": signing_input.decode("ascii"),
+        "signing_input_sha256_b64u": b64u(hashlib.sha256(signing_input).digest()),
+        "signature_b64": b64u(sig),
+        "compact": f"{h}.{p}.{b64u(sig)}",
+        "signer": signer.name,
+    }
+
+
+def jws_sign_raw(payload_json: str, signer: Key, header: dict = HEADER) -> dict:
+    """Sign exact JSON text for malformed-input vectors such as duplicate keys."""
+    h = b64u(jcs(header))
+    p = b64u(payload_json.encode())
+    signing_input = f"{h}.{p}".encode("ascii")
+    sig = signer.sign(signing_input)
+    return {
+        "header": header,
+        "payload": json.loads(payload_json),
+        "payload_json": payload_json,
+        "payload_jcs_canonical": False,
         "header_b64": h,
         "payload_b64": p,
         "signing_input": signing_input.decode("ascii"),
@@ -195,7 +222,7 @@ def aat(tools: dict) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Independent §8 verifier (subset sufficient for the vectors; fail-closed)
+# Self-checking §8 verifier (the paths exercised by this suite; fail-closed)
 # ---------------------------------------------------------------------------
 class Deny(Exception):
     def __init__(self, step: str, why: str = ""):
@@ -469,10 +496,16 @@ def subsumes(child: dict, parent: dict) -> bool:
 def verify_chain(chain: list[str], trust_anchors: list[tuple[str, Ed25519PublicKey]], tool: str, args: dict,
                  pop_jwt: str, now: int = NOW, audience: str = AUDIENCE,
                  require_pop_aud: bool = False, require_chain_aud: bool = False,
-                 nonce: str | None = None) -> str:
+                 nonce: str | None = None, track_pop_jti: bool = False,
+                 accepted_pop_jtis: set[str] | None = None) -> str:
     """Returns 'PERMIT' or raises Deny(step)."""
     if not chain:
         raise Deny("1", "empty chain")
+    for token in chain:
+        if len(token.encode("ascii")) > MAX_TOKEN_SIZE:
+            raise Deny("2a", "token exceeds MAX_TOKEN_SIZE")
+    if sum(len(token.encode("ascii")) for token in chain) > MAX_CHAIN_SIZE:
+        raise Deny("2b", "chain exceeds MAX_CHAIN_SIZE")
     # 2c: jti cycle detection on unverified payloads
     jtis = []
     for t in chain:
@@ -656,6 +689,12 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, Ed25519PublicK
         raise Deny("7g", "PoP iat outside window")
     if nonce is not None and pop.get("nonce") != nonce:
         raise Deny("7h", "nonce required by policy but absent or not issued by this enforcement point")
+    if track_pop_jti:
+        if accepted_pop_jtis is None:
+            raise ValueError("accepted_pop_jtis state is required when track_pop_jti is true")
+        if pop["jti"] in accepted_pop_jtis:
+            raise Deny("7i", "PoP jti was already accepted within the tolerance window")
+        accepted_pop_jtis.add(pop["jti"])
     return "PERMIT"
 
 
@@ -714,12 +753,15 @@ VECTORS: list[dict] = []
 
 def add(vid: str, title: str, twin: str | None, desc: str, chain: list[dict], pop: dict, tool: str,
         args: dict, expect: str, expect_step: str | None = None, now: int = NOW, notes: list[str] | None = None,
-        policy: dict | None = None):
+        policy: dict | None = None, replay_state: set[str] | None = None):
     """`policy` is what this enforcement point requires beyond the base algorithm:
     require_pop_aud, require_chain_aud, nonce (the value it issued)."""
     compact = [t["compact"] for t in chain]
+    policy = policy or {}
+    replay_before = sorted(replay_state) if replay_state is not None else None
     try:
-        verdict, step = verify_chain(compact, TRUST, tool, args, pop["compact"], now=now, **(policy or {})), None
+        verdict, step = verify_chain(compact, TRUST, tool, args, pop["compact"], now=now,
+                                     accepted_pop_jtis=replay_state, **policy), None
     except Deny as e:
         verdict, step = "DENY", e.step
     ok = verdict == expect and (expect == "PERMIT" or step == expect_step)
@@ -728,7 +770,9 @@ def add(vid: str, title: str, twin: str | None, desc: str, chain: list[dict], po
         sys.exit(1)
     VECTORS.append({
         "id": vid, "title": title, "cbor_twin": twin, "description": desc, "notes": notes or [],
-        "verification_time": now, "tool": tool, "args": args, "policy": policy or {},
+        "verification_time": now, "tool": tool, "args": args, "args_json": jcs(args).decode(), "policy": policy,
+        "replay_state": ({"before": replay_before, "after": sorted(replay_state)}
+                         if replay_state is not None else None),
         "chain": chain, "pop": pop,
         "expected": {"verdict": expect, "step": expect_step},
     })
@@ -1036,6 +1080,28 @@ add("J.20.8", "PoP without hta", None,
     "implementation cannot default it to {}.",
     [L0, L1, L2], pop_sign(no_hta, WK2), "read_file", {"path": Q3}, "DENY", "7c")
 
+# Stateful replay checks. Each vector records the cache before and after the
+# presentation so a harness can run it independently or as the sequence below.
+tracked_pop = pop_sign(pop_claims(uuid7ish(0xAB9), L2, "read_file", {"path": Q3}), WK2)
+replay_cache: set[str] = set()
+add("J.20.9", "Tracked PoP jti accepted for the first time", None,
+    "The enforcement point tracks PoP jti values for read_file. The cache is empty, so this otherwise valid "
+    "presentation is accepted and its jti is recorded only after all authorization checks pass.",
+    [L0, L1, L2], tracked_pop, "read_file", {"path": Q3}, "PERMIT",
+    policy={"track_pop_jti": True}, replay_state=replay_cache)
+add("J.20.10", "Tracked PoP jti replay is denied", None,
+    "The same proof is presented with its jti already in the enforcement point's acceptance cache. "
+    "All preceding checks pass; step 7i denies the replay.",
+    [L0, L1, L2], tracked_pop, "read_file", {"path": Q3}, "DENY", "7i",
+    policy={"track_pop_jti": True}, replay_state=replay_cache)
+bad_before_record = pop_sign(pop_claims(uuid7ish(0xABA), L0, "read_file", {"path": Q4}), ORCH)
+empty_replay_cache: set[str] = set()
+add("J.20.11", "Rejected PoP is not entered in the replay cache", None,
+    "The invocation passes the root's one_of constraint, but hta commits to different arguments. Step 7f "
+    "denies before step 7i; the recorded replay-state transition remains empty to empty.",
+    [L0], bad_before_record, "read_file", {"path": Q3}, "DENY", "7f",
+    policy={"track_pop_jti": True}, replay_state=empty_replay_cache)
+
 # --- J.9 closed-world enforcement at the leaf (§3.3, step 6b) ----------------
 add("J.9.1", "Closed-world: unconstrained extra argument", None,
     "Leaf constrains only path; invocation adds mode.",
@@ -1062,6 +1128,37 @@ add("J.2", "Duplicate jti in chain (cycle detection, step 2c)", "A.9",
     "L1 reuses the root's jti. Detected before any signature is verified.",
     [L0, dup], pop_sign(pop_claims(uuid7ish(0xAD1), dup, "read_file", {"path": Q3}), WK),
     "read_file", {"path": Q3}, "DENY", "2c")
+
+# --- J.23 presentation and parsing boundaries -------------------------------
+add("J.23.1", "Empty chain", None,
+    "The presentation contains no AAT. Verification stops before the PoP is examined.",
+    [], j1_pop, "read_file", {"path": Q3}, "DENY", "1")
+
+oversized_claims = root_claims(uuid7ish(0x2302), {"read_file": {"path": WILDCARD}}, ORCH)
+oversized_claims["padding"] = "x" * 1400
+oversized_root = jws_sign(oversized_claims, CP)
+add("J.23.2", "Token exceeds MAX_TOKEN_SIZE", None,
+    f"The root's compact serialization is {len(oversized_root['compact'])} bytes; MAX_TOKEN_SIZE is "
+    f"{MAX_TOKEN_SIZE}. The signed padding claim is otherwise ignored.",
+    [oversized_root], pop_sign(pop_claims(uuid7ish(0x23A2), oversized_root, "read_file", {"path": Q3}), ORCH),
+    "read_file", {"path": Q3}, "DENY", "2a")
+
+add("J.23.3", "Chain exceeds MAX_CHAIN_SIZE", None,
+    f"Six individually size-compliant tokens total more than MAX_CHAIN_SIZE ({MAX_CHAIN_SIZE} bytes). "
+    "The repeated token would also fail cycle detection, but step 2b runs first.",
+    [L0, L0, L0, L0, L0, L0], j1_pop, "read_file", {"path": Q3}, "DENY", "2b")
+
+dup_claims = root_claims(uuid7ish(0x2304), {"read_file": {"path": WILDCARD}}, ORCH)
+dup_payload = jcs(dup_claims).decode()
+dup_member = f'"jti":"{dup_claims["jti"]}"'
+dup_payload = dup_payload.replace(dup_member, f"{dup_member},{dup_member}")
+duplicate_member_root = jws_sign_raw(dup_payload, CP)
+add("J.23.4", "Signed claims object contains a duplicate member name", None,
+    "The root signature is valid and both jti members have the same value, allowing minimal step-2c extraction. "
+    "Full parsing after signature verification rejects the duplicate member at step 3b.",
+    [duplicate_member_root],
+    pop_sign(pop_claims(uuid7ish(0x23A4), duplicate_member_root, "read_file", {"path": Q3}), ORCH),
+    "read_file", {"path": Q3}, "DENY", "3b")
 
 
 # --- J.15 / J.16 composite constraints (all / any) ---------------------------
@@ -1523,9 +1620,10 @@ leaf_case("J.22.19", "A * entry that is not a wildcard is not well-formed",
 def tok_md(label: str, t: dict) -> str:
     out = [f"**{label}** (signed by `{t['signer']}`)", "",
            "Protected header (JCS):", "```json", jcs(t["header"]).decode(), "```",
-           "Payload (JCS, this exact byte string is what is base64url-encoded):", "```json",
-           jcs(t["payload"]).decode() if t["signer"] != "(unsigned)" else jcs(t["payload"]).decode(), "```",
-           "Pretty payload:", "```json", json.dumps(t["payload"], indent=2), "```",
+           ("Payload (JCS; this exact byte string is base64url-encoded):"
+            if t["payload_jcs_canonical"] else
+            "Payload (exact JSON, intentionally not JCS-canonical; this exact byte string is base64url-encoded):"),
+           "```json", t["payload_json"], "```",
            "| Field | Value |", "|---|---|",
            f"| header_b64 | `{t['header_b64']}` |",
            f"| payload_b64 | `{t['payload_b64']}` |",
@@ -1538,7 +1636,7 @@ def tok_md(label: str, t: dict) -> str:
 md = []
 md.append("# AAT JWS Test Vectors (draft-niyikiza-oauth-attenuating-agent-tokens-02)\n")
 md.append("**Status:** generated by `gen_vectors.py`, do not edit by hand; "
-          "every expected verdict below was reproduced by the independent §8 verifier in that file. "
+          "every expected verdict below was reproduced by the self-checking §8 verifier in that file. "
           "These vectors are for the -02 text. A draft-01 implementation will disagree on `typ`, "
           "audience mismatch handling (`J.6.2`, `J.6.4`), and `all` clause-reuse (`J.15.3`, `J.15.4`).\n")
 md.append("## Conventions\n")
@@ -1554,9 +1652,10 @@ md.append("- **Audience and nonce.** `aat_aud` is OPTIONAL in the PoP; when pres
 md.append("- **`all` subsumption.** Every parent clause must subsume at least one derived clause; "
           "a derived clause MAY cover several parent clauses; extra derived clauses are permitted. Draft-01's one-to-one "
           "assignment is dropped (it adds backtracking without adding soundness).")
-md.append("- AAT payloads are JCS-canonical (RFC 8785). The draft requires JCS only for the PoP payload (§7.2). "
-          "Canonicalizing AAT payloads is a vector choice so the signing input is reproducible; a verifier MUST "
-          "verify the presented bytes and MUST NOT re-canonicalize before checking a signature.")
+md.append("- AAT and PoP payloads are JCS-canonical (RFC 8785) except where a negative vector intentionally "
+          "preserves inadmissible number syntax or duplicate members. Each token records "
+          "`payload_jcs_canonical`; a verifier MUST verify the presented bytes and MUST NOT re-canonicalize "
+          "before checking a signature.")
 md.append("- `par_hash` = base64url-nopad(SHA-256(parent JWS Signing Input)), where the signing input is the ASCII "
           "string `BASE64URL(header) || '.' || BASE64URL(payload)` (§4.6). J.12.b shows the wrong (payload-only) form.")
 md.append("- Derived `iss` = `urn:ietf:params:oauth:jwk-thumbprint:sha-256:<RFC 7638 thumbprint of the signing key>`.")
@@ -1572,6 +1671,8 @@ md.append(f"| MAX_IAT_SKEW | {MAX_IAT_SKEW} s |")
 md.append(f"| MAX_TOKEN_LIFETIME | {MAX_TOKEN_LIFETIME} s (90 days) |")
 md.append(f"| MAX_DELEGATION_DEPTH | {MAX_DELEGATION_DEPTH} |")
 md.append(f"| MAX_CONSTRAINT_DEPTH | {MAX_CONSTRAINT_DEPTH} |")
+md.append(f"| MAX_TOKEN_SIZE | {MAX_TOKEN_SIZE} bytes |")
+md.append(f"| MAX_CHAIN_SIZE | {MAX_CHAIN_SIZE} bytes |")
 md.append(f"| PoP clock window | ±{POP_WINDOW} s |")
 md.append(f"| Required PoP audience | `{AUDIENCE}` (deployment policy for these vectors) |")
 md.append(f"| Trust anchors | Control Plane public key, bound to issuer `https://auth.example.com` |")
@@ -1606,8 +1707,12 @@ for v in VECTORS:
         md.append("**Policy:** " + ", ".join(f"`{k}`=`{val}`" for k, val in v["policy"].items()) + "\n")
     for n in v["notes"]:
         md.append(f"> {n}\n")
-    md.append(f"**Invocation:** tool `{v['tool']}`, args `{jcs(v['args']).decode()}`, now = `{v['verification_time']}`  ")
+    md.append(f"**Invocation:** tool `{v['tool']}`, args `{v['args_json']}`, now = `{v['verification_time']}`")
     md.append(f"**Expected:** **{e['verdict']}**" + (f" at step {e['step']}" if e["step"] else "") + "\n")
+    if v["replay_state"] is not None:
+        md.append("**Replay state:** accepted PoP `jti` values before = "
+                  f"`{json.dumps(v['replay_state']['before'])}`; after = "
+                  f"`{json.dumps(v['replay_state']['after'])}`\n")
     for i, t in enumerate(v["chain"]):
         md.append(tok_md(f"Chain[{i}] (del_depth {t['payload']['del_depth']})", t))
     md.append(tok_md("PoP JWT", v["pop"]))
@@ -1617,7 +1722,8 @@ ARGS.md_out.write_text("\n".join(md))
 
 
 def tok_json(t: dict) -> dict:
-    return {k: t[k] for k in ("header", "payload", "header_b64", "payload_b64", "signing_input",
+    return {k: t[k] for k in ("header", "payload", "payload_json", "payload_jcs_canonical",
+                              "header_b64", "payload_b64", "signing_input",
                               "signing_input_sha256_b64u", "signature_b64", "compact", "signer")}
 
 
@@ -1625,7 +1731,7 @@ json_out = {
     "spec": "draft-niyikiza-oauth-attenuating-agent-tokens-02",
     "conventions": {
         "header": HEADER, "pop_header": POP_HEADER,
-        "aat_payload_jcs": True, "pop_payload_jcs": True,
+        "payload_jcs": "per token; see payload_jcs_canonical (false for intentional malformed-input vectors)",
         "aat_aud": "optional; when present it must identify the enforcement point (7d)",
         "chain_aud": "every chain token that carries aud must identify the enforcement point (6c)",
         "pop_nonce": "checked when the vector policy names the nonce the enforcement point issued (7h)",
@@ -1633,14 +1739,16 @@ json_out = {
         "par_hash": "base64url-nopad(SHA-256(parent JWS Signing Input))",
     },
     "params": {"now": NOW, "max_iat_skew": MAX_IAT_SKEW, "max_token_lifetime": MAX_TOKEN_LIFETIME,
-               "max_delegation_depth": MAX_DELEGATION_DEPTH, "pop_window": POP_WINDOW, "audience": AUDIENCE},
+               "max_delegation_depth": MAX_DELEGATION_DEPTH, "max_constraint_depth": MAX_CONSTRAINT_DEPTH,
+               "max_token_size": MAX_TOKEN_SIZE, "max_chain_size": MAX_CHAIN_SIZE,
+               "pop_window": POP_WINDOW, "audience": AUDIENCE},
     "keys": {n: {"seed_hex": k.seed.hex(), "public_hex": k.pub_raw.hex(), "jwk": k.jwk,
                  "thumbprint": k.thumbprint, "thumbprint_uri": k.thumbprint_uri} for n, k in KEYS.items()},
     "trust_anchors": [{"iss": ROOT_ISS, "jwk": CP.jwk}],
     "vectors": [{
         "id": v["id"], "title": v["title"], "cbor_twin": v["cbor_twin"], "description": v["description"],
         "notes": v["notes"], "now": v["verification_time"], "tool": v["tool"], "args": v["args"],
-        "policy": v["policy"],
+        "args_json": v["args_json"], "policy": v["policy"], "replay_state": v["replay_state"],
         "chain": [tok_json(t) for t in v["chain"]], "chain_compact": [t["compact"] for t in v["chain"]],
         "pop": tok_json(v["pop"]),
         "presentation": {"aat_chain": [t["compact"] for t in v["chain"]], "aat_pop": v["pop"]["compact"]},

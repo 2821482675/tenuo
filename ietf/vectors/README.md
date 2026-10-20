@@ -7,9 +7,9 @@ same key seeds, same timestamps, matching scenario ids.
 
 | File | Purpose |
 |---|---|
-| `gen_vectors.py` | Generator. Builds every vector and re-verifies it with an independent §8 implementation before writing. |
+| `gen_vectors.py` | Generator. Builds every vector and re-verifies the exercised §8 paths with a self-checking implementation before writing. |
 | `aat-jws-vectors.md` | Human-readable rendering of the suite, kept next to the draft. |
-| [`../../tests/vectors/aat-jws-vectors.json`](../../tests/vectors/aat-jws-vectors.json) | Machine-readable suite: 115 vectors with expected verdict and cited §8 step. The verdict is normative; the step follows §8's order and can differ where §8 permits reordering, so harnesses compare verdicts. Each vector also carries its `presentation` object (§7.4: `aat_chain`, `aat_pop`). Lives with the other cross-language vectors; `tenuo-core/tests/aat_conformance.rs` compiles it in with `include_str!`. |
+| [`../../tests/vectors/aat-jws-vectors.json`](../../tests/vectors/aat-jws-vectors.json) | Machine-readable suite with expected verdict and cited §8 step. The verdict is normative; the step follows §8's order and can differ where §8 permits reordering, so harnesses compare verdicts. Each vector also carries its `presentation` object (§7.4: `aat_chain`, `aat_pop`). |
 
 Both output files are generated. Do not edit them by hand; change the generator
 and regenerate.
@@ -33,15 +33,25 @@ Happy-path chains (single token, three levels, prefix presentation), each
 attenuation invariant I1 through I6, closed-world leaf checks, explicit JWT
 typing, optional PoP audience with mandatory mismatch rejection, chain audience, enforcement-point nonce, composite `all`/`any` subsumption including
 clause reuse, the remaining core constraint types, and the structural root
-checks of §8 steps 3c, 3d, 3f, 3h, 3k, 3l, 3m, 3n.
+checks of §8 steps 3c, 3d, 3f, 3h, 3k, 3l, 3m, 3n. It also covers
+empty and oversized presentations, duplicate claim members, and stateful PoP
+replay tracking at step 7i.
 
 ## Conventions worth knowing
 
-- AAT payloads are JCS-canonical so the signing input is reproducible; a
-  verifier must verify the presented bytes and never re-canonicalize.
+- AAT and PoP payloads are JCS-canonical except where a negative vector
+  intentionally preserves inadmissible number syntax or duplicate members.
+  Each token has a `payload_jcs_canonical` flag and an exact `payload_json`
+  string. A verifier must verify the presented bytes and never re-canonicalize.
 - No floats and no non-ASCII strings appear anywhere. Number admissibility
-  (§3.4) is covered by `J.8.7`-`J.8.9`; a harness must read those numbers as
-  written, since a parser that converts them to doubles cannot detect the lost
-  digits. Unicode tool-name matching needs its own vector set.
+  (§3.4) is covered by `J.8.7`-`J.8.9`; a harness must preserve their exact
+  mathematical values until admissibility is checked, since a parser that
+  converts them to doubles cannot detect lost precision. Unicode tool-name
+  matching needs its own vector set.
+- Each invocation also has an exact `args_json` string. Lossless-number tests
+  must use it (or another lossless parser), since ordinary JavaScript
+  `JSON.parse` cannot preserve `9007199254740993`.
+- Stateful replay vectors include the accepted PoP `jti` set before and after
+  verification. Step 7i records a `jti` only after every earlier check passes.
 - Draft-01 implementations will disagree on `typ`, audience mismatch handling, and the
   two `all` clause-reuse cases (`J.15.3`, `J.15.4`). Those encode -02 changes.
