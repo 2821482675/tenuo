@@ -187,25 +187,6 @@ informative:
     seriesinfo:
       "PhD Dissertation": "Johns Hopkins University"
     target: http://www.erights.org/talks/thesis/
-  ALLOY:
-    title: "Alloy: A Lightweight Object Modelling Notation"
-    author:
-      - name: Daniel Jackson
-    date: 2002
-    seriesinfo:
-      "ACM Transactions on Software Engineering and Methodology": "Vol. 11, No. 2"
-    target: https://doi.org/10.1145/505145.505149
-  Z3:
-    title: "Z3: An Efficient SMT Solver"
-    author:
-      - name: Leonardo de Moura
-        ins: L. de Moura
-      - name: Nikolaj Bjørner
-        ins: N. Bjørner
-    date: 2008
-    seriesinfo:
-      "TACAS 2008, LNCS": "4963"
-    target: https://github.com/Z3Prover/z3
 ---
 
 --- abstract
@@ -2079,8 +2060,8 @@ contribution: SPKI/SDSI (Section 1.3) established attenuation by
 reduction, and this document defines typed subsumption rules over tool
 arguments that make it checkable offline. Implementers are encouraged to
 publish independent analyses of both the core subsumption rules and any
-extension constraint types they deploy. Implementation and formal
-verification status is described in Appendix E.
+extension constraint types they deploy. Implementation status is
+described in Appendix E.
 
 ## Root Key Compromise
 
@@ -2687,21 +2668,6 @@ generator's own implementation of Section 8, which shares no code with
 Tenuo. The suite encodes the -02 changes (Appendix F); test harnesses
 compare verdicts, since the failing step a vector names can differ
 where Section 8 permits reordering.
-
-RFC Editor Note: This section will be updated or removed before
-publication.
-
-## Formal Verification
-
-Formal verification of the attenuation algebra is in progress, using
-three complementary techniques: bounded model checking ({{ALLOY}}) for
-set-theoretic constraint types, SMT solving ({{Z3}}) for numeric and
-structural constraint types, and property-based testing against the Rust
-implementation for implemented constraint types.
-Bounded model checking has found no counterexamples for scopes up to 8
-constraints and 8 values. The combination is intended to provide
-evidence toward monotonicity of the I4 invariant across the full
-constraint attenuation matrix.
 
 RFC Editor Note: This section will be updated or removed before
 publication.
