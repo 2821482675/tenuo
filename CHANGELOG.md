@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A2A `trust_delegated=False` also rejects WarrantStack chains.** The
+  setting was only honored for the legacy `X-Tenuo-Warrant-Chain` header. A
+  delegated chain packed into `X-Tenuo-Warrant` as a WarrantStack was accepted
+  regardless. Both transports now raise `UntrustedIssuerError` when the leaf's
+  issuer is not a trusted root and `trust_delegated=False`.
 - **A2A servers accept real warrants with default settings.**
   `A2AServer(require_audience=...)` defaulted to `True` and required an `aud`
   claim, but tenuo-core warrants have no audience field, so a server built
