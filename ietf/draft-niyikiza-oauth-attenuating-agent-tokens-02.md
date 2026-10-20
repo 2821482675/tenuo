@@ -2658,12 +2658,14 @@ sequences, normalization idempotence across encode/decode round-trips,
 and agreement between in-memory and deserialized constraint evaluation.
 
 Byte-exact JWS test vectors for Section 8 are published as a
-machine-readable suite {{AAT-VECTORS}} and a readable companion with its
-generator {{AAT-VECTOR-GEN}}. Expected verdicts are computed by the
+machine-readable suite {{AAT-VECTORS}} and a readable companion with
+its generator {{AAT-VECTOR-GEN}}. Expected verdicts are computed by the
 generator's own implementation of Section 8, which shares no code with
-Tenuo. The suite encodes the -02 changes (Appendix F); test harnesses
-compare verdicts, since the failing step a vector names can differ
-where Section 8 permits reordering.
+Tenuo. A second verifier, written from the text of this document
+without access to the generator, reproduces every expected verdict. The
+suite encodes the -02 changes (Appendix F); test harnesses compare
+verdicts, since the failing step a vector names can differ where
+Section 8 permits reordering.
 
 RFC Editor Note: This section will be updated or removed before
 publication.
