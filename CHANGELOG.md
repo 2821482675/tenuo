@@ -48,6 +48,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   regardless. Both transports now raise `UntrustedIssuerError` when the leaf's
   issuer is not a trusted root and `trust_delegated=False`.
 
+- **An off-list Temporal signal no longer ends the workflow.** With
+  `authorized_signals` set, a signal name not on the list raised
+  `TemporalConstraintViolation`, which the plugin registers as a workflow
+  failure, so anyone who could signal the workflow could end the run. The
+  signal is now logged and dropped and the run continues.
+- **MCP: `MCPVerifier(config=...)` is closed-world.** With a
+  `CompiledMcpConfig`, arguments no extraction rule read (`follow_symlinks`,
+  a nested `query.where`) reached the tool unchecked, and a config `default`
+  was checked while the tool ran with its own default. Unread arguments are
+  now checked as unknown fields under their dotted path, as in raw mode, and
+  the tool receives the default that was checked. A config object that cannot
+  list its rules is refused. A used default on a wildcard or indexed path is
+  refused when it cannot be injected unambiguously. `CompiledMcpConfig`
+  exposes rule listings and the fields defaulted by each extraction.
+- **MCP denial docs.** The middlewares return denials as `isError` tool
+  results with the code in `structuredContent.tenuo.code`, not JSON-RPC
+  errors; the docs now say so, and document `nonce_store` replay protection
+  and its effect on identical calls in one PoP window.
+- **MCP client tools deny calls with no warrant in scope.** Calling a
+  `SecureMCPClient.tools[...]` wrapper (and the LangChain tools built from
+  it) with neither a warrant nor a signing key in scope logged a warning and
+  called the server anyway. It now raises `ConfigurationError` and the server
+  is not called, matching `call_tool(warrant_context=True)`. To keep the old
+  behavior in development, configure `dev_mode=True, allow_passthrough=True`.
+  MCP 1.9.4 clients also keep working: calls omit the unsupported `meta`
+  keyword when empty and use the standard wire request when injecting warrant
+  metadata.
+- **OpenAI Agents SDK: `guard_agent()`.** Checks every tool call an agent
+  makes before the tool runs, by attaching a Tenuo tool guardrail to each
+  function tool, each MCP server and every agent reachable through handoffs.
+  Hosted tools, and MCP servers on SDK releases without tool guardrails, are
+  refused rather than left unchecked. Requires `openai-agents` 0.3.3 or later.
+  Agent input guardrails only see the agent's input, not the model's tool
+  calls, so `TenuoToolGuardrail` placed in `Agent(input_guardrails=...)` now
+  raises `OpenAIConfigurationError` (`CFG_006`) pointing to `guard_agent()`. Switch
+  existing Agents SDK integrations to `guard_agent()`.
+- **OpenAI `guard()` checks every tool call a client can return.** Clients
+  from `with_options()` and `copy()` were unwrapped, and
+  `beta.chat.completions.parse()` passed through unverified; both are now
+  guarded, and `with_raw_response`, `with_streaming_response`, `realtime`,
+  `conversations` (which can return stored tool calls), the raw HTTP methods,
+  and the rest of `beta` raise
+  `OpenAIConfigurationError` (`CFG_005`). Custom tool calls and Responses
+  `custom_tool_call`, `local_shell_call`, `shell_call`, `apply_patch_call` and
+  `computer_call` items, plus client-executed `tool_search_call` items, were
+  never checked; they are now authorized by name and input and denied unless
+  explicitly allowed. Chat streaming keys tool
+  calls by choice as well as index, so `n>1` streams can't mix calls, and
+  joins tool names split across chunks. Streamed calls, malformed and
+  duplicate-key arguments, and buffer overflows now emit audit events.
+- **A2A server skill constraints apply with proof of possession.**
+  Constraints declared with `@server.skill(..., constraints=...)` were only
+  checked when `require_pop=False`, so with the default `require_pop=True` a
+  server-level `Subpath("/data")` did not stop `path="/etc/passwd"` when the
+  warrant allowed it. They are now checked on every call.
+- **Bare A2A skill constraint classes are refused at registration.** A class
+  such as `constraints={"path": Subpath}` has no bounds. With
+  `require_pop=False` it was checked as `isinstance(value, Subpath)`, which
+  rejected every call, and with `require_pop=True` it was never checked.
+  `@server.skill` now raises `TypeError` for it; pass an instance such as
+  `Subpath("/data")`.
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed
@@ -93,8 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sandbox blocks, including when the cache is full, so a long `cache_ttl`
   does not make them usable for PoP signing. Workflow workers sign with
   `signing_key=` or a resolver whose `resolve_sync` returns a key already in
-  memory. With `authorized_signals` set, a name off the list fails the
-  workflow run. `authorized_signals` and `authorized_updates` are worker
+  memory. `authorized_signals` and `authorized_updates` are worker
   settings, and an off-list update is rejected.
 - **Temporal history sizes count the chain header that is actually sent.**
   `x-tenuo-warrant` is the gzip-compressed leaf. `x-tenuo-warrant-chain` is
