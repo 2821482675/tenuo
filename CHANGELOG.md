@@ -92,6 +92,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   calls by choice as well as index, so `n>1` streams can't mix calls, and
   joins tool names split across chunks. Streamed calls, malformed and
   duplicate-key arguments, and buffer overflows now emit audit events.
+- **A2A server skill constraints apply with proof of possession.**
+  Constraints declared with `@server.skill(..., constraints=...)` were only
+  checked when `require_pop=False`, so with the default `require_pop=True` a
+  server-level `Subpath("/data")` did not stop `path="/etc/passwd"` when the
+  warrant allowed it. They are now checked on every call.
+- **Bare A2A skill constraint classes are refused at registration.** A class
+  such as `constraints={"path": Subpath}` has no bounds. With
+  `require_pop=False` it was checked as `isinstance(value, Subpath)`, which
+  rejected every call, and with `require_pop=True` it was never checked.
+  `@server.skill` now raises `TypeError` for it; pass an instance such as
+  `Subpath("/data")`.
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed
