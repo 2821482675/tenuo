@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A2A audit timestamps are valid ISO 8601.** `AuditEvent.to_dict()` appended
+  `Z` to an aware UTC `isoformat()`, so audit records carried
+  `...+00:00Z`, which strict parsers reject. They now end in a single `Z`;
+  naive timestamps are taken as UTC and offset timestamps are converted to UTC.
 - **A2A `trust_delegated=False` also rejects WarrantStack chains.** The
   setting was only honored for the legacy `X-Tenuo-Warrant-Chain` header. A
   delegated chain packed into `X-Tenuo-Warrant` as a WarrantStack was accepted
@@ -53,7 +57,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the quickstart rejected every warrant with `AudienceMismatchError`.
   The default is now `False`. Passing `require_audience=True` or setting
   `TENUO_A2A_REQUIRE_AUDIENCE=true` behaves exactly as before.
-
 - **An off-list Temporal signal no longer ends the workflow.** With
   `authorized_signals` set, a signal name not on the list raised
   `TemporalConstraintViolation`, which the plugin registers as a workflow
