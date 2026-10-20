@@ -1827,13 +1827,15 @@ Algorithm:
       `authorization_details` are ignored by this algorithm.
    b. Verify tool is present in leaf_aat.tools, and that every
       number in args, as written in the invocation, is admissible
-      (Section 3.4). Let M be the tool's constraint map,
-      normalized (Section 3.3). For each argument in args: if M
-      names it, verify its value satisfies that constraint;
-      otherwise, if M contains `"*"`, verify the value satisfies
-      M's `"*"` constraint; otherwise DENY (closed-world mode). For
-      each argument M names that is required, if it is absent from
-      args, DENY. If any constraint check fails, DENY.
+      (Section 3.4). If any JSON object in args, as written in the
+      invocation, has duplicate member names, DENY. Let M be the
+      tool's constraint map, normalized (Section 3.3). For each
+      argument in args: if M names it, verify its value satisfies
+      that constraint; otherwise, if M contains `"*"`, verify the
+      value satisfies M's `"*"` constraint; otherwise DENY
+      (closed-world mode). For each argument M names that is
+      required, if it is absent from args, DENY. If any constraint
+      check fails, DENY.
    c. For each token in chain that carries an `aud` claim, verify
       that at least one of its values identifies this enforcement
       point (RFC 7519 Section 4.1.3). If any such token does not,
@@ -1923,9 +1925,9 @@ attacks on maliciously crafted payloads. The sole exception is step 2c:
 extracting only the `jti` string field for cycle detection prior to
 signature verification is permitted, provided the implementation treats
 the extracted value as untrusted until the corresponding signature is
-verified. Steps 3b, 4b, and 7b reject duplicate JSON member names when
-claims are parsed, because parsers differ in which duplicate they keep
-({{RFC8259}}, Section 4).
+verified. Steps 3b, 4b, 6b, and 7b reject duplicate JSON member names
+in claims and in arguments, because parsers differ in which duplicate
+they keep ({{RFC8259}}, Section 4).
 
 
 # Security Considerations
