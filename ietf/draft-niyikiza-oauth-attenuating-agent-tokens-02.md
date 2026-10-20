@@ -8,7 +8,7 @@ submissiontype: IETF
 ipr: trust200902
 area: Security
 workgroup: Web Authorization Protocol (OAuth)
-date: 2026-09-29
+date: 2026-10-20
 
 author:
   - fullname: Niki Aimable Niyikiza
@@ -24,6 +24,7 @@ normative:
   RFC8725:   # JSON Web Token Best Current Practices
   RFC7800:   # Proof-of-Possession Key Semantics for JWTs
   RFC8032:   # EdDSA
+  RFC8037:   # CFRG ECDH and Signatures in JOSE (OKP keys)
   RFC9864:   # Fully-Specified Algorithms for JOSE and COSE
   RFC8785:   # JSON Canonicalization Scheme (JCS)
   RFC9278:   # JWK Thumbprint URI
@@ -329,7 +330,7 @@ of possession, the presentation an enforcement point receives (Section
 7.4), and verification. It leaves four things to deployments or
 companion specifications: token revocation, which would reintroduce the
 online dependency that offline verification avoids (Section 9.8); a CBOR
-encoding (Appendix D); and where a presentation is carried, since agent
+encoding (Appendix D); where a presentation is carried, since agent
 frameworks carry tool calls over different protocols, for example MCP
 {{MCP}}, A2A {{A2A}}, or plain HTTP, and each needs its own binding;
 and how a user's authority, obtained for example through an
@@ -566,7 +567,8 @@ their absence carries the semantics described in the table.
 | `authorization_details` | array | REQUIRED | Tool capability claims (Section 3.3). |
 
 Implementations MUST support Ed25519 {{RFC8032}}, JWS `alg` value
-`"Ed25519"` ({{RFC9864}}), for token signing and verification.
+`"Ed25519"` ({{RFC9864}}), with keys represented as OKP JWKs
+({{RFC8037}}), for token signing and verification.
 Implementations MAY support additional asymmetric algorithms
 (Section 9.12).
 
@@ -610,6 +612,9 @@ This specification profiles {{RFC9396}} for tool-level capability
 claims. An AAT capability entry is an `authorization_details` entry
 whose `type` is set to `"attenuating_agent_token"`. Such an entry MUST
 include a `tools` member that maps tool identifiers to constraint maps.
+{{RFC9396}} Section 2.1 recommends collision-resistant type values and
+establishes no registry of types; whether to register this type or use
+a URI is an open issue for the working group.
 
 ~~~json
 {
@@ -924,7 +929,7 @@ The protected header is the same as the root token's. Payload:
   "exp": 1741601920,
   "del_depth": 1,
   "del_max_depth": 3,
-  "par_hash": "sha256_base64url_of_parent_token_signing_input",
+  "par_hash": "m-4p_oLqO3pUuExBdJy1oeWhSHqkHgkSU2CFl12csjM",
   "cnf": {
     "jwk": {
       "kty": "OKP",
@@ -950,7 +955,12 @@ The protected header is the same as the root token's. Payload:
 
 Note that the derived token:
 
-- Carries a `par_hash` linking it to its parent.
+- Has `iss` set to the JWK Thumbprint URI of the root's `cnf.jwk`,
+  abbreviated above; the full thumbprint is
+  `kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k`.
+- Carries a `par_hash` linking it to its parent, computed over the
+  root token with its header and payload serialized as JCS as shown
+  above.
 - Has `del_depth` incremented to 1.
 - Restricts `read_file` to a single file rather than either file
   authorized by the parent.
@@ -990,11 +1000,12 @@ structurally, and those rules alone decide validity. They are
 conservative: some attenuations that are valid in the semantic sense
 below, such as an `exact` under a parent `any`, are rejected.
 
-When a parent constraint exists, a parent constraint `c_parent` subsumes
-a derived constraint `c_child` (written `c_child ⊑ c_parent`) if every
-argument value that satisfies `c_child` also satisfies `c_parent`. A
-derived constraint attenuates its parent exactly when the parent
-subsumes it.
+A parent constraint `c_parent` semantically subsumes a derived
+constraint `c_child` if every argument value that satisfies `c_child`
+also satisfies `c_parent`. Section 4.5 defines the structural relation
+`c_child ⊑ c_parent` that verifiers evaluate: it holds only for pairs
+that are semantically subsuming, but some semantically subsuming pairs
+fail it.
 
 Two boundary cases complete the structure. The empty capability set
 `∅` is the bottom element: a token with no tools authorized is a
@@ -1066,7 +1077,7 @@ MAX_DELEGATION_DEPTH is an implementation-defined finite integer
 specifying the maximum permitted delegation chain depth. Implementations
 MUST enforce a finite maximum delegation depth to prevent resource
 exhaustion, and SHOULD size it to their deployment topology (Appendix
-B.4). So that chains verify across implementations, MAX_DELEGATION_DEPTH
+B.2). So that chains verify across implementations, MAX_DELEGATION_DEPTH
 MUST be at least 8.
 
 The `del_max_depth` claim in any token in the chain MUST NOT exceed the
@@ -1383,8 +1394,11 @@ issuance. The parameter carries a key confirmation object whose JSON
 syntax and semantics follow {{RFC7800}} Section 3.1. This document does
 not define a new OAuth token endpoint key-confirmation parameter. The
 value MUST be a JSON object containing a `jwk` member with the agent's
-public key in JWK format {{RFC7517}}. This is the key that the root
-issuer will bind into the root token's `cnf.jwk` claim.
+public key in JWK format {{RFC7517}}. In a form-encoded token request,
+the parameter value is the JSON serialization of this object, encoded
+as for `authorization_details` ({{RFC9396}} Section 3). This is the
+key that the root issuer will bind into the root token's `cnf.jwk`
+claim.
 
 The key submitted in `req_cnf` is the AAT holder key that will be
 embedded in the root token's `cnf.jwk`. This key is distinct from any
@@ -1420,14 +1434,15 @@ Upon a valid request, the AS constructs and returns a root AAT. The AS:
 3. Sets `iat` to the current time and `exp` to the token's
    expiry time, subject to the constraints in Section 4.4.
 4. Sets `del_depth` to 0, `del_max_depth` to the maximum
-   delegation depth permitted for this grant, and `par_hash`
-   to absent.
+   delegation depth permitted for this grant, and omits
+   `par_hash`.
 5. Sets `cnf.jwk` to the public key submitted in the agent's
    `req_cnf` request parameter. The root issuer MUST validate that
    the submitted key is well-formed and is a public key. The root
    issuer MUST verify that the agent possesses the corresponding
-   private key. The deployment's issuance profile MUST define the
-   proof-of-possession mechanism.
+   private key. The mechanism for this proof is deployment-specific,
+   for example a DPoP proof ({{RFC9449}}) signed with the `req_cnf`
+   key.
 6. For each tool identifier in the requested `authorization_details`,
    verifies that the tool is recognized by the root issuer and that the
    requester is authorized to receive authority for it. The mechanism
@@ -1439,7 +1454,8 @@ Upon a valid request, the AS constructs and returns a root AAT. The AS:
    include a tool that failed verification in step 6. If no requested
    tool can be granted, the root issuer MUST reject the request with
    the `invalid_authorization_details` error ({{RFC9396}} Section 5).
-8. Signs the token with the AS's own private key.
+8. Signs the token with the AS's own private key, using the JWS
+   Protected Header defined in Section 3.5.
 
 The AS returns the token in a standard OAuth 2.0 token endpoint response
 ({{RFC6749}} Section 5.1) with the following field values:
@@ -1488,7 +1504,9 @@ A holder of any AAT whose `del_depth` is strictly less than
 
 5. Set `authorization_details` to an array containing exactly one
    `attenuating_agent_token` entry whose `tools` member contains the
-   tools and constraint maps selected in steps 3 and 4.
+   tools and constraint maps selected in steps 3 and 4. A non-leaf
+   token MAY instead carry no such entry, representing the empty
+   capability set (Section 3.3).
 
 6. Set `del_depth` to `parent.del_depth + 1`.
 
@@ -1598,7 +1616,7 @@ The `iat` check is stateless and bounds replay to the tolerance window:
 a captured PoP JWT remains usable until its `iat` leaves the window. It
 MUST NOT be the only replay control for tool invocations that have side
 effects or are not idempotent. For those, the enforcement point MUST
-track presented `jti` values, retaining each one only until its `iat`
+track accepted `jti` values, retaining each one until its `iat`
 leaves the window (Section 8, step 7i). The enforcement point
 determines which of its tools have side effects; tokens do not carry
 this. Replicas of one enforcement point, such as instances behind a
@@ -1708,8 +1726,9 @@ Algorithm:
    f. Verify root.iat <= now + MAX_IAT_SKEW.
    g. Verify root.exp > root.iat.
    h. Verify root.exp <= root.iat + MAX_TOKEN_LIFETIME.
-   i. Verify root.del_max_depth is a non-negative integer not
-      exceeding MAX_DELEGATION_DEPTH. If absent or invalid, DENY.
+   i. Verify root.del_max_depth is a non-negative integer
+      (Section 3.2) not exceeding MAX_DELEGATION_DEPTH. If absent
+      or invalid, DENY.
    j. Verify root.jti is present and is a non-empty string.
       If absent or not a string, DENY.
    k. Verify root.iss is present, is a URI, and equals the
@@ -1756,8 +1775,8 @@ Algorithm:
       b3. Verify child.authorization_details is present and
           is an array. If absent or not an array, DENY.
       b4. Verify child.del_depth and child.del_max_depth are
-          both present and are non-negative integers. If
-          absent or not integers, DENY.
+          both present and are non-negative integers
+          (Section 3.2). If absent or not integers, DENY.
       b5. Verify child.iss and child.par_hash are present and are
           strings, and child.iat and child.exp are present and are
           NumericDate values (Section 3.2). If not, DENY.
@@ -1877,11 +1896,13 @@ Algorithm:
       enforcement point issued and still accepts. If absent,
       unknown, or expired, DENY.
    i. If this enforcement point tracks PoP `jti` values for the
-      invoked tool (Section 7.3), verify pop_jwt.jti has not been
-      accepted within the tolerance window. If it has, DENY. This
-      check-and-record MUST be atomic across replicas sharing the
-      enforcement point's identity, and occurs only after every other
-      authorization check passes.
+      invoked tool (Section 7.3), verify pop_jwt.jti is not among
+      the jti values it has accepted from PoP JWTs whose iat is
+      still within the tolerance window. If it is, DENY. Otherwise
+      record pop_jwt.jti, retaining it until pop_jwt.iat leaves
+      the window. This check-and-record MUST be atomic across
+      replicas sharing the enforcement point's identity, and occurs
+      only after every other authorization check passes.
 
 8. PERMIT.
 ~~~
@@ -1905,7 +1926,8 @@ Notes on the algorithm:
   or actor may still appear more than once, through distinct tokens.
 
 Every step denies on failure, so the verdict does not depend on the
-order of steps 6 and 7. Enforcement points SHOULD verify the PoP
+order of steps 6 and 7; step 7i, which records state, still runs after
+every other check. Enforcement points SHOULD verify the PoP
 signature (steps 7a and 7b) before evaluating argument constraints
 (step 6b), so that a presenter who does not hold the leaf key cannot
 trigger constraint evaluation.
@@ -2347,7 +2369,7 @@ The `tools` map is not a top-level JWT claim; it is a member nested
 inside the `authorization_details` array entry with `type:
 "attenuating_agent_token"`, as defined in Section 3.3. Its structure and
 semantics are governed by the AAT Constraint Type Registry (Section
-11.3) and the RAR profile defined in this document, not by the JWT
+11.2) and the RAR profile defined in this document, not by the JWT
 Claims Registry.
 
 **PoP JWT claims:**
@@ -2455,6 +2477,7 @@ deriving, or verifying Attenuating Authorization Tokens
 - Magic number(s): n/a
 - File extension(s): n/a
 - Macintosh file type code(s): n/a
+- Deprecated alias names for this type: n/a
 
 **Person & email address to contact for further information:**
 Niki Aimable Niyikiza, niki@tenuo.ai
@@ -2497,6 +2520,7 @@ verifying AAT proof-of-possession JWTs
 - Magic number(s): n/a
 - File extension(s): n/a
 - Macintosh file type code(s): n/a
+- Deprecated alias names for this type: n/a
 
 **Person & email address to contact for further information:**
 Niki Aimable Niyikiza, niki@tenuo.ai
@@ -2704,6 +2728,10 @@ that break -01 implementations:
 - Sections now follow the token lifecycle, repeated rules are
   consolidated in the verification algorithm, and discovery uses RAR's
   existing metadata.
+- IANA: the `aat_hash` claim and the `application/aat+jwt` and
+  `application/aat-pop+jwt` media types are added; the `aat_issuer`
+  metadata and authorization details type registry requests are
+  withdrawn.
 
 Byte-exact JWS vectors covering the verifier changes are published in
 the suite described in Appendix E ({{AAT-VECTORS}}).
