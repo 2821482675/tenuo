@@ -47,6 +47,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   delegated chain packed into `X-Tenuo-Warrant` as a WarrantStack was accepted
   regardless. Both transports now raise `UntrustedIssuerError` when the leaf's
   issuer is not a trusted root and `trust_delegated=False`.
+- **A2A servers accept real warrants with default settings.**
+  `A2AServer(require_audience=...)` defaulted to `True` and required an `aud`
+  claim, but tenuo-core warrants have no audience field, so a server built
+  from the quickstart rejected every warrant with `AudienceMismatchError`.
+  The default is now `False`. Passing `require_audience=True` or setting
+  `TENUO_A2A_REQUIRE_AUDIENCE=true` behaves exactly as before.
 
 - **An off-list Temporal signal no longer ends the workflow.** With
   `authorized_signals` set, a signal name not on the list raised
