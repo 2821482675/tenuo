@@ -1257,7 +1257,8 @@ add("J.7.6", "crit lists a header parameter the enforcement point does not under
 empty_crit_root = jws_sign(root_claims(uuid7ish(0x83), ROOT_TOOLS, ORCH), CP,
                            header={"alg": "Ed25519", "typ": "aat+jwt", "crit": []})
 add("J.7.15", "crit is an empty array", None,
-    "The root is otherwise valid, but RFC 7515 Section 4.1.11 requires crit to be a non-empty array (step 3a).",
+    "The root is otherwise valid, but its crit is an empty array. RFC 7515 Section 4.1.11 forbids producers to "
+    "send one, and step 3a rejects a crit that is not a non-empty array of strings.",
     [empty_crit_root], pop_sign(pop_claims(uuid7ish(0xAE7), empty_crit_root, "read_file", {"path": Q3}), ORCH),
     "read_file", {"path": Q3}, "DENY", "3a")
 hdr_key_root = jws_sign(root_claims(uuid7ish(0x81), ROOT_TOOLS, ORCH), ATK,
@@ -2309,8 +2310,9 @@ add("J.24.9", "Derived token repeats a tool identifier", None,
     "DENY", "4b")
 wrong_crv_l1 = jws_sign(child_of_l0(11, cnf={"jwk": {**WK.jwk, "crv": "X25519"}}), ORCH)
 add("J.24.10", "Derived cnf.jwk has the wrong curve", None,
-    "L1's JWK declares X25519 while retaining the Worker's valid Ed25519 x. Step 4b2 rejects the invalid public "
-    "JWK before its x can be used for PoP verification.",
+    "L1's JWK declares X25519 while retaining the Worker's Ed25519 x. An X25519 key cannot verify an Ed25519 "
+    "signature: this generator rejects it at step 4b2, and a verifier that accepts any public key there denies "
+    "at step 7a, where alg must be consistent with the key.",
     [L0, wrong_crv_l1], pop_of(wrong_crv_l1, WK, "read_file", READ_Q3, P(24, 11)),
     "read_file", READ_Q3, "DENY", "4b2")
 short_x_l1 = jws_sign(child_of_l0(12, cnf={"jwk": {**WK.jwk, "x": b64u(WK.pub_raw[:-1])}}), ORCH)

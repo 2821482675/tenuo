@@ -2971,7 +2971,7 @@ eyJhbGciOiJFZDI1NTE5IiwiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZHFG
 
 ## J.7.15 crit is an empty array
 
-The root is otherwise valid, but RFC 7515 Section 4.1.11 requires crit to be a non-empty array (step 3a).
+The root is otherwise valid, but its crit is an empty array. RFC 7515 Section 4.1.11 forbids producers to send one, and step 3a rejects a crit that is not a non-empty array of strings.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
 **Expected:** **DENY** at step 3a
@@ -14434,7 +14434,7 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.24.10 Derived cnf.jwk has the wrong curve
 
-L1's JWK declares X25519 while retaining the Worker's valid Ed25519 x. Step 4b2 rejects the invalid public JWK before its x can be used for PoP verification.
+L1's JWK declares X25519 while retaining the Worker's Ed25519 x. An X25519 key cannot verify an Ed25519 signature: this generator rejects it at step 4b2, and a verifier that accepts any public key there denies at step 7a, where alg must be consistent with the key.
 
 **Invocation:** tool `read_file`, args `{"path":"/data/q3-report.pdf"}`, now = `1704067500`
 **Expected:** **DENY** at step 4b2
