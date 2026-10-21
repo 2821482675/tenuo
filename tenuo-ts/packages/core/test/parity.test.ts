@@ -105,6 +105,9 @@ describe("constraint set", () => {
     const s = probe(tenuo, "fetch2", { url: urlSafe({ allowDomains: ["*.example.com"] }) });
     await expect(s.ok({ url: "https://api.example.com/x" })).resolves.toEqual({ url: "https://api.example.com/x" });
     await s.denied({ url: "http://169.254.169.254/latest/meta-data" });
+    // Public IP literals are constrained by allowDomains too. This specifically
+    // guards the committed WASM artifact used by the published package.
+    await s.denied({ url: "https://8.8.8.8/" });
     await s.denied({ url: "https://evil.net/" });
   });
 

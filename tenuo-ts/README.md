@@ -102,6 +102,9 @@ try {
 
 The first call runs. The second is rejected with
 `TENUO_CONSTRAINT_VIOLATION`; the original `execute` function is never called.
+`pnpm example:basic` runs this as
+[`examples/basic.ts`](packages/core/examples/basic.ts), including the explicit
+`{ session }` form below.
 
 You can also pass a session explicitly when ambient session context is not a
 good fit:
