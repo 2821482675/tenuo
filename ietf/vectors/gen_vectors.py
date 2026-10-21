@@ -677,7 +677,7 @@ def subsumes(child: dict, parent: dict) -> bool:
     """True iff child ⊑ parent under the §4.5 table; every pair the table does not
     list is invalid.
 
-    `all` uses the agreed -02 rule (Tenuo's): every parent clause must subsume at
+    `all` uses the -02 rule (Section 4.5): every parent clause must subsume at
     least one derived clause; a derived clause MAY cover several parent clauses;
     extra derived clauses are permitted. This drops draft-01's one-to-one
     requirement (Warden NOTES entry 12). An empty `all` or `any` never reaches
@@ -1442,7 +1442,7 @@ composite("J.15.2", "all: derived drops a parent clause", "limit: all[max 100, m
           {"export": {"format": ANY(ex("pdf")), "limit": ALL(rng(max=100))}}, "DENY", "4p4", n=2)
 composite("J.15.3", "all: one derived clause covers two parent clauses",
           "limit: all[max 100, min 0] -> all[min 10 max 50]. The single derived range is narrower than both parent "
-          "clauses. PERMIT under the agreed -02 rule (Tenuo's); draft-01's one-to-one text would DENY.",
+          "clauses. PERMIT under the -02 rule (Section 4.5); draft-01's one-to-one text would DENY.",
           {"export": {"format": ANY(ex("pdf")), "limit": ALL(rng(min=10, max=50))}}, "PERMIT", n=3,
           notes=["Warden interop case all-clause-reuse-two-parents-one-derived. Soundness: C_d ⊑ C_p1 and C_d ⊑ C_p2 "
                  "implies C_d ⊑ C_p1 ∧ C_p2, so no one-to-one assignment is needed."])

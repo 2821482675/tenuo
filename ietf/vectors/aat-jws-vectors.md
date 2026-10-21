@@ -6749,7 +6749,7 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.15.3 all: one derived clause covers two parent clauses
 
-limit: all[max 100, min 0] -> all[min 10 max 50]. The single derived range is narrower than both parent clauses. PERMIT under the agreed -02 rule (Tenuo's); draft-01's one-to-one text would DENY.
+limit: all[max 100, min 0] -> all[min 10 max 50]. The single derived range is narrower than both parent clauses. PERMIT under the -02 rule (Section 4.5); draft-01's one-to-one text would DENY.
 
 > Warden interop case all-clause-reuse-two-parents-one-derived. Soundness: C_d ⊑ C_p1 and C_d ⊑ C_p2 implies C_d ⊑ C_p1 ∧ C_p2, so no one-to-one assignment is needed.
 

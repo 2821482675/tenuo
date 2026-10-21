@@ -7,6 +7,8 @@ Byte-exact test vectors for the JWS profile of
 |---|---|
 | `gen_vectors.py` | Generator. Builds every vector and re-verifies it with its own implementation of the §8 algorithm before writing; that implementation shares no code with Tenuo. |
 | `aat-jws-vectors.md` | Human-readable rendering of the suite, kept next to the draft. |
+| `compare_results.py` | Compares an implementation's verdicts with the suite and reports every disagreement. |
+| `INTEROP.md` | How to run the suite against an implementation and report results, and the results so far. |
 | [`../../tests/vectors/aat-jws-vectors.json`](../../tests/vectors/aat-jws-vectors.json) | Machine-readable suite with expected verdict and cited §8 step. The expected verdict follows the -02 text; the step follows §8's order and can differ where §8 permits reordering, so harnesses compare verdicts. Each vector also carries its `presentation` object (§7.4: `aat_chain`, `aat_pop`). |
 
 Both output files are generated. Do not edit them by hand; change the generator
@@ -24,6 +26,12 @@ same scenario with the same key seeds and timestamps. Only some vectors have a
 twin (the generated document gives the count), and group numbers otherwise have
 no relation to the CBOR suite's section numbers: J.15 is `all` subsumption,
 A.15 an issuer constraint violation.
+
+## Checking an implementation
+
+Record your verifier's verdict for each vector id in a JSON file, then run
+`python3 ietf/vectors/compare_results.py results.json`. [`INTEROP.md`](INTEROP.md)
+describes the inputs, the results format, and how to report what you find.
 
 ## Regenerate
 
