@@ -376,7 +376,7 @@ CHECKS = (
     "6a:one", "6b:tool", "6b:dup", "6b:numbers", "6b:check", "6b:star", "6b:closed", "6b:required",
     "6c:type", "6c:aud", "6c:required",
     "7a:alg", "7a:typ", "7a:crit", "7b:sig", "7b:dup", "7c:jti", "7c:strings", "7c:iat", "7c:hta",
-    "7c:aat_id", "7c:aat_hash", "7d:aud", "7d:required", "7e:tool", "7f:hta", "7g:past", "7g:future",
+    "7c:aat_id", "7c:aat_hash", "7d:aud", "7d:required", "7e:tool", "7f:numbers", "7f:hta", "7g:past", "7g:future",
     "7h:nonce", "7i:replay",
     "wf:object", "wf:depth", "wf:type", "wf:members", "wf:exact-value", "wf:composite-array",
     "wf:empty-composite", "wf:one_of-values", "wf:set-arrays", "wf:range-types", "wf:range-inclusive",
@@ -885,6 +885,7 @@ def verify_chain(chain: list[str], trust_anchors: list[tuple[str, dict]], tool: 
     _chk("7d:aud", pop_aud is not None and pop_aud != audience, "aat_aud does not identify this enforcement point")
     _chk("7d:required", pop_aud is None and require_pop_aud, "aat_aud required by policy but absent")
     _chk("7e:tool", pop.get("aat_tool") != tool, "aat_tool != tool")
+    _chk("7f:numbers", _inadmissible(pop.get("hta")), "a number in the PoP hta is not admissible (§3.4)")
     _chk("7f:hta", jcs(pop.get("hta")) != jcs(args), "hta != args (JCS)")
     _chk("7g:past", pop["iat"] < now - POP_WINDOW, "PoP iat is older than the clock window")
     _chk("7g:future", pop["iat"] > now + POP_WINDOW, "PoP iat is further in the future than the clock window")
@@ -1531,11 +1532,11 @@ add("J.8.7", "Argument number that does not survive the JCS round trip", None,
     "Root authorizes get_account with a wildcard id. The invocation passes id = 2^53 + 1, which rounds to the "
     "double 2^53; JCS prints that as 9007199254740992, a different value, so the number is not admissible "
     "(Section 3.4). Denied at step 6b.",
-    [big_root], pop_sign(pop_claims(uuid7ish(0xB07), big_root, "get_account", {"id": BIG}), ORCH),
+    [big_root], pop_sign(pop_claims(uuid7ish(0xB07), big_root, "get_account", {"id": 2**53}), ORCH),
     "get_account", {"id": BIG}, "DENY", "6b",
-    notes=["The PoP payload carries the exact decimal digits of 2^53 + 1. A JCS implementation would "
-           "serialize the value as 9007199254740992; the verdict does not depend on it, because step 6b "
-           "denies before the PoP is compared."])
+    notes=["The PoP's hta carries 9007199254740992, the JCS form of the argument, so the PoP is admissible and "
+           "matches at step 7f; the argument's admissibility (step 6b) is the only fault. J.20.17 is the "
+           "mirror case."])
 add("J.8.8", "Argument above 2^53 that survives the JCS round trip", None,
     "The invocation passes id = 2^53 + 2. JCS prints its double as 9007199254740994, the same value, so it is "
     "admissible. PERMIT: the rule is what JCS prints, not a magnitude limit (compare J.8.10 and J.8.11).",
@@ -1970,8 +1971,10 @@ NUM_NOTE = ("Read the invocation from args_json with a parser that keeps every n
 add("J.8.10", "Argument whose double is exact but whose JCS form is another number", None,
     "id = 2^60 = 1152921504606846976. The double is exact, but JCS prints it with the shortest round-trip digits, "
     "1152921504606847000, which denotes a different value, so the number is not admissible (Section 3.4). DENY at "
-    "step 6b; exactness of the double is not the test.",
-    [big_root], pop_of(big_root, ORCH, "get_account", {"id": 2**60}, P(8, 10)), "get_account", {"id": 2**60},
+    "step 6b; exactness of the double is not the test. The PoP's hta carries the JCS form, 1152921504606847000, "
+    "so step 6b is the only fault.",
+    [big_root], pop_of(big_root, ORCH, "get_account", {"id": 1152921504606847000}, P(8, 10)), "get_account",
+    {"id": 2**60},
     "DENY", "6b", notes=[NUM_NOTE])
 add("J.8.11", "Argument whose double is inexact but whose JCS form is the same number", None,
     "id = 1152921504606847000. It rounds to the double 2^60, which JCS prints as 1152921504606847000: the input's "
@@ -1989,11 +1992,10 @@ add("J.8.13", "Argument with a fraction", None,
     "but JCS prints it as 0.1. PERMIT.",
     [big_root], pop_of(big_root, ORCH, "get_account", {"id": Decimal("0.1")}, P(8, 13)), "get_account", None,
     "PERMIT", args_json='{"id":0.1}', notes=[NUM_NOTE])
-POP_1E = raw_json(pop_claims(P(8, 14), big_root, "get_account", {"id": "@@id@@"}), id="1.00000000000000001")
 add("J.8.14", "Argument with more precision than a double holds", None,
     "args_json writes id as 1.00000000000000001, the Section 3.4 example of an inadmissible number: JCS prints its "
-    "double as 1. DENY at step 6b. The PoP carries the same digits.",
-    [big_root], jws_sign_raw(POP_1E, ORCH, POP_HEADER), "get_account", None, "DENY", "6b",
+    "double as 1. DENY at step 6b. The PoP's hta carries the JCS form, 1, so step 6b is the only fault.",
+    [big_root], pop_of(big_root, ORCH, "get_account", {"id": 1}, P(8, 14)), "get_account", None, "DENY", "6b",
     args_json='{"id":1.00000000000000001}', notes=[NUM_NOTE])
 
 
@@ -2208,6 +2210,13 @@ add("J.20.15", "PoP iat beyond the clock window in the future", None,
 add("J.20.16", "PoP iat in the future, inside the clock window", None,
     "Valid J.3 chain; PoP iat = now + 20, inside the ±30 s window. PERMIT.",
     [L0, L1, L2], pop_of(L2, WK2, "read_file", READ_Q3, P(20, 16), iat=NOW + 20), "read_file", READ_Q3, "PERMIT")
+POP_HTA_BIG = raw_json(pop_claims(P(20, 17), big_root, "get_account", {"id": "@@id@@"}), id=str(2**53 + 1))
+add("J.20.17", "PoP hta number that does not survive the JCS round trip", None,
+    "The invocation passes id = 9007199254740992 (2^53), which is admissible. The PoP's hta writes id as "
+    "9007199254740993 (2^53 + 1), which rounds to the same double and so has the same JCS form; the canonical "
+    "forms match, but the signed number is not admissible (Section 3.4), so step 7f denies.",
+    [big_root], jws_sign_raw(POP_HTA_BIG, ORCH, POP_HEADER), "get_account", None, "DENY", "7f",
+    args_json='{"id":9007199254740992}', notes=[NUM_NOTE])
 
 # --- J.21.13-J.21.20 root claims (steps 3b, 3g, 3i, 3j) ----------------------
 solo("J.21.13", "Root exp written with an exponent",

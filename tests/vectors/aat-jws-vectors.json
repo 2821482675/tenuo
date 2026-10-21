@@ -6558,7 +6558,7 @@
       "cbor_twin": null,
       "description": "Root authorizes get_account with a wildcard id. The invocation passes id = 2^53 + 1, which rounds to the double 2^53; JCS prints that as 9007199254740992, a different value, so the number is not admissible (Section 3.4). Denied at step 6b.",
       "notes": [
-        "The PoP payload carries the exact decimal digits of 2^53 + 1. A JCS implementation would serialize the value as 9007199254740992; the verdict does not depend on it, because step 6b denies before the PoP is compared."
+        "The PoP's hta carries 9007199254740992, the JCS form of the argument, so the PoP is admissible and matches at step 7f; the argument's admissibility (step 6b) is the only fault. J.20.17 is the mirror case."
       ],
       "now": 1704067500,
       "tool": "get_account",
@@ -6628,25 +6628,25 @@
           "aat_hash": "W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc",
           "aat_tool": "get_account",
           "hta": {
-            "id": 9007199254740993
+            "id": 9007199254740992
           },
           "aat_aud": "https://tools.example.com"
         },
-        "payload_json": "{\"aat_aud\":\"https://tools.example.com\",\"aat_hash\":\"W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc\",\"aat_id\":\"019471f8-0000-7000-8000-000000000b18\",\"aat_tool\":\"get_account\",\"hta\":{\"id\":9007199254740993},\"iat\":1704067500,\"jti\":\"019471f8-0000-7000-8000-000000000b07\"}",
-        "payload_jcs_canonical": false,
+        "payload_json": "{\"aat_aud\":\"https://tools.example.com\",\"aat_hash\":\"W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc\",\"aat_id\":\"019471f8-0000-7000-8000-000000000b18\",\"aat_tool\":\"get_account\",\"hta\":{\"id\":9007199254740992},\"iat\":1704067500,\"jti\":\"019471f8-0000-7000-8000-000000000b07\"}",
+        "payload_jcs_canonical": true,
         "header_b64": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ",
-        "payload_b64": "eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTN9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIwNyJ9",
-        "signing_input": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTN9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIwNyJ9",
-        "signing_input_sha256_b64u": "o7qyQrJk1bGdYgWywcZk94do20CL08O6rpr5gcUazKY",
-        "signature_b64": "p9xQ0hAo6UHGDLCIzU2sJPX_BJuUkLRCjl_vWUFYTCDAl6nQ-sXFuoL0y3eQ7-XWAdk4Sp8bMEakudtw3019DA",
-        "compact": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTN9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIwNyJ9.p9xQ0hAo6UHGDLCIzU2sJPX_BJuUkLRCjl_vWUFYTCDAl6nQ-sXFuoL0y3eQ7-XWAdk4Sp8bMEakudtw3019DA",
+        "payload_b64": "eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIwNyJ9",
+        "signing_input": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIwNyJ9",
+        "signing_input_sha256_b64u": "CN4hyhKHHsRE_IQ0ECzSvC7X15XR33yWKjung6ETCdQ",
+        "signature_b64": "4fJEH6eQcu2yxXmNOKjYhi3sVT21yaOH3U8Pbx7Afmg8_5oMNABa3N4BsV5rwpK5FJXojTdQ6H3r_Chty0LGDQ",
+        "compact": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIwNyJ9.4fJEH6eQcu2yxXmNOKjYhi3sVT21yaOH3U8Pbx7Afmg8_5oMNABa3N4BsV5rwpK5FJXojTdQ6H3r_Chty0LGDQ",
         "signer": "orchestrator"
       },
       "presentation": {
         "aat_chain": [
           "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7ImdldF9hY2NvdW50Ijp7ImlkIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjE4In0.Dnwdo8rKPqbcy9J2HeK5ZZRH7tbfBS2GDr06AeJEWa_fbNR5bDK_fNsJNco5hozDfS0ByhL9oruaZtxlG3I5Aw"
         ],
-        "aat_pop": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTN9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIwNyJ9.p9xQ0hAo6UHGDLCIzU2sJPX_BJuUkLRCjl_vWUFYTCDAl6nQ-sXFuoL0y3eQ7-XWAdk4Sp8bMEakudtw3019DA"
+        "aat_pop": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIwNyJ9.4fJEH6eQcu2yxXmNOKjYhi3sVT21yaOH3U8Pbx7Afmg8_5oMNABa3N4BsV5rwpK5FJXojTdQ6H3r_Chty0LGDQ"
       },
       "expected": {
         "verdict": "DENY",
@@ -6861,7 +6861,7 @@
       "id": "J.8.10",
       "title": "Argument whose double is exact but whose JCS form is another number",
       "cbor_twin": null,
-      "description": "id = 2^60 = 1152921504606846976. The double is exact, but JCS prints it with the shortest round-trip digits, 1152921504606847000, which denotes a different value, so the number is not admissible (Section 3.4). DENY at step 6b; exactness of the double is not the test.",
+      "description": "id = 2^60 = 1152921504606846976. The double is exact, but JCS prints it with the shortest round-trip digits, 1152921504606847000, which denotes a different value, so the number is not admissible (Section 3.4). DENY at step 6b; exactness of the double is not the test. The PoP's hta carries the JCS form, 1152921504606847000, so step 6b is the only fault.",
       "notes": [
         "Read the invocation from args_json with a parser that keeps every number's exact value; a parser that rounds to doubles cannot tell admissible from inadmissible numbers."
       ],
@@ -6933,25 +6933,25 @@
           "aat_hash": "W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc",
           "aat_tool": "get_account",
           "hta": {
-            "id": 1152921504606846976
+            "id": 1152921504606847000
           },
           "aat_aud": "https://tools.example.com"
         },
-        "payload_json": "{\"aat_aud\":\"https://tools.example.com\",\"aat_hash\":\"W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc\",\"aat_id\":\"019471f8-0000-7000-8000-000000000b18\",\"aat_tool\":\"get_account\",\"hta\":{\"id\":1152921504606846976},\"iat\":1704067500,\"jti\":\"019471f8-0000-7000-8000-00000003880a\"}",
-        "payload_jcs_canonical": false,
+        "payload_json": "{\"aat_aud\":\"https://tools.example.com\",\"aat_hash\":\"W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc\",\"aat_id\":\"019471f8-0000-7000-8000-000000000b18\",\"aat_tool\":\"get_account\",\"hta\":{\"id\":1152921504606847000},\"iat\":1704067500,\"jti\":\"019471f8-0000-7000-8000-00000003880a\"}",
+        "payload_jcs_canonical": true,
         "header_b64": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ",
-        "payload_b64": "eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjExNTI5MjE1MDQ2MDY4NDY5NzZ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwYSJ9",
-        "signing_input": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjExNTI5MjE1MDQ2MDY4NDY5NzZ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwYSJ9",
-        "signing_input_sha256_b64u": "uk5as3IET_hlsZDFC_itsZMkpPOTqWmMtW6s1urepSw",
-        "signature_b64": "RfKUpMuxSB1kaIqGmsrmi8sVAgN9YJqurCFpmtfWnWMP8rFByTd5E85IKPJ2W-Swpz5bQaw-XH5W6fWpPrJPDA",
-        "compact": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjExNTI5MjE1MDQ2MDY4NDY5NzZ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwYSJ9.RfKUpMuxSB1kaIqGmsrmi8sVAgN9YJqurCFpmtfWnWMP8rFByTd5E85IKPJ2W-Swpz5bQaw-XH5W6fWpPrJPDA",
+        "payload_b64": "eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjExNTI5MjE1MDQ2MDY4NDcwMDB9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwYSJ9",
+        "signing_input": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjExNTI5MjE1MDQ2MDY4NDcwMDB9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwYSJ9",
+        "signing_input_sha256_b64u": "81toeKFnXNzSLlgl8xFhkh8asXy2d--ECVAFsQOLYxE",
+        "signature_b64": "kdLwob_vnMQqsuapqCTXL7_tvqISmmKe5SBt8RivrR8S0ZPTLYJBqJ33xc6kSHyVR2ncUetqangyPUmKsQRIBQ",
+        "compact": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjExNTI5MjE1MDQ2MDY4NDcwMDB9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwYSJ9.kdLwob_vnMQqsuapqCTXL7_tvqISmmKe5SBt8RivrR8S0ZPTLYJBqJ33xc6kSHyVR2ncUetqangyPUmKsQRIBQ",
         "signer": "orchestrator"
       },
       "presentation": {
         "aat_chain": [
           "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7ImdldF9hY2NvdW50Ijp7ImlkIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjE4In0.Dnwdo8rKPqbcy9J2HeK5ZZRH7tbfBS2GDr06AeJEWa_fbNR5bDK_fNsJNco5hozDfS0ByhL9oruaZtxlG3I5Aw"
         ],
-        "aat_pop": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjExNTI5MjE1MDQ2MDY4NDY5NzZ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwYSJ9.RfKUpMuxSB1kaIqGmsrmi8sVAgN9YJqurCFpmtfWnWMP8rFByTd5E85IKPJ2W-Swpz5bQaw-XH5W6fWpPrJPDA"
+        "aat_pop": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjExNTI5MjE1MDQ2MDY4NDcwMDB9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwYSJ9.kdLwob_vnMQqsuapqCTXL7_tvqISmmKe5SBt8RivrR8S0ZPTLYJBqJ33xc6kSHyVR2ncUetqangyPUmKsQRIBQ"
       },
       "expected": {
         "verdict": "DENY",
@@ -7265,7 +7265,7 @@
       "id": "J.8.14",
       "title": "Argument with more precision than a double holds",
       "cbor_twin": null,
-      "description": "args_json writes id as 1.00000000000000001, the Section 3.4 example of an inadmissible number: JCS prints its double as 1. DENY at step 6b. The PoP carries the same digits.",
+      "description": "args_json writes id as 1.00000000000000001, the Section 3.4 example of an inadmissible number: JCS prints its double as 1. DENY at step 6b. The PoP's hta carries the JCS form, 1, so step 6b is the only fault.",
       "notes": [
         "Read the invocation from args_json with a parser that keeps every number's exact value; a parser that rounds to doubles cannot tell admissible from inadmissible numbers."
       ],
@@ -7331,31 +7331,31 @@
           "typ": "aat-pop+jwt"
         },
         "payload": {
-          "aat_aud": "https://tools.example.com",
-          "aat_hash": "W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc",
+          "jti": "019471f8-0000-7000-8000-00000003880e",
+          "iat": 1704067500,
           "aat_id": "019471f8-0000-7000-8000-000000000b18",
+          "aat_hash": "W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc",
           "aat_tool": "get_account",
           "hta": {
-            "id": 1.0
+            "id": 1
           },
-          "iat": 1704067500,
-          "jti": "019471f8-0000-7000-8000-00000003880e"
+          "aat_aud": "https://tools.example.com"
         },
-        "payload_json": "{\"aat_aud\":\"https://tools.example.com\",\"aat_hash\":\"W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc\",\"aat_id\":\"019471f8-0000-7000-8000-000000000b18\",\"aat_tool\":\"get_account\",\"hta\":{\"id\":1.00000000000000001},\"iat\":1704067500,\"jti\":\"019471f8-0000-7000-8000-00000003880e\"}",
-        "payload_jcs_canonical": false,
+        "payload_json": "{\"aat_aud\":\"https://tools.example.com\",\"aat_hash\":\"W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc\",\"aat_id\":\"019471f8-0000-7000-8000-000000000b18\",\"aat_tool\":\"get_account\",\"hta\":{\"id\":1},\"iat\":1704067500,\"jti\":\"019471f8-0000-7000-8000-00000003880e\"}",
+        "payload_jcs_canonical": true,
         "header_b64": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ",
-        "payload_b64": "eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjEuMDAwMDAwMDAwMDAwMDAwMDF9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwZSJ9",
-        "signing_input": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjEuMDAwMDAwMDAwMDAwMDAwMDF9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwZSJ9",
-        "signing_input_sha256_b64u": "AiP03Ee9Yfs0w7ViHlYgfAA0bgZNRUwLd8glcnPfU08",
-        "signature_b64": "lIPyO7VGX5AYB-ADxWhCl11SIz1v0GXcfVZWrY-LgFh8oeMGdKs4s2annHSOYbSiCrOgIATkAnIaF8XtdjvvCw",
-        "compact": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjEuMDAwMDAwMDAwMDAwMDAwMDF9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwZSJ9.lIPyO7VGX5AYB-ADxWhCl11SIz1v0GXcfVZWrY-LgFh8oeMGdKs4s2annHSOYbSiCrOgIATkAnIaF8XtdjvvCw",
+        "payload_b64": "eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjF9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwZSJ9",
+        "signing_input": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjF9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwZSJ9",
+        "signing_input_sha256_b64u": "gKLW5vxu7J_uGYePqnZGVSYDBhezkEp2kcSbz_cmsXo",
+        "signature_b64": "947PuU-H0DEw1iWFZCR9ssR2qUvKOCVRbEqc1_A_J-4GnO5c84rrJgoPlE6eFU5g08Yx7lzYkB2pIRctlmluAQ",
+        "compact": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjF9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwZSJ9.947PuU-H0DEw1iWFZCR9ssR2qUvKOCVRbEqc1_A_J-4GnO5c84rrJgoPlE6eFU5g08Yx7lzYkB2pIRctlmluAQ",
         "signer": "orchestrator"
       },
       "presentation": {
         "aat_chain": [
           "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7ImdldF9hY2NvdW50Ijp7ImlkIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjE4In0.Dnwdo8rKPqbcy9J2HeK5ZZRH7tbfBS2GDr06AeJEWa_fbNR5bDK_fNsJNco5hozDfS0ByhL9oruaZtxlG3I5Aw"
         ],
-        "aat_pop": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjEuMDAwMDAwMDAwMDAwMDAwMDF9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwZSJ9.lIPyO7VGX5AYB-ADxWhCl11SIz1v0GXcfVZWrY-LgFh8oeMGdKs4s2annHSOYbSiCrOgIATkAnIaF8XtdjvvCw"
+        "aat_pop": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjF9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwZSJ9.947PuU-H0DEw1iWFZCR9ssR2qUvKOCVRbEqc1_A_J-4GnO5c84rrJgoPlE6eFU5g08Yx7lzYkB2pIRctlmluAQ"
       },
       "expected": {
         "verdict": "DENY",
@@ -23385,6 +23385,107 @@
       "expected": {
         "verdict": "PERMIT",
         "step": null
+      }
+    },
+    {
+      "id": "J.20.17",
+      "title": "PoP hta number that does not survive the JCS round trip",
+      "cbor_twin": null,
+      "description": "The invocation passes id = 9007199254740992 (2^53), which is admissible. The PoP's hta writes id as 9007199254740993 (2^53 + 1), which rounds to the same double and so has the same JCS form; the canonical forms match, but the signed number is not admissible (Section 3.4), so step 7f denies.",
+      "notes": [
+        "Read the invocation from args_json with a parser that keeps every number's exact value; a parser that rounds to doubles cannot tell admissible from inadmissible numbers."
+      ],
+      "now": 1704067500,
+      "tool": "get_account",
+      "args": {
+        "id": 9007199254740992
+      },
+      "args_json": "{\"id\":9007199254740992}",
+      "policy": {},
+      "params": {},
+      "replay_state": null,
+      "chain": [
+        {
+          "header": {
+            "alg": "Ed25519",
+            "typ": "aat+jwt"
+          },
+          "payload": {
+            "jti": "019471f8-0000-7000-8000-000000000b18",
+            "iss": "https://auth.example.com",
+            "iat": 1704067200,
+            "exp": 1704070800,
+            "del_depth": 0,
+            "del_max_depth": 3,
+            "cnf": {
+              "jwk": {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+              }
+            },
+            "authorization_details": [
+              {
+                "type": "attenuating_agent_token",
+                "tools": {
+                  "get_account": {
+                    "id": {
+                      "constraint_type": "wildcard"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "payload_json": "{\"authorization_details\":[{\"tools\":{\"get_account\":{\"id\":{\"constraint_type\":\"wildcard\"}}},\"type\":\"attenuating_agent_token\"}],\"cnf\":{\"jwk\":{\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":\"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\"}},\"del_depth\":0,\"del_max_depth\":3,\"exp\":1704070800,\"iat\":1704067200,\"iss\":\"https://auth.example.com\",\"jti\":\"019471f8-0000-7000-8000-000000000b18\"}",
+          "payload_jcs_canonical": true,
+          "header_b64": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9",
+          "payload_b64": "eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7ImdldF9hY2NvdW50Ijp7ImlkIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjE4In0",
+          "signing_input": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7ImdldF9hY2NvdW50Ijp7ImlkIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjE4In0",
+          "signing_input_sha256_b64u": "W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc",
+          "signature_b64": "Dnwdo8rKPqbcy9J2HeK5ZZRH7tbfBS2GDr06AeJEWa_fbNR5bDK_fNsJNco5hozDfS0ByhL9oruaZtxlG3I5Aw",
+          "compact": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7ImdldF9hY2NvdW50Ijp7ImlkIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjE4In0.Dnwdo8rKPqbcy9J2HeK5ZZRH7tbfBS2GDr06AeJEWa_fbNR5bDK_fNsJNco5hozDfS0ByhL9oruaZtxlG3I5Aw",
+          "signer": "control_plane"
+        }
+      ],
+      "chain_compact": [
+        "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7ImdldF9hY2NvdW50Ijp7ImlkIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjE4In0.Dnwdo8rKPqbcy9J2HeK5ZZRH7tbfBS2GDr06AeJEWa_fbNR5bDK_fNsJNco5hozDfS0ByhL9oruaZtxlG3I5Aw"
+      ],
+      "pop": {
+        "header": {
+          "alg": "Ed25519",
+          "typ": "aat-pop+jwt"
+        },
+        "payload": {
+          "aat_aud": "https://tools.example.com",
+          "aat_hash": "W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc",
+          "aat_id": "019471f8-0000-7000-8000-000000000b18",
+          "aat_tool": "get_account",
+          "hta": {
+            "id": 9007199254740993
+          },
+          "iat": 1704067500,
+          "jti": "019471f8-0000-7000-8000-000000039411"
+        },
+        "payload_json": "{\"aat_aud\":\"https://tools.example.com\",\"aat_hash\":\"W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc\",\"aat_id\":\"019471f8-0000-7000-8000-000000000b18\",\"aat_tool\":\"get_account\",\"hta\":{\"id\":9007199254740993},\"iat\":1704067500,\"jti\":\"019471f8-0000-7000-8000-000000039411\"}",
+        "payload_jcs_canonical": false,
+        "header_b64": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ",
+        "payload_b64": "eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTN9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzOTQxMSJ9",
+        "signing_input": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTN9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzOTQxMSJ9",
+        "signing_input_sha256_b64u": "M0Af03s3Cjme5YCGtYspooowTJPInxo8YYSmlX6V-Hc",
+        "signature_b64": "ASLLIhtMvnUCcHVISDUYU6XI_lxbsK9BARaOxDqdJcbHxg9btwbhHPyfkUv7djq4dk0HDZOW9KSqs_zqh9UiBA",
+        "compact": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTN9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzOTQxMSJ9.ASLLIhtMvnUCcHVISDUYU6XI_lxbsK9BARaOxDqdJcbHxg9btwbhHPyfkUv7djq4dk0HDZOW9KSqs_zqh9UiBA",
+        "signer": "orchestrator"
+      },
+      "presentation": {
+        "aat_chain": [
+          "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7ImdldF9hY2NvdW50Ijp7ImlkIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjE4In0.Dnwdo8rKPqbcy9J2HeK5ZZRH7tbfBS2GDr06AeJEWa_fbNR5bDK_fNsJNco5hozDfS0ByhL9oruaZtxlG3I5Aw"
+        ],
+        "aat_pop": "eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTN9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzOTQxMSJ9.ASLLIhtMvnUCcHVISDUYU6XI_lxbsK9BARaOxDqdJcbHxg9btwbhHPyfkUv7djq4dk0HDZOW9KSqs_zqh9UiBA"
+      },
+      "expected": {
+        "verdict": "DENY",
+        "step": "7f"
       }
     },
     {

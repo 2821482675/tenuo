@@ -1866,9 +1866,10 @@ Algorithm:
       (Sec 9.5), DENY.
    e. Verify pop_jwt.aat_tool equals tool using the exact-string
       matching rules in Section 3.3.1.
-   f. Verify pop_jwt.hta, when JCS-canonicalized, equals the
-      JCS-canonical form of the args map for this invocation. If the
-      canonical byte sequences differ, DENY.
+   f. Verify that every number in pop_jwt.hta, as written in the
+      PoP JWT, is admissible (Section 3.4), and that pop_jwt.hta,
+      when JCS-canonicalized, equals the JCS-canonical form of the
+      args map for this invocation. If either check fails, DENY.
    g. Verify pop_jwt.iat is within the clock tolerance
       window (Section 9.9). If outside the window, DENY.
    h. If this enforcement point requires a nonce (Sec 9.5),
@@ -2665,9 +2666,10 @@ that break -01 implementations:
   several parent clauses; a PoP `aat_aud` that does not identify the
   enforcement point always denies; MAX_DELEGATION_DEPTH is at least 8;
   NumericDate and depth values have no fraction or exponent; invocation
-  arguments are checked as written, including for duplicate member
-  names; `crit` must be a non-empty array of understood parameters and
-  `aud` a string or an array of strings; every AAT carries exactly one
+  arguments and the PoP's `hta` are checked as written, including for
+  duplicate member names and number admissibility; `crit` must be a
+  non-empty array of understood parameters and `aud` a string or an
+  array of strings; every AAT carries exactly one
   `attenuating_agent_token` entry. PoP payloads no longer need to be
   JCS-canonical.
 - Sections now follow the token lifecycle, repeated rules are

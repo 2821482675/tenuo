@@ -4,7 +4,7 @@
 
 ## Vector ids
 
-A vector's id is `J.<group>[.<n>]`, where the group is its topic (below). `cbor_twin`, where set, names the vector `A.x` in Tenuo's CBOR suite (`docs/spec/test-vectors.md`) that encodes the same scenario, with the same key seeds and timestamps. 29 of the 223 vectors have a twin; otherwise group numbers have no relation to the CBOR suite's section numbers.
+A vector's id is `J.<group>[.<n>]`, where the group is its topic (below). `cbor_twin`, where set, names the vector `A.x` in Tenuo's CBOR suite (`docs/spec/test-vectors.md`) that encodes the same scenario, with the same key seeds and timestamps. 29 of the 224 vectors have a twin; otherwise group numbers have no relation to the CBOR suite's section numbers.
 
 | Group | Topic | Vectors |
 |---|---|---|
@@ -27,7 +27,7 @@ A vector's id is `J.<group>[.<n>]`, where the group is its topic (below). `cbor_
 | J.17 | not_one_of, contains, subset and range attenuation | 8 |
 | J.18 | Composites across kinds | 2 |
 | J.19 | The Section 4.5 subsumption table (4p2, 4p4) | 15 |
-| J.20 | PoP JWT failures and replay (7b-7i) | 16 |
+| J.20 | PoP JWT failures and replay (7b-7i) | 17 |
 | J.21 | Root token claims (3b-3n) | 21 |
 | J.22 | Optional and unnamed arguments (4p2, 4p3, 6b) | 23 |
 | J.23 | Presentation size and parsing (1, 2a-2c, 3b) | 4 |
@@ -171,7 +171,7 @@ Vectors by expected step:
 | 7c | J.20.2, J.20.7, J.20.8, J.20.13, J.20.14 |
 | 7d | J.6.1, J.6.2, J.6.4 |
 | 7e | J.20.6 |
-| 7f | J.20.5, J.20.11 |
+| 7f | J.20.5, J.20.11, J.20.17 |
 | 7g | J.20.4, J.20.15 |
 | 7h | J.6.5, J.6.7 |
 | 7i | J.20.10 |
@@ -317,6 +317,7 @@ Vectors by expected step:
 | J.20.14 | PoP iat written with a fraction | — | DENY at step 7c |
 | J.20.15 | PoP iat beyond the clock window in the future | — | DENY at step 7g |
 | J.20.16 | PoP iat in the future, inside the clock window | — | PERMIT |
+| J.20.17 | PoP hta number that does not survive the JCS round trip | — | DENY at step 7f |
 | J.21.1 | Root token carries par_hash | — | DENY at step 3d |
 | J.21.2 | Root token del_depth is not 0 | — | DENY at step 3c |
 | J.21.3 | cnf.jwk contains private key material | — | DENY at step 3l |
@@ -3392,7 +3393,7 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 Root authorizes get_account with a wildcard id. The invocation passes id = 2^53 + 1, which rounds to the double 2^53; JCS prints that as 9007199254740992, a different value, so the number is not admissible (Section 3.4). Denied at step 6b.
 
-> The PoP payload carries the exact decimal digits of 2^53 + 1. A JCS implementation would serialize the value as 9007199254740992; the verdict does not depend on it, because step 6b denies before the PoP is compared.
+> The PoP's hta carries 9007199254740992, the JCS form of the argument, so the PoP is admissible and matches at step 7f; the argument's admissibility (step 6b) is the only fault. J.20.17 is the mirror case.
 
 **Invocation:** tool `get_account`, args `{"id":9007199254740993}`, now = `1704067500`
 **Expected:** **DENY** at step 6b
@@ -3425,20 +3426,20 @@ Protected header (JCS):
 ```json
 {"alg":"Ed25519","typ":"aat-pop+jwt"}
 ```
-Payload (exact JSON, intentionally not JCS-canonical; this exact byte string is base64url-encoded):
+Payload (JCS; this exact byte string is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_hash":"W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc","aat_id":"019471f8-0000-7000-8000-000000000b18","aat_tool":"get_account","hta":{"id":9007199254740993},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000b07"}
+{"aat_aud":"https://tools.example.com","aat_hash":"W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc","aat_id":"019471f8-0000-7000-8000-000000000b18","aat_tool":"get_account","hta":{"id":9007199254740992},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000000b07"}
 ```
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTN9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIwNyJ9` |
-| SHA-256(signing input), base64url | `o7qyQrJk1bGdYgWywcZk94do20CL08O6rpr5gcUazKY` |
-| signature_b64 | `p9xQ0hAo6UHGDLCIzU2sJPX_BJuUkLRCjl_vWUFYTCDAl6nQ-sXFuoL0y3eQ7-XWAdk4Sp8bMEakudtw3019DA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIwNyJ9` |
+| SHA-256(signing input), base64url | `CN4hyhKHHsRE_IQ0ECzSvC7X15XR33yWKjung6ETCdQ` |
+| signature_b64 | `4fJEH6eQcu2yxXmNOKjYhi3sVT21yaOH3U8Pbx7Afmg8_5oMNABa3N4BsV5rwpK5FJXojTdQ6H3r_Chty0LGDQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTN9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIwNyJ9.p9xQ0hAo6UHGDLCIzU2sJPX_BJuUkLRCjl_vWUFYTCDAl6nQ-sXFuoL0y3eQ7-XWAdk4Sp8bMEakudtw3019DA
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTJ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIwNyJ9.4fJEH6eQcu2yxXmNOKjYhi3sVT21yaOH3U8Pbx7Afmg8_5oMNABa3N4BsV5rwpK5FJXojTdQ6H3r_Chty0LGDQ
 ```
 
 ---
@@ -3551,7 +3552,7 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.8.10 Argument whose double is exact but whose JCS form is another number
 
-id = 2^60 = 1152921504606846976. The double is exact, but JCS prints it with the shortest round-trip digits, 1152921504606847000, which denotes a different value, so the number is not admissible (Section 3.4). DENY at step 6b; exactness of the double is not the test.
+id = 2^60 = 1152921504606846976. The double is exact, but JCS prints it with the shortest round-trip digits, 1152921504606847000, which denotes a different value, so the number is not admissible (Section 3.4). DENY at step 6b; exactness of the double is not the test. The PoP's hta carries the JCS form, 1152921504606847000, so step 6b is the only fault.
 
 > Read the invocation from args_json with a parser that keeps every number's exact value; a parser that rounds to doubles cannot tell admissible from inadmissible numbers.
 
@@ -3586,20 +3587,20 @@ Protected header (JCS):
 ```json
 {"alg":"Ed25519","typ":"aat-pop+jwt"}
 ```
-Payload (exact JSON, intentionally not JCS-canonical; this exact byte string is base64url-encoded):
+Payload (JCS; this exact byte string is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_hash":"W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc","aat_id":"019471f8-0000-7000-8000-000000000b18","aat_tool":"get_account","hta":{"id":1152921504606846976},"iat":1704067500,"jti":"019471f8-0000-7000-8000-00000003880a"}
+{"aat_aud":"https://tools.example.com","aat_hash":"W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc","aat_id":"019471f8-0000-7000-8000-000000000b18","aat_tool":"get_account","hta":{"id":1152921504606847000},"iat":1704067500,"jti":"019471f8-0000-7000-8000-00000003880a"}
 ```
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjExNTI5MjE1MDQ2MDY4NDY5NzZ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwYSJ9` |
-| SHA-256(signing input), base64url | `uk5as3IET_hlsZDFC_itsZMkpPOTqWmMtW6s1urepSw` |
-| signature_b64 | `RfKUpMuxSB1kaIqGmsrmi8sVAgN9YJqurCFpmtfWnWMP8rFByTd5E85IKPJ2W-Swpz5bQaw-XH5W6fWpPrJPDA` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjExNTI5MjE1MDQ2MDY4NDcwMDB9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwYSJ9` |
+| SHA-256(signing input), base64url | `81toeKFnXNzSLlgl8xFhkh8asXy2d--ECVAFsQOLYxE` |
+| signature_b64 | `kdLwob_vnMQqsuapqCTXL7_tvqISmmKe5SBt8RivrR8S0ZPTLYJBqJ33xc6kSHyVR2ncUetqangyPUmKsQRIBQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjExNTI5MjE1MDQ2MDY4NDY5NzZ9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwYSJ9.RfKUpMuxSB1kaIqGmsrmi8sVAgN9YJqurCFpmtfWnWMP8rFByTd5E85IKPJ2W-Swpz5bQaw-XH5W6fWpPrJPDA
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjExNTI5MjE1MDQ2MDY4NDcwMDB9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwYSJ9.kdLwob_vnMQqsuapqCTXL7_tvqISmmKe5SBt8RivrR8S0ZPTLYJBqJ33xc6kSHyVR2ncUetqangyPUmKsQRIBQ
 ```
 
 ---
@@ -3771,7 +3772,7 @@ eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b
 
 ## J.8.14 Argument with more precision than a double holds
 
-args_json writes id as 1.00000000000000001, the Section 3.4 example of an inadmissible number: JCS prints its double as 1. DENY at step 6b. The PoP carries the same digits.
+args_json writes id as 1.00000000000000001, the Section 3.4 example of an inadmissible number: JCS prints its double as 1. DENY at step 6b. The PoP's hta carries the JCS form, 1, so step 6b is the only fault.
 
 > Read the invocation from args_json with a parser that keeps every number's exact value; a parser that rounds to doubles cannot tell admissible from inadmissible numbers.
 
@@ -3806,20 +3807,20 @@ Protected header (JCS):
 ```json
 {"alg":"Ed25519","typ":"aat-pop+jwt"}
 ```
-Payload (exact JSON, intentionally not JCS-canonical; this exact byte string is base64url-encoded):
+Payload (JCS; this exact byte string is base64url-encoded):
 ```json
-{"aat_aud":"https://tools.example.com","aat_hash":"W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc","aat_id":"019471f8-0000-7000-8000-000000000b18","aat_tool":"get_account","hta":{"id":1.00000000000000001},"iat":1704067500,"jti":"019471f8-0000-7000-8000-00000003880e"}
+{"aat_aud":"https://tools.example.com","aat_hash":"W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc","aat_id":"019471f8-0000-7000-8000-000000000b18","aat_tool":"get_account","hta":{"id":1},"iat":1704067500,"jti":"019471f8-0000-7000-8000-00000003880e"}
 ```
 | Field | Value |
 |---|---|
 | header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ` |
-| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjEuMDAwMDAwMDAwMDAwMDAwMDF9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwZSJ9` |
-| SHA-256(signing input), base64url | `AiP03Ee9Yfs0w7ViHlYgfAA0bgZNRUwLd8glcnPfU08` |
-| signature_b64 | `lIPyO7VGX5AYB-ADxWhCl11SIz1v0GXcfVZWrY-LgFh8oeMGdKs4s2annHSOYbSiCrOgIATkAnIaF8XtdjvvCw` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjF9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwZSJ9` |
+| SHA-256(signing input), base64url | `gKLW5vxu7J_uGYePqnZGVSYDBhezkEp2kcSbz_cmsXo` |
+| signature_b64 | `947PuU-H0DEw1iWFZCR9ssR2qUvKOCVRbEqc1_A_J-4GnO5c84rrJgoPlE6eFU5g08Yx7lzYkB2pIRctlmluAQ` |
 
 Compact JWS:
 ```
-eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjEuMDAwMDAwMDAwMDAwMDAwMDF9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwZSJ9.lIPyO7VGX5AYB-ADxWhCl11SIz1v0GXcfVZWrY-LgFh8oeMGdKs4s2annHSOYbSiCrOgIATkAnIaF8XtdjvvCw
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjF9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzODgwZSJ9.947PuU-H0DEw1iWFZCR9ssR2qUvKOCVRbEqc1_A_J-4GnO5c84rrJgoPlE6eFU5g08Yx7lzYkB2pIRctlmluAQ
 ```
 
 ---
@@ -10805,6 +10806,61 @@ Payload (JCS; this exact byte string is base64url-encoded):
 Compact JWS:
 ```
 eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiNkpRcEhfekNPRllnSy1GNEVqT3JPOXlzc2RsQTI0WWdtM0pSSDZzdElkayIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAxMiIsImFhdF90b29sIjoicmVhZF9maWxlIiwiaHRhIjp7InBhdGgiOiIvZGF0YS9xMy1yZXBvcnQucGRmIn0sImlhdCI6MTcwNDA2NzUyMCwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDM5NDEwIn0.FBlXSu8EU_WIWadcs8zTJOuX43meGklg-NtaanxUi1xjlPUo7Uk7Gu8ToDQf8W8xqRyMDpd5ckQgtqjlj88hBA
+```
+
+---
+
+## J.20.17 PoP hta number that does not survive the JCS round trip
+
+The invocation passes id = 9007199254740992 (2^53), which is admissible. The PoP's hta writes id as 9007199254740993 (2^53 + 1), which rounds to the same double and so has the same JCS form; the canonical forms match, but the signed number is not admissible (Section 3.4), so step 7f denies.
+
+> Read the invocation from args_json with a parser that keeps every number's exact value; a parser that rounds to doubles cannot tell admissible from inadmissible numbers.
+
+**Invocation:** tool `get_account`, args `{"id":9007199254740992}`, now = `1704067500`
+**Expected:** **DENY** at step 7f
+
+**Chain[0] (del_depth 0)** (signed by `control_plane`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat+jwt"}
+```
+Payload (JCS; this exact byte string is base64url-encoded):
+```json
+{"authorization_details":[{"tools":{"get_account":{"id":{"constraint_type":"wildcard"}}},"type":"attenuating_agent_token"}],"cnf":{"jwk":{"crv":"Ed25519","kty":"OKP","x":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"}},"del_depth":0,"del_max_depth":3,"exp":1704070800,"iat":1704067200,"iss":"https://auth.example.com","jti":"019471f8-0000-7000-8000-000000000b18"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9` |
+| payload_b64 | `eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7ImdldF9hY2NvdW50Ijp7ImlkIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjE4In0` |
+| SHA-256(signing input), base64url | `W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc` |
+| signature_b64 | `Dnwdo8rKPqbcy9J2HeK5ZZRH7tbfBS2GDr06AeJEWa_fbNR5bDK_fNsJNco5hozDfS0ByhL9oruaZtxlG3I5Aw` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0K2p3dCJ9.eyJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7InRvb2xzIjp7ImdldF9hY2NvdW50Ijp7ImlkIjp7ImNvbnN0cmFpbnRfdHlwZSI6IndpbGRjYXJkIn19fSwidHlwZSI6ImF0dGVudWF0aW5nX2FnZW50X3Rva2VuIn1dLCJjbmYiOnsiandrIjp7ImNydiI6IkVkMjU1MTkiLCJrdHkiOiJPS1AiLCJ4IjoiZ1RsM0RxaDlGMTlXbzFSbXcweC16TXVOaXBHMDdqZWlYZllQVzRfSnM1USJ9fSwiZGVsX2RlcHRoIjowLCJkZWxfbWF4X2RlcHRoIjozLCJleHAiOjE3MDQwNzA4MDAsImlhdCI6MTcwNDA2NzIwMCwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUuY29tIiwianRpIjoiMDE5NDcxZjgtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwYjE4In0.Dnwdo8rKPqbcy9J2HeK5ZZRH7tbfBS2GDr06AeJEWa_fbNR5bDK_fNsJNco5hozDfS0ByhL9oruaZtxlG3I5Aw
+```
+
+**PoP JWT** (signed by `orchestrator`)
+
+Protected header (JCS):
+```json
+{"alg":"Ed25519","typ":"aat-pop+jwt"}
+```
+Payload (exact JSON, intentionally not JCS-canonical; this exact byte string is base64url-encoded):
+```json
+{"aat_aud":"https://tools.example.com","aat_hash":"W_SX79E9HjpX0Olz1ru7ufykbHumq0y_5Rh36j4SwIc","aat_id":"019471f8-0000-7000-8000-000000000b18","aat_tool":"get_account","hta":{"id":9007199254740993},"iat":1704067500,"jti":"019471f8-0000-7000-8000-000000039411"}
+```
+| Field | Value |
+|---|---|
+| header_b64 | `eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ` |
+| payload_b64 | `eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTN9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzOTQxMSJ9` |
+| SHA-256(signing input), base64url | `M0Af03s3Cjme5YCGtYspooowTJPInxo8YYSmlX6V-Hc` |
+| signature_b64 | `ASLLIhtMvnUCcHVISDUYU6XI_lxbsK9BARaOxDqdJcbHxg9btwbhHPyfkUv7djq4dk0HDZOW9KSqs_zqh9UiBA` |
+
+Compact JWS:
+```
+eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiYWF0LXBvcCtqd3QifQ.eyJhYXRfYXVkIjoiaHR0cHM6Ly90b29scy5leGFtcGxlLmNvbSIsImFhdF9oYXNoIjoiV19TWDc5RTlIanBYME9sejFydTd1ZnlrYkh1bXEweV81UmgzNmo0U3dJYyIsImFhdF9pZCI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMGIxOCIsImFhdF90b29sIjoiZ2V0X2FjY291bnQiLCJodGEiOnsiaWQiOjkwMDcxOTkyNTQ3NDA5OTN9LCJpYXQiOjE3MDQwNjc1MDAsImp0aSI6IjAxOTQ3MWY4LTAwMDAtNzAwMC04MDAwLTAwMDAwMDAzOTQxMSJ9.ASLLIhtMvnUCcHVISDUYU6XI_lxbsK9BARaOxDqdJcbHxg9btwbhHPyfkUv7djq4dk0HDZOW9KSqs_zqh9UiBA
 ```
 
 ---
