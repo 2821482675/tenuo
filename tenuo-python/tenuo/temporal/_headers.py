@@ -83,7 +83,7 @@ def tenuo_headers(
 
     warrant, parents = split_presented_warrant(warrant, warrant_chain)
     warrant_bytes = bytes(warrant.to_bytes())
-    if parents and bytes(parents[-1].to_bytes()) == warrant_bytes:
+    if parents and any(bytes(parent.to_bytes()) == warrant_bytes for parent in parents):
         raise TenuoContextError(
             "tenuo_headers: warrant_chain lists parent warrants only; do not include the leaf warrant."
         )

@@ -2122,8 +2122,9 @@ def test_tenuo_headers_rejects_leaf_inside_warrant_chain():
     from tenuo.temporal.exceptions import TenuoContextError
 
     root, leaf = _delegated_start_chain()
-    with pytest.raises(TenuoContextError, match="parent warrants only"):
-        tenuo_headers(leaf, "agent1", warrant_chain=[root, leaf])
+    for malformed_chain in ([root, leaf], [leaf, root]):
+        with pytest.raises(TenuoContextError, match="parent warrants only"):
+            tenuo_headers(leaf, "agent1", warrant_chain=malformed_chain)
 
 
 def test_start_workflow_authorized_binds_warrant_chain():
