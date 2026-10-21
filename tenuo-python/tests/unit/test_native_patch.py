@@ -4,6 +4,7 @@ import pytest
 
 from tenuo import _native_patch
 from tenuo._native_patch import native_original, patch_native
+from tenuo.bound_warrant import BoundWarrant
 
 
 class _Native:
@@ -33,6 +34,18 @@ def test_host_replaces_patch_installed_by_sandbox_copy(cls, monkeypatch):
     monkeypatch.setattr(_native_patch, "_in_workflow_sandbox", lambda: False)
     patch_native(cls, "bind", _host)
     assert cls.bind is _host
+
+
+def test_sandbox_first_bind_keeps_public_signature(cls, monkeypatch):
+    """The first patch must accept every public ``Warrant.bind`` argument."""
+    monkeypatch.setattr(_native_patch, "_in_workflow_sandbox", lambda: True)
+    patch_native(cls, "bind", BoundWarrant.bind_warrant, if_missing=True)
+
+    roots = [object()]
+    bound = cls().bind(object(), trusted_roots=roots)
+
+    assert isinstance(bound, BoundWarrant)
+    assert bound._trusted_roots is roots
 
 
 def test_if_missing_keeps_native_attribute(cls):
