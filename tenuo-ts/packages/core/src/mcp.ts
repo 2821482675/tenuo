@@ -11,7 +11,7 @@ import type {
 } from "./api.ts";
 import { AuthorizationDeniedError, TenuoConfigurationError, TenuoError } from "./errors.ts";
 import { collectReceipt, emitIsolatedReceipt } from "./receipts.ts";
-import { admitNonce, consumeApprovals } from "./replay.ts";
+import { admitNonce, consumeApprovals, snapshotApprovals } from "./replay.ts";
 import { nativeSession, type Session } from "./session.ts";
 import { loadWasm, type WasmContext, type WasmDecision } from "./wasm.ts";
 
@@ -88,6 +88,7 @@ export async function verifyPresented(
       `${label} needs { warrant, signature } from tenuo.present() or tenuo.mcp.attach()`,
     );
   }
+  const approvals = snapshotApprovals(envelope.approvals);
   // Capture once: replay admission and receipt callbacks may yield or mutate
   // the caller's object. Execution must use the exact snapshot verified here.
   const snapshot = captureArguments(args);
@@ -96,7 +97,7 @@ export async function verifyPresented(
     name,
     snapshot.json,
     envelope.signature,
-    envelope.approvals,
+    approvals,
     options?.allow,
     options?.requestId,
   );
@@ -109,7 +110,7 @@ export async function verifyPresented(
     // approvals themselves so a nonce store makes them one-use here too.
     await consumeApprovals(
       options?.nonceStore,
-      envelope.approvals,
+      approvals,
       receiptRequestHash(decision.receipt),
       name,
       options?.onNonceStoreError,

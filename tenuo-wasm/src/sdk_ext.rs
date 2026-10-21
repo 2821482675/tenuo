@@ -24,8 +24,7 @@ use wasm_bindgen::prelude::*;
 use crate::init_panic_hook;
 use crate::sdk::{
     constraint_from_expr, cv_to_json, error_field, js_to_args, map_code, parse_holder_secret,
-    parse_public_key_hex, parse_srl_bytes, signed_approval_from_text, to_js_value, SdkContext,
-    SdkSession,
+    parse_one_approval, parse_public_key_hex, parse_srl_bytes, to_js_value, SdkContext, SdkSession,
 };
 
 const DEFAULT_TTL_SECS: u64 = 300;
@@ -828,9 +827,9 @@ struct ApprovalInspectDto {
 
 /// Decode and check an approval envelope. Not authorization.
 #[wasm_bindgen(js_name = sdkInspectApproval)]
-pub fn sdk_inspect_approval(envelope: &str) -> Result<JsValue, JsError> {
+pub fn sdk_inspect_approval(envelope: JsValue) -> Result<JsValue, JsError> {
     init_panic_hook();
-    let signed = signed_approval_from_text(envelope).map_err(|e| JsError::new(&e))?;
+    let signed = parse_one_approval(&envelope).map_err(|e| JsError::new(&e))?;
     let approver = hex::encode(signed.approver_key.to_bytes());
     let now = Utc::now().timestamp();
     match signed.verify() {

@@ -46,8 +46,10 @@ export async function admitNonce(
 
 /**
  * Make approvals one-use: record every approval envelope that counts for
- * this call (valid signature, unexpired, and, when `requestHash` is known,
- * bound to this exact request). Run only after core allowed the call.
+ * this call (valid signature and, when `requestHash` is known, bound to this
+ * exact request). Run only after core allowed the call. Do not apply a second
+ * expiry check here: core intentionally accepts its configured clock-skew
+ * grace window, and an approval it accepted must still be consumed.
  *
  * Keys come from signed approval fields, so re-encoding an envelope (hex,
  * base64, bytes) does not make it fresh again.
@@ -66,7 +68,7 @@ export async function consumeApprovals(
   const keys = new Set<string>();
   for (const envelope of approvals as unknown[]) {
     const info = inspect(envelope);
-    if (info === undefined || !info.signature_valid || info.expired) {
+    if (!info.signature_valid) {
       continue;
     }
     if (expected !== undefined && info.request_hash.toLowerCase() !== expected) {
@@ -84,19 +86,27 @@ export async function consumeApprovals(
   }
 }
 
-function inspect(envelope: unknown): WasmApprovalInfo | undefined {
-  let text: string;
-  if (typeof envelope === "string") {
-    text = envelope;
-  } else if (envelope instanceof Uint8Array) {
-    text = Buffer.from(envelope).toString("base64");
-  } else {
-    return undefined;
+export function snapshotApprovals(approvals: unknown): unknown {
+  if (!Array.isArray(approvals)) {
+    return approvals;
+  }
+  return approvals.map((envelope) =>
+    envelope instanceof Uint8Array ? new Uint8Array(envelope) : envelope,
+  );
+}
+
+function inspect(envelope: unknown): WasmApprovalInfo {
+  if (typeof envelope !== "string" && !(envelope instanceof Uint8Array)) {
+    throw new TenuoConfigurationError("could not inspect an authorized approval for replay protection");
   }
   try {
-    return loadWasm().sdkInspectApproval(text);
-  } catch {
-    return undefined; // Core does not count an envelope it cannot decode.
+    return loadWasm().sdkInspectApproval(envelope);
+  } catch (error) {
+    const wrapped = new TenuoConfigurationError(
+      "could not inspect an authorized approval for replay protection",
+    );
+    wrapped.cause = error;
+    throw wrapped;
   }
 }
 

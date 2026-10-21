@@ -37,7 +37,7 @@ import type {
 import { parseConnectToken } from "./connect.ts";
 import { generateIdentity, identityFromKey } from "./identity.ts";
 import { createMcp, presentCall, verifyPresented, type Decide } from "./mcp.ts";
-import { consumeApprovals } from "./replay.ts";
+import { consumeApprovals, snapshotApprovals } from "./replay.ts";
 import { collectReceipt, emitIsolatedReceipt, inheritSessionCollector } from "./receipts.ts";
 import { createRuntime } from "./runtime.ts";
 import { AuthorizationDeniedError, ApprovalRequiredError, TenuoConfigurationError, TenuoError } from "./errors.ts";
@@ -427,11 +427,12 @@ class TenuoClient implements Tenuo {
       assertExecuteOptions(callOptions);
       const session = resolveSession(callOptions);
       const native = nativeSession(session);
+      const approvals = snapshotApprovals(approvalsFrom(callOptions));
       const decision = this.context.authorize(
         native,
         capability,
         args,
-        approvalsFrom(callOptions),
+        approvals,
         policy.allow,
         requestIdFrom(callOptions),
       );
@@ -440,7 +441,7 @@ class TenuoClient implements Tenuo {
         if (nonceStore !== undefined) {
           await consumeApprovals(
             nonceStore,
-            approvalsFrom(callOptions),
+            approvals,
             this.requestHash(native, capability, decision.args),
             capability,
             onNonceStoreError,
@@ -1253,10 +1254,9 @@ export function signApproval(
 
 /** Decode an approval envelope. Not authorization: the call path still decides. */
 export function inspectApproval(envelope: string | Uint8Array): ApprovalInfo {
-  const text = typeof envelope === "string" ? envelope : Buffer.from(envelope).toString("base64");
   let raw;
   try {
-    raw = loadWasm().sdkInspectApproval(text);
+    raw = loadWasm().sdkInspectApproval(envelope);
   } catch (error) {
     throw new TenuoConfigurationError(errorMessage(error));
   }

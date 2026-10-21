@@ -414,6 +414,8 @@ describe("approvals end to end", () => {
     expect(request.requiredApprovers).toHaveLength(2);
     const envelope = createTenuo.signApproval(request, approverA, { externalId: "alice@example.com" });
     const info = createTenuo.inspectApproval(envelope);
+    const bytesInfo = createTenuo.inspectApproval(new Uint8Array(Buffer.from(envelope, "base64")));
+    expect(bytesInfo).toEqual(info);
     expect(info).toMatchObject({
       signatureValid: true,
       expired: false,

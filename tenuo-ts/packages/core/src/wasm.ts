@@ -325,7 +325,7 @@ type Generated = {
     ttlSeconds?: number,
     warrantExpiresAt?: number,
   ): string;
-  sdkInspectApproval(envelope: string): WasmApprovalInfo;
+  sdkInspectApproval(envelope: string | Uint8Array): WasmApprovalInfo;
   sdkSignRevocationList(ids: string[], issuerSecret: Uint8Array): string;
   sdkSignRevocationListVersioned(ids: string[], version: number | undefined, issuerSecret: Uint8Array): string;
   sdkSignPublishedRevocationList(ids: string[], version: number, issuerSecret: Uint8Array): string;

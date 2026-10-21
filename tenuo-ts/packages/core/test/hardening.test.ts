@@ -88,8 +88,11 @@ describe("in-process approvals with a nonce store", () => {
       allow: { transfer: { amount: max(100_000) } },
       requireApproval: { approvers: [createTenuo.publicKeyFromHolderKey(approver)], min: 1, tools: ["transfer"] },
     });
-    const approve = (amount: number, externalId = "alice") =>
-      createTenuo.signApproval(tenuo.approvalRequest(session, "transfer", { amount }), approver, { externalId });
+    const approve = (amount: number, externalId = "alice", ttlSeconds?: number) =>
+      createTenuo.signApproval(tenuo.approvalRequest(session, "transfer", { amount }), approver, {
+        externalId,
+        ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
+      });
     return { tenuo, transfer, session, approve, runs: fx.runs };
   }
 
@@ -164,6 +167,41 @@ describe("in-process approvals with a nonce store", () => {
     });
 
     await transfer.execute(changing as { amount: number }, { session, approvals: [approval] });
+    await expect(
+      transfer.execute({ amount: 5000 }, { session, approvals: [approval] }),
+    ).rejects.toMatchObject({ code: "TENUO_INSUFFICIENT_APPROVALS" });
+    expect(runs).toEqual([{ amount: 5000 }]);
+  });
+
+  it("snapshots approval bytes before receipt callbacks can mutate caller input", async () => {
+    const { transfer, session, approve, runs } = gated(memoryNonceStore());
+    const approval = approve(5000);
+    const bytes = new Uint8Array(Buffer.from(approval, "base64"));
+    const approvals: Uint8Array[] = [bytes];
+
+    await transfer.execute(
+      { amount: 5000 },
+      {
+        session,
+        approvals,
+        onReceipt: () => {
+          approvals.length = 0;
+          bytes.fill(0);
+        },
+      },
+    );
+    await expect(
+      transfer.execute({ amount: 5000 }, { session, approvals: [approval] }),
+    ).rejects.toMatchObject({ code: "TENUO_INSUFFICIENT_APPROVALS" });
+    expect(runs).toEqual([{ amount: 5000 }]);
+  });
+
+  it("consumes approvals accepted during core's clock-skew grace window", async () => {
+    const { transfer, session, approve, runs } = gated(memoryNonceStore());
+    const approval = approve(5000, "alice", 1);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
+    await transfer.execute({ amount: 5000 }, { session, approvals: [approval] });
     await expect(
       transfer.execute({ amount: 5000 }, { session, approvals: [approval] }),
     ).rejects.toMatchObject({ code: "TENUO_INSUFFICIENT_APPROVALS" });
