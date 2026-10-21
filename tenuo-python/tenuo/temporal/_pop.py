@@ -23,41 +23,68 @@ from tenuo.temporal.exceptions import (
 
 logger = logging.getLogger("tenuo.temporal")
 
+WORKFLOW_NAMESPACE_ARG = "_workflow_namespace"
 WORKFLOW_ID_ARG = "_workflow_id"
-"""Reserved argument filled from Temporal, never from the caller.
+"""Reserved workflow-scope arguments filled from Temporal, never from the caller.
 
-When a warrant's capability constrains ``_workflow_id`` (for example
-``Exact("refund-order-123")`` or ``Pattern("refund-order-123*")``), the plugin
-adds the running workflow's ID to the arguments it signs and verifies for that
-tool. Capabilities that do not name it are unaffected.
+When a warrant's capability constrains both fields, the plugin adds the running
+workflow's namespace and ID to the arguments it signs and verifies for that
+tool. Capabilities that name neither field are unaffected. Naming only one is
+rejected because a workflow ID is unique only within its Temporal namespace.
 """
 
 
-def _add_workflow_id(
+def _add_workflow_scope(
     warrant: Any,
     tool_name: str,
     args: Dict[str, Any],
-    workflow_id: str,
+    workflow_namespace: Optional[str],
+    workflow_id: Optional[str],
 ) -> Dict[str, Any]:
-    """Return ``args`` plus ``_workflow_id`` if the warrant constrains it for this tool.
+    """Add the Temporal workflow identity when the warrant constrains it.
 
-    The value comes from Temporal (``workflow.info()`` when signing,
-    ``activity.info()`` when verifying), so an Activity argument may not carry
-    the reserved name itself.
+    Both values come from Temporal (``workflow.info()`` when signing and
+    ``activity.info()`` when verifying). Activity arguments may never use the
+    reserved names, even when workflow scoping is not enabled for the warrant.
     """
+    reserved_args = {WORKFLOW_NAMESPACE_ARG, WORKFLOW_ID_ARG}.intersection(args)
+    if reserved_args:
+        names = ", ".join(repr(name) for name in sorted(reserved_args))
+        raise TenuoContextError(
+            f"Activity argument name(s) {names} are reserved: the plugin fills "
+            "them from the running Temporal workflow"
+        )
+
     try:
         caps = warrant.capabilities
         # As core resolves a tool: its own capability, else the ``"*"`` one.
         fields = caps.get(tool_name, caps.get("*"))
     except Exception as exc:
         raise TenuoContextError(f"Cannot read the warrant's capabilities for {tool_name!r}") from exc
-    if not isinstance(fields, dict) or WORKFLOW_ID_ARG not in fields:
+
+    if not isinstance(fields, dict):
         return args
-    if WORKFLOW_ID_ARG in args:
+
+    has_namespace = WORKFLOW_NAMESPACE_ARG in fields
+    has_id = WORKFLOW_ID_ARG in fields
+    if not has_namespace and not has_id:
+        return args
+    if has_namespace != has_id:
         raise TenuoContextError(
-            f"Activity argument {WORKFLOW_ID_ARG!r} is reserved: the plugin fills it from the running workflow's ID"
+            f"Temporal workflow scoping for {tool_name!r} must constrain both "
+            f"{WORKFLOW_NAMESPACE_ARG!r} and {WORKFLOW_ID_ARG!r}; a workflow ID "
+            "is unique only within its namespace"
         )
-    return {**args, WORKFLOW_ID_ARG: workflow_id}
+    if not workflow_namespace or not workflow_id:
+        raise TenuoContextError(
+            f"Temporal did not provide a complete workflow identity for {tool_name!r}"
+        )
+
+    return {
+        **args,
+        WORKFLOW_NAMESPACE_ARG: workflow_namespace,
+        WORKFLOW_ID_ARG: workflow_id,
+    }
 
 
 def _args_dict_uses_only_positional_fallback_keys(args_dict: Dict[str, Any]) -> bool:

@@ -45,7 +45,7 @@ from tenuo.temporal._headers import (
 )
 from tenuo.temporal._observability import TemporalAuditEvent
 from tenuo.temporal._pop import (
-    _add_workflow_id,
+    _add_workflow_scope,
     _args_dict_uses_only_positional_fallback_keys,
     _args_to_dict_by_fn,
     _normalize_args_for_pop,
@@ -277,10 +277,16 @@ class _TenuoWorkflowOutboundInterceptor:
                         logger.warning(msg)
 
                     args_dict = _normalize_args_for_pop(args_dict)
-                    # The Activity's own argument names; ``_workflow_id`` is not one.
+                    # Only the Activity's own argument names go in this header;
+                    # the worker obtains the reserved workflow scope from Temporal.
                     arg_keys_csv = ",".join(args_dict.keys())
-                    args_dict = _add_workflow_id(
-                        warrant, pop_tool_name, args_dict, workflow.info().workflow_id
+                    workflow_info = workflow.info()
+                    args_dict = _add_workflow_scope(
+                        warrant,
+                        pop_tool_name,
+                        args_dict,
+                        workflow_info.namespace,
+                        workflow_info.workflow_id,
                     )
                     _prevalidate_args_against_warrant(warrant, pop_tool_name, args_dict)
 
@@ -1111,8 +1117,13 @@ class TenuoActivityInboundInterceptor:
 
         args = self._extract_arguments(input, headers)
         try:
-            # No workflow (a standalone Activity) matches no workflow constraint.
-            args = _add_workflow_id(warrant, tool_name, args, info.workflow_id or "")
+            args = _add_workflow_scope(
+                warrant,
+                tool_name,
+                args,
+                info.workflow_namespace,
+                info.workflow_id,
+            )
         except TenuoContextError as exc:
             self._emit_denial_event(
                 info=info,

@@ -613,8 +613,9 @@ This section covers the full threat model, trust boundaries, PoP windows, dedup,
 
 By default a warrant is scoped by its holder key, TTL and argument constraints,
 not by the workflow it was issued for: any workflow whose worker holds the
-holder key can use it until it expires. To limit a capability to one workflow,
-or a family of workflows, constrain the reserved `_workflow_id` argument:
+holder key can use it until it expires. To limit a capability to one logical
+workflow, or a family of workflows, constrain both parts of Temporal's workflow
+identity using the reserved `_workflow_namespace` and `_workflow_id` arguments:
 
 ```python
 warrant = (
@@ -624,6 +625,7 @@ warrant = (
         "issue_refund",
         order_id=Exact("order-123"),
         amount=Range(max=250),
+        _workflow_namespace=Exact("payments-prod"),
         _workflow_id=Exact("refund-order-123"),  # or Pattern("refund-order-123*")
     )
     .ttl(600)
@@ -631,11 +633,12 @@ warrant = (
 )
 ```
 
-For a capability that names `_workflow_id`, the outbound interceptor signs the
-running workflow's ID (`workflow.info().workflow_id`) and the activity
-interceptor verifies it against `activity.info().workflow_id`. Both come from
-Temporal; an activity argument with that name is rejected. Capabilities that
-don't name it behave exactly as before.
+For a capability that names both fields, the outbound interceptor signs the
+running workflow's namespace and ID from `workflow.info()`, and the activity
+interceptor verifies them against `activity.info()`. Both come from Temporal;
+activity arguments cannot use either reserved name. A capability that names
+only one field fails closed because workflow IDs are unique only within a
+namespace. Capabilities that name neither field behave exactly as before.
 
 - `Pattern("refund-order-123*")` admits child workflows and Schedule triggers
   whose IDs share the prefix. Attenuation can narrow it, e.g. to a child's
@@ -643,10 +646,10 @@ don't name it behave exactly as before.
 - It applies to activities. Child workflow starts, Nexus operations and signal or
   update guards don't read it.
 - The client that starts a workflow chooses its ID, so this keeps authority to a
-  named workflow and fails closed when headers reach the wrong one; it is not
-  proof of who started it. Who may start workflows is governed by Temporal
-  namespace access control, and a reject-duplicate ID reuse policy stops a
-  closed workflow's ID from being reused.
+  named logical workflow in one namespace and fails closed when headers reach
+  the wrong one; it is not proof of who started it. Who may start workflows is
+  governed by Temporal namespace access control, and a reject-duplicate ID reuse
+  policy stops a closed workflow's ID from being reused.
 
 ### Clock skew and PoP time windows
 
