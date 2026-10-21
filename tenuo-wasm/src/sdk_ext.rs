@@ -816,6 +816,7 @@ pub fn sdk_sign_approval_for_request(
 struct ApprovalInspectDto {
     approver_public_key: String,
     request_hash: String,
+    nonce: String,
     external_id: String,
     approved_at: i64,
     expires_at: i64,
@@ -836,6 +837,7 @@ pub fn sdk_inspect_approval(envelope: &str) -> Result<JsValue, JsError> {
         Ok(payload) => Ok(to_js_value(&ApprovalInspectDto {
             approver_public_key: approver,
             request_hash: hex::encode(payload.request_hash),
+            nonce: hex::encode(payload.nonce),
             external_id: payload.external_id,
             approved_at: payload.approved_at as i64,
             expires_at: payload.expires_at as i64,
@@ -846,6 +848,7 @@ pub fn sdk_inspect_approval(envelope: &str) -> Result<JsValue, JsError> {
         Err(e) => Ok(to_js_value(&ApprovalInspectDto {
             approver_public_key: approver,
             request_hash: String::new(),
+            nonce: String::new(),
             external_id: String::new(),
             approved_at: 0,
             expires_at: 0,

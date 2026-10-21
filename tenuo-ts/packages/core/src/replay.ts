@@ -106,9 +106,7 @@ function approvalKey(info: WasmApprovalInfo): string {
       JSON.stringify([
         info.approver_public_key.toLowerCase(),
         info.request_hash.toLowerCase(),
-        info.external_id,
-        info.approved_at,
-        info.expires_at,
+        info.nonce.toLowerCase(),
       ]),
     )
     .digest("hex");

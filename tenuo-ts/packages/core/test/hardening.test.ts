@@ -128,6 +128,29 @@ describe("in-process approvals with a nonce store", () => {
     expect(runs).toHaveLength(2);
   });
 
+  it("does not collide independent approvals signed in the same second", async () => {
+    const { transfer, session, approve, runs } = gated(memoryNonceStore());
+    let first = "";
+    let second = "";
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      first = approve(5000, "alice");
+      second = approve(5000, "alice");
+      if (
+        createTenuo.inspectApproval(first).approvedAt === createTenuo.inspectApproval(second).approvedAt
+      ) {
+        break;
+      }
+    }
+    expect(createTenuo.inspectApproval(first).approvedAt).toBe(
+      createTenuo.inspectApproval(second).approvedAt,
+    );
+    expect(second).not.toBe(first);
+
+    await transfer.execute({ amount: 5000 }, { session, approvals: [first] });
+    await transfer.execute({ amount: 5000 }, { session, approvals: [second] });
+    expect(runs).toHaveLength(2);
+  });
+
   it("a denied call does not consume the approval", async () => {
     const store = memoryNonceStore();
     const { transfer, session, approve, runs } = gated(store);

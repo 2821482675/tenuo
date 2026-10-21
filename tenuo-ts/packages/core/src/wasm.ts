@@ -208,6 +208,7 @@ export type WasmAttestation = {
 export type WasmApprovalInfo = {
   approver_public_key: string;
   request_hash: string;
+  nonce: string;
   external_id: string;
   approved_at: number;
   expires_at: number;
