@@ -2618,14 +2618,15 @@ at the time of submission, per the practice described in {{RFC7942}}.
 
 ## Reference Implementation
 
-Tenuo provides a reference implementation of this specification. The chain
-verification algorithm (Section 8) and token derivation procedure
-(Section 6.2) are both implemented. Tenuo also includes an
-implementation-specific CBOR/COSE wire representation, with Ed25519
-signatures carried in COSE_Sign1 structures. That implementation
-experience supports the format independence of the core model,
-but does not define a fully interoperable CWT profile; the CWT profile
-is deferred as described in Appendix D.
+Tenuo implements the attenuation model of this document (the Section 4
+invariants and Section 4.5 subsumption, chain verification, and
+holder-bound proof of possession) in its production authorization
+engine, which encodes tokens in CBOR with its own signed envelope. That
+implementation experience supports the format independence of the core
+model, but does not define an interoperable CWT profile; the CWT profile
+is deferred as described in Appendix D. A JWS implementation of -02 is
+in progress; its results against the published vectors will be reported
+here.
 
 Randomized property-based tests of the reference implementation check
 monotonicity of the attenuation invariants over generated constraint

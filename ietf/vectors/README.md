@@ -7,7 +7,7 @@ Byte-exact test vectors for the JWS profile of
 |---|---|
 | `gen_vectors.py` | Generator. Builds every vector and re-verifies it with its own implementation of the §8 algorithm before writing; that implementation shares no code with Tenuo. |
 | `aat-jws-vectors.md` | Human-readable rendering of the suite, kept next to the draft. |
-| [`../../tests/vectors/aat-jws-vectors.json`](../../tests/vectors/aat-jws-vectors.json) | Machine-readable suite with expected verdict and cited §8 step. The verdict is normative; the step follows §8's order and can differ where §8 permits reordering, so harnesses compare verdicts. Each vector also carries its `presentation` object (§7.4: `aat_chain`, `aat_pop`). |
+| [`../../tests/vectors/aat-jws-vectors.json`](../../tests/vectors/aat-jws-vectors.json) | Machine-readable suite with expected verdict and cited §8 step. The expected verdict follows the -02 text; the step follows §8's order and can differ where §8 permits reordering, so harnesses compare verdicts. Each vector also carries its `presentation` object (§7.4: `aat_chain`, `aat_pop`). |
 
 Both output files are generated. Do not edit them by hand; change the generator
 and regenerate.
@@ -90,5 +90,6 @@ are not JCS, same-key derivation, an `aud` array, and boundary values.
   own vector set.
 - Stateful replay vectors include the accepted PoP `jti` set before and after
   verification. Step 7i records a `jti` only after every earlier check passes.
-- Draft-01 implementations will disagree on `typ`, audience mismatch handling, and the
-  two `all` clause-reuse cases (`J.15.3`, `J.15.4`). Those encode -02 changes.
+- These vectors follow the -02 text. Tokens use `alg` `Ed25519` (RFC 9864)
+  rather than -01's `EdDSA`, so an unmodified -01 verifier rejects nearly
+  every vector; Appendix F of the draft lists the other verdict changes.
