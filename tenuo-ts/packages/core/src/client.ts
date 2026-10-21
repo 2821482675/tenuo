@@ -441,7 +441,7 @@ class TenuoClient implements Tenuo {
           await consumeApprovals(
             nonceStore,
             approvalsFrom(callOptions),
-            this.requestHash(native, capability, args),
+            this.requestHash(native, capability, decision.args),
             capability,
             onNonceStoreError,
           );

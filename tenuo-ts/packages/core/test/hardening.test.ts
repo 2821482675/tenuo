@@ -151,6 +151,25 @@ describe("in-process approvals with a nonce store", () => {
     expect(runs).toHaveLength(2);
   });
 
+  it("consumes the approval for the authorized argument snapshot", async () => {
+    const { transfer, session, approve, runs } = gated(memoryNonceStore());
+    const approval = approve(5000);
+    let reads = 0;
+    const changing = Object.defineProperty({}, "amount", {
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return reads === 1 ? 5000 : 6000;
+      },
+    });
+
+    await transfer.execute(changing as { amount: number }, { session, approvals: [approval] });
+    await expect(
+      transfer.execute({ amount: 5000 }, { session, approvals: [approval] }),
+    ).rejects.toMatchObject({ code: "TENUO_INSUFFICIENT_APPROVALS" });
+    expect(runs).toEqual([{ amount: 5000 }]);
+  });
+
   it("a denied call does not consume the approval", async () => {
     const store = memoryNonceStore();
     const { transfer, session, approve, runs } = gated(store);
