@@ -21,6 +21,8 @@ at record time; see ``test_temporal_live.py`` for that coverage.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import uuid
 from datetime import timedelta
 
@@ -477,9 +479,12 @@ async def test_dropped_signal_is_audited_once_and_not_on_replay():
     from tenuo.temporal import TenuoMetrics
 
     events = []
+    delivered = threading.Event()
 
     def raising_callback(event):
+        assert not workflow.in_workflow()
         events.append(event)
+        delivered.set()
         raise RuntimeError("audit sink down")
 
     metrics = TenuoMetrics(prefix=f"sigdrop_{uuid.uuid4().hex[:8]}")
@@ -511,6 +516,7 @@ async def test_dropped_signal_is_audited_once_and_not_on_replay():
             await handle.signal(SignalDropWorkflow.off_list)
             await handle.signal(SignalDropWorkflow.finish)
             assert await handle.result() == "finished"
+            assert await asyncio.to_thread(delivered.wait, 2)
             history = await handle.fetch_history()
 
     assert [(e.decision, e.tool, e.warrant_id) for e in events] == [

@@ -43,7 +43,10 @@ from tenuo.temporal._headers import (
     _extract_warrant_from_headers,
     _validate_chain_ends_with_warrant,
 )
-from tenuo.temporal._observability import TemporalAuditEvent
+from tenuo.temporal._observability import (
+    TemporalAuditEvent,
+    _install_dropped_signal_audit_dispatcher,
+)
 from tenuo.temporal._pop import (
     _add_workflow_scope,
     _args_dict_uses_only_positional_fallback_keys,
@@ -436,10 +439,17 @@ def _record_dropped_signal(config: "TenuoPluginConfig", tool: str, warrant_id: s
             timestamp=workflow.now(),
             tenuo_version=__version__,
         )
-        try:
-            callback(event)
-        except Exception:
-            logger.error("Audit callback failed for dropped %s", tool, exc_info=True)
+        dispatcher = getattr(config, "_dropped_signal_audit_dispatcher", None)
+        if dispatcher is None:
+            # Configuring the callback after worker construction is unsupported;
+            # never fall back to invoking arbitrary user code in the sandbox.
+            logger.error(
+                "Dropped-signal audit dispatcher is not initialized; event lost "
+                "for %s. Configure audit_callback before constructing the worker.",
+                tool,
+            )
+        else:
+            dispatcher.submit(callback, event)
 
 
 class _TenuoWorkflowInboundInterceptor:
@@ -708,6 +718,8 @@ class TenuoWorkerInterceptor(_TemporalWorkerInterceptor):
             config.control_plane = get_or_create()
         self._config = config
         self._version = self._get_version()
+        if config.audit_callback is not None and config.audit_deny:
+            _install_dropped_signal_audit_dispatcher(config)
 
         if task_queue:
             # Self-register so manual users (not using
