@@ -2378,15 +2378,9 @@ async def test_create_scheduled_workflow_carries_tenuo_headers_not_warrant_memo(
 
     from temporalio.client import ScheduleIntervalSpec, ScheduleSpec
     from temporalio.converter import DataConverter
-    from tenuo_core import SigningKey, Warrant
     from tenuo.temporal import create_scheduled_workflow_with_warrant
 
-    holder = SigningKey.generate()
-    warrant = Warrant.issue(
-        holder,
-        capabilities={"read_file": {}},
-        holder=holder.public_key,
-    )
+    root, warrant = _delegated_start_chain()
     client = MagicMock()
     client.data_converter = DataConverter.default
     client.namespace = "default"
@@ -2403,12 +2397,17 @@ async def test_create_scheduled_workflow_carries_tenuo_headers_not_warrant_memo(
         ),
         workflow_args=["tenant-a"],
         memo={"purpose": "nightly report"},
+        warrant_chain=[root],
     )
 
     assert result == "schedule-handle"
     schedule = client.create_schedule.await_args.args[1]
     assert schedule.action.headers[TENUO_KEY_ID_HEADER].data == b"report-agent"
     assert TENUO_WARRANT_HEADER in schedule.action.headers
+    assert _decoded_chain_header(schedule.action.headers[TENUO_CHAIN_HEADER].data) == [
+        bytes(root.to_bytes()),
+        bytes(warrant.to_bytes()),
+    ]
     assert schedule.action.memo == {"purpose": "nightly report"}
     assert "tenuo_warrant" not in schedule.action.memo
     assert schedule.action.args
@@ -2420,6 +2419,10 @@ async def test_create_scheduled_workflow_carries_tenuo_headers_not_warrant_memo(
     start = wire_action.start_workflow
     assert start.header.fields[TENUO_KEY_ID_HEADER].data == b"report-agent"
     assert TENUO_WARRANT_HEADER in start.header.fields
+    assert _decoded_chain_header(start.header.fields[TENUO_CHAIN_HEADER].data) == [
+        bytes(root.to_bytes()),
+        bytes(warrant.to_bytes()),
+    ]
 
 
 @pytest.mark.asyncio
