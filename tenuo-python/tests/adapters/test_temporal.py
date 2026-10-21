@@ -10,6 +10,7 @@ import base64
 import contextlib
 import gzip
 import os
+import queue
 import threading
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -5237,11 +5238,20 @@ class TestSignalAndUpdateRuntimeDenial:
     def test_dropped_signals_share_one_metric_key(self):
         """The sender picks signal names, so they must not become metric labels."""
         from tenuo.temporal import TenuoMetrics
+        from tenuo.temporal._observability import _install_dropped_signal_audit_dispatcher
 
         inbound, _, cfg, wf_id = self._stub_inbound(authorized_signals=["add"])
         cfg.metrics = TenuoMetrics(prefix="sigdrop_unit")
         events = []
-        cfg.audit_callback = events.append
+        delivered = threading.Event()
+
+        def capture(event):
+            events.append(event)
+            if len(events) == 2:
+                delivered.set()
+
+        cfg.audit_callback = capture
+        _install_dropped_signal_audit_dispatcher(cfg)
         try:
             with patch("temporalio.workflow.info", return_value=self._fake_wf_info(wf_id)), \
                     patch("temporalio.workflow.unsafe.is_replaying", return_value=False), \
@@ -5254,8 +5264,62 @@ class TestSignalAndUpdateRuntimeDenial:
                     loop.close()
         finally:
             self._cleanup(wf_id)
+        assert delivered.wait(1)
         assert list(cfg.metrics.get_stats()["denied"].values()) == [2]
         assert [e.tool for e in events] == ["signal:drop_a", "signal:drop_b"]
+
+    def test_saturated_audit_queue_never_logs_on_workflow_thread(self):
+        """A blocking logging handler cannot stall queue-full submission."""
+        from tenuo.temporal._observability import _DroppedSignalAuditDispatcher
+
+        event = TemporalAuditEvent(
+            workflow_id="wf",
+            workflow_type="SignalWorkflow",
+            workflow_run_id="run",
+            activity_name="",
+            activity_id="",
+            task_queue="queue",
+            decision="DENY",
+            tool="signal:blocked",
+            arguments={},
+            warrant_id="<no-warrant>",
+            warrant_expires_at=None,
+            warrant_capabilities=[],
+        )
+        dispatcher = object.__new__(_DroppedSignalAuditDispatcher)
+        dispatcher._queue = queue.Queue(maxsize=1)
+        dispatcher._queue.put_nowait((lambda _event: None, event))
+        dispatcher._overflow_lock = threading.Lock()
+        dispatcher._overflow_count = 0
+
+        logger_entered = threading.Event()
+        release_logger = threading.Event()
+        submit_finished = threading.Event()
+        result = []
+
+        def blocking_logger(*_args, **_kwargs):
+            logger_entered.set()
+            release_logger.wait(2)
+
+        def submit():
+            result.append(dispatcher.submit(lambda _event: None, event))
+            submit_finished.set()
+
+        with patch(
+            "tenuo.temporal._observability.logger.error",
+            side_effect=blocking_logger,
+        ):
+            thread = threading.Thread(target=submit)
+            thread.start()
+            try:
+                assert submit_finished.wait(0.5)
+            finally:
+                release_logger.set()
+                thread.join(timeout=2)
+
+        assert not logger_entered.is_set()
+        assert result == [False]
+        assert dispatcher._overflow_count == 1
 
     def test_signal_allowlist_applies_before_run_registration(self, caplog):
         inbound, nxt, run_id = self._unregistered_inbound(authorized_signals=["add"])

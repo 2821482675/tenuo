@@ -102,11 +102,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TemporalConstraintViolation`, which the plugin registers as a workflow
   failure, so anyone who could signal the workflow could end the run. The
   signal is now logged and dropped and the run continues.
-- **A dropped Temporal signal is now audited.** It emits one DENY
-  `TemporalAuditEvent` (`tool="signal:<name>"`) and increments the denied
-  metric under the fixed label `signal:<unlisted>`, so senders cannot grow
-  metric cardinality. Neither is emitted again on replay, and a raising callback or metric
-  does not change the drop.
+- **Dropped Temporal signal audit callbacks are sandbox-safe.** Workflow code
+  now writes the DENY event to a bounded, non-blocking worker queue, and a
+  daemon dispatcher invokes `audit_callback` outside the Temporal sandbox.
+  This lets normal sinks perform I/O without blocking the workflow thread.
+  Delivery is best-effort and replay-suppressed; callback failures are logged,
+  while queue overflows are counted inline and reported by the dispatcher so
+  logging handlers never run on the workflow thread. The denied metric retains
+  its fixed `signal:<unlisted>` label.
 - **MCP: `MCPVerifier(config=...)` is closed-world.** With a
   `CompiledMcpConfig`, arguments no extraction rule read (`follow_symlinks`,
   a nested `query.where`) reached the tool unchecked, and a config `default`
