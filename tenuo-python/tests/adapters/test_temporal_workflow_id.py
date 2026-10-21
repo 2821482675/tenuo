@@ -277,6 +277,45 @@ def test_an_activity_argument_cannot_supply_a_reserved_name(fn, reserved_value):
         )
 
 
+def test_header_alias_cannot_hide_a_reserved_worker_parameter():
+    s = Setup(Exact("refund-order-123"))
+    headers = s.schedule("refund-order-123", fn=issue_refund)
+
+    with pytest.raises(ApplicationError, match="reserved"):
+        s.execute(
+            headers,
+            "refund-order-123",
+            fn=refund_with_reserved_name,
+            args=("order-123", 25),
+        )
+
+
+def test_positional_fallback_cannot_hide_a_reserved_worker_parameter():
+    s = Setup()
+    s.warrant = (
+        Warrant.mint_builder()
+        .holder(s.holder.public_key)
+        .capability(
+            "issue_refund",
+            arg0=Exact("order-123"),
+            arg1=Range(min=0, max=100),
+            _workflow_namespace=Exact("payments-prod"),
+            _workflow_id=Exact("refund-order-123"),
+        )
+        .ttl(600)
+        .mint(s.issuer)
+    )
+    headers = s.schedule("refund-order-123", fn=None)
+
+    with pytest.raises(ApplicationError, match="reserved"):
+        s.execute(
+            headers,
+            "refund-order-123",
+            fn=refund_with_reserved_namespace,
+            args=("order-123", 25),
+        )
+
+
 @pytest.mark.parametrize("field", ["_workflow_namespace", "_workflow_id"])
 def test_partial_workflow_scope_fails_closed(field):
     s = Setup()

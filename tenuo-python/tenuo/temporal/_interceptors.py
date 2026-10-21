@@ -51,6 +51,7 @@ from tenuo.temporal._pop import (
     _normalize_args_for_pop,
     _positional_pop_mismatch_message,
     _prevalidate_args_against_warrant,
+    _validate_no_reserved_workflow_parameters,
     _warrant_tool_has_non_empty_field_constraints,
 )
 from tenuo.temporal._state import (
@@ -255,6 +256,7 @@ class _TenuoWorkflowOutboundInterceptor:
                         activity_fn = self._config._activity_registry.get(activity_type)
 
                     raw_args = getattr(input, "args", ()) or ()
+                    _validate_no_reserved_workflow_parameters(activity_fn)
                     args_dict = _args_to_dict_by_fn(raw_args, activity_fn)
 
                     pop_tool_name = _warrant_tool_name_for_activity_type(
@@ -285,8 +287,8 @@ class _TenuoWorkflowOutboundInterceptor:
                         warrant,
                         pop_tool_name,
                         args_dict,
-                        workflow_info.namespace,
-                        workflow_info.workflow_id,
+                        getattr(workflow_info, "namespace", None),
+                        getattr(workflow_info, "workflow_id", None),
                     )
                     _prevalidate_args_against_warrant(warrant, pop_tool_name, args_dict)
 
@@ -1117,12 +1119,13 @@ class TenuoActivityInboundInterceptor:
 
         args = self._extract_arguments(input, headers)
         try:
+            _validate_no_reserved_workflow_parameters(activity_fn)
             args = _add_workflow_scope(
                 warrant,
                 tool_name,
                 args,
-                info.workflow_namespace,
-                info.workflow_id,
+                getattr(info, "workflow_namespace", None),
+                getattr(info, "workflow_id", None),
             )
         except TenuoContextError as exc:
             self._emit_denial_event(

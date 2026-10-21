@@ -25,6 +25,7 @@ logger = logging.getLogger("tenuo.temporal")
 
 WORKFLOW_NAMESPACE_ARG = "_workflow_namespace"
 WORKFLOW_ID_ARG = "_workflow_id"
+WORKFLOW_SCOPE_ARGS = frozenset({WORKFLOW_NAMESPACE_ARG, WORKFLOW_ID_ARG})
 """Reserved workflow-scope arguments filled from Temporal, never from the caller.
 
 When a warrant's capability constrains both fields, the plugin adds the running
@@ -47,7 +48,7 @@ def _add_workflow_scope(
     ``activity.info()`` when verifying). Activity arguments may never use the
     reserved names, even when workflow scoping is not enabled for the warrant.
     """
-    reserved_args = {WORKFLOW_NAMESPACE_ARG, WORKFLOW_ID_ARG}.intersection(args)
+    reserved_args = WORKFLOW_SCOPE_ARGS.intersection(args)
     if reserved_args:
         names = ", ".join(repr(name) for name in sorted(reserved_args))
         raise TenuoContextError(
@@ -85,6 +86,32 @@ def _add_workflow_scope(
         WORKFLOW_NAMESPACE_ARG: workflow_namespace,
         WORKFLOW_ID_ARG: workflow_id,
     }
+
+
+def _validate_no_reserved_workflow_parameters(activity_fn: Optional[Any]) -> None:
+    """Reject worker callables whose true signature uses reserved scope names.
+
+    Header-based argument names are authenticated but can differ from the
+    worker callable's parameter names. Inspect the callable independently so a
+    header alias cannot hide a caller-supplied reserved argument.
+    """
+    if activity_fn is None:
+        return
+
+    import inspect
+
+    try:
+        parameter_names = inspect.signature(activity_fn).parameters.keys()
+    except (TypeError, ValueError):
+        return
+
+    reserved_parameters = WORKFLOW_SCOPE_ARGS.intersection(parameter_names)
+    if reserved_parameters:
+        names = ", ".join(repr(name) for name in sorted(reserved_parameters))
+        raise TenuoContextError(
+            f"Activity parameter name(s) {names} are reserved: the plugin fills "
+            "them from the running Temporal workflow"
+        )
 
 
 def _args_dict_uses_only_positional_fallback_keys(args_dict: Dict[str, Any]) -> bool:
