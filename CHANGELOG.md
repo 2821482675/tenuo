@@ -39,9 +39,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and TypeScript callers are unchanged; Python still checks a path with
   `path_jail` and then reads it, on every platform, which is not a
   kernel-enforced open.
+- **One-use approvals for in-process TypeScript tools.**
+  `tenuo.tool(raw, { allow, nonceStore })` records each approval that an
+  allowed call carried, keyed on signed approval fields, before the tool body
+  runs; a second use is denied with `TENUO_INSUFFICIENT_APPROVALS`. The
+  `NonceStore` shape and the "Replay store unavailable" failure match the MCP
+  verify path, and `onNonceStoreError` is accepted as there.
+- **`Session.toWireString()` (TypeScript).** The whole warrant chain as one
+  string, the same CBOR stack encoding as `present().warrant`, for places
+  where only a single string fits. `sessionFromWire()` imports it.
+
+### Changed
+
+- **TypeScript: stricter inputs (beta API).** `tenuo.session({ tools })`
+  refuses a tool whose `allow` is `{}` unless the session's own `allow` names
+  that capability, because an empty capability in a warrant accepts any
+  arguments. `tenuo.tool()` requires `allow` and rejects unknown policy keys;
+  `session()` and `issue()` reject unknown keys; `execute()` rejects option
+  keys that look like a misspelled Tenuo option (other keys still pass through
+  to the wrapped tool); `narrow()` rejects a `minApprovals` below the parent's
+  instead of ignoring it; `session({ ttlSeconds: 0 })` throws instead of
+  using the default lifetime; `sessionFromWire()` rejects a string that looks
+  like joined tokens with a pointer to `toWireString()`.
+- **TypeScript MCP verify consumes approvals.** With a `nonceStore`,
+  `mcp.verify()`, `mcp.handler()`, and `@tenuo/mcp` also record the approvals
+  an allowed call carried, so a freshly signed PoP cannot reuse them.
 
 ### Fixed
 
+- **TypeScript `revoke()` errors carry a code.** An untrusted issuer reports
+  `TENUO_UNTRUSTED_ROOT`, a bad signature `TENUO_SIGNATURE_INVALID`, and a
+  malformed or rolled-back list `TENUO_CONFIGURATION`.
+- **TypeScript docs match behavior.** `narrow()` clamps a longer `ttlSeconds`
+  to the parent's expiry rather than rejecting it; `guardHandler()` enforces
+  the name it is given, not the name it is registered under; the npm package
+  READMEs no longer link to files outside the package.
+- **`UrlSafe` domain policy applies to every host.** `allow_domains` previously
+  constrained DNS hostnames but not public IP literals, so a warrant limited
+  to `api.example.com` could still authorize `https://8.8.8.8/`. Allow- and
+  deny-list patterns are now validated and canonicalized by the core, public
+  IPs require an explicit matching entry, and malformed patterns fail closed.
+  This is a v1 security erratum: existing allowlisted warrants become more
+  restrictive when evaluated by an updated verifier; their wire encoding is
+  unchanged.
+- **A2A audit timestamps are valid ISO 8601.** `AuditEvent.to_dict()` appended
+  `Z` to an aware UTC `isoformat()`, so audit records carried
+  `...+00:00Z`, which strict parsers reject. They now end in a single `Z`;
+  naive timestamps are taken as UTC and offset timestamps are converted to UTC.
+- **A2A `trust_delegated=False` also rejects WarrantStack chains.** The
+  setting was only honored for the legacy `X-Tenuo-Warrant-Chain` header. A
+  delegated chain packed into `X-Tenuo-Warrant` as a WarrantStack was accepted
+  regardless. Both transports now raise `UntrustedIssuerError` when the leaf's
+  issuer is not a trusted root and `trust_delegated=False`.
+- **A2A servers accept real warrants with default settings.**
+  `A2AServer(require_audience=...)` defaulted to `True` and required an `aud`
+  claim, but tenuo-core warrants have no audience field, so a server built
+  from the quickstart rejected every warrant with `AudienceMismatchError`.
+  The default is now `False`. Passing `require_audience=True` or setting
+  `TENUO_A2A_REQUIRE_AUDIENCE=true` behaves exactly as before.
 - **An off-list Temporal signal no longer ends the workflow.** With
   `authorized_signals` set, a signal name not on the list raised
   `TemporalConstraintViolation`, which the plugin registers as a workflow
@@ -97,6 +152,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   calls by choice as well as index, so `n>1` streams can't mix calls, and
   joins tool names split across chunks. Streamed calls, malformed and
   duplicate-key arguments, and buffer overflows now emit audit events.
+- **A2A server skill constraints apply with proof of possession.**
+  Constraints declared with `@server.skill(..., constraints=...)` were only
+  checked when `require_pop=False`, so with the default `require_pop=True` a
+  server-level `Subpath("/data")` did not stop `path="/etc/passwd"` when the
+  warrant allowed it. They are now checked on every call.
+- **Bare A2A skill constraint classes are refused at registration.** A class
+  such as `constraints={"path": Subpath}` has no bounds. With
+  `require_pop=False` it was checked as `isinstance(value, Subpath)`, which
+  rejected every call, and with `require_pop=True` it was never checked.
+  `@server.skill` now raises `TypeError` for it; pass an instance such as
+  `Subpath("/data")`.
 - **`ControlPlaneClient.shutdown()` no longer panics.** It built its Tokio
   timer outside the runtime, so every call from Python, including the
   `atexit` hook that runs on every exit with a connected client, printed
@@ -122,6 +188,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   registration lines and the `flushed N audit events` line now go to
   `tracing` only. Registration retries are jittered so a fleet does not
   reconnect in lockstep.
+- **Python `Shlex` rejects every unquoted shell operator.** The tokenizer
+  merges adjacent operator characters into one token, and the check compared
+  tokens against a fixed list, so combinations such as `|&`, `>|`, `&>`, `<>`
+  and `>&` were allowed. Any unquoted run made only of `();<>|&` is now
+  rejected, in `matches()` and in `explain`, while quoted and escaped merged
+  literals retain their previous behavior. The Rust `Shlex` used in warrants
+  was not affected.
 - **`tenuo.testing` grant assertions check real grants.** `assert_can_grant`
   passed the parent's `timedelta` TTL to the grant builder, so every grant
   failed with `TypeError`, and `assert_cannot_grant` passed for any grant,

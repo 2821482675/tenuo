@@ -45,11 +45,13 @@ from tenuo.temporal._headers import (
 )
 from tenuo.temporal._observability import TemporalAuditEvent
 from tenuo.temporal._pop import (
+    _add_workflow_scope,
     _args_dict_uses_only_positional_fallback_keys,
     _args_to_dict_by_fn,
     _normalize_args_for_pop,
     _positional_pop_mismatch_message,
     _prevalidate_args_against_warrant,
+    _validate_no_reserved_workflow_parameters,
     _warrant_tool_has_non_empty_field_constraints,
 )
 from tenuo.temporal._state import (
@@ -254,6 +256,7 @@ class _TenuoWorkflowOutboundInterceptor:
                         activity_fn = self._config._activity_registry.get(activity_type)
 
                     raw_args = getattr(input, "args", ()) or ()
+                    _validate_no_reserved_workflow_parameters(activity_fn)
                     args_dict = _args_to_dict_by_fn(raw_args, activity_fn)
 
                     pop_tool_name = _warrant_tool_name_for_activity_type(
@@ -276,6 +279,17 @@ class _TenuoWorkflowOutboundInterceptor:
                         logger.warning(msg)
 
                     args_dict = _normalize_args_for_pop(args_dict)
+                    # Only the Activity's own argument names go in this header;
+                    # the worker obtains the reserved workflow scope from Temporal.
+                    arg_keys_csv = ",".join(args_dict.keys())
+                    workflow_info = workflow.info()
+                    args_dict = _add_workflow_scope(
+                        warrant,
+                        pop_tool_name,
+                        args_dict,
+                        getattr(workflow_info, "namespace", None),
+                        getattr(workflow_info, "workflow_id", None),
+                    )
                     _prevalidate_args_against_warrant(warrant, pop_tool_name, args_dict)
 
                     timestamp = int(workflow.now().timestamp())
@@ -287,7 +301,6 @@ class _TenuoWorkflowOutboundInterceptor:
                         activity_headers[k] = Payload(data=v)
                     activity_headers[TENUO_POP_HEADER] = Payload(data=pop_encoded)
 
-                    arg_keys_csv = ",".join(args_dict.keys())
                     activity_headers[TENUO_ARG_KEYS_HEADER] = Payload(
                         data=arg_keys_csv.encode("utf-8")
                     )
@@ -1158,6 +1171,31 @@ class TenuoActivityInboundInterceptor:
         )
 
         args = self._extract_arguments(input, headers)
+        try:
+            _validate_no_reserved_workflow_parameters(activity_fn)
+            args = _add_workflow_scope(
+                warrant,
+                tool_name,
+                args,
+                getattr(info, "workflow_namespace", None),
+                getattr(info, "workflow_id", None),
+            )
+        except TenuoContextError as exc:
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args=args,
+                reason=str(exc),
+                constraint="reserved_argument",
+                start_ns=start_ns,
+                authorizer=self._authorizer,
+                presented_chain=[warrant],
+                pop_auth_args=args,
+            )
+            if self._config.on_denial == "raise" and not self._config.dry_run:
+                raise self._wrap_as_non_retryable(exc) from exc
+            return await _deny_or_continue(tool=tool_name, reason=str(exc))
 
         # -- 6. Delegation Depth Limit --
         chain_depth = warrant.depth if hasattr(warrant, "depth") else 0
