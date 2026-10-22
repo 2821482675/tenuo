@@ -221,6 +221,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rejected, in `matches()` and in `explain`, while quoted and escaped merged
   literals retain their previous behavior. The Rust `Shlex` used in warrants
   was not affected.
+- **Python `Shlex` no longer stops reading at `#`.** Python's `shlex` starts
+  a comment at any unquoted `#`, but a shell only does so at the start of a
+  word, so `ls a#b; rm -rf /` passed `Shlex(allow=["ls"])` while the shell
+  ran `rm`. `#` is now an ordinary character: operators after it are
+  rejected even after a real comment (`ls # ; x`), and `ls#x` is checked as
+  the binary `ls#x`. The new `Shlex.tokenize()` is the split `matches()` and
+  `explain` share. This affects `@guard`, the OpenAI and AutoGen guards, and
+  A2A skill constraints. The Rust `Shlex` used in warrants already rejected
+  these commands.
 - **`tenuo.testing` grant assertions check real grants.** `assert_can_grant`
   passed the parent's `timedelta` TTL to the grant builder, so every grant
   failed with `TypeError`, and `assert_cannot_grant` passed for any grant,

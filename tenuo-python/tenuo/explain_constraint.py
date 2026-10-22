@@ -288,7 +288,6 @@ def _explain_urlsafe(constraint: Any, value: Any) -> UrlAnalysis:
 
 def _explain_shlex(constraint: Any, value: Any) -> CommandAnalysis:
     """Explain Shlex constraint check."""
-    import shlex as shlex_module
 
     if not isinstance(value, str):
         return CommandAnalysis(
@@ -335,8 +334,7 @@ def _explain_shlex(constraint: Any, value: Any) -> CommandAnalysis:
 
     # Parse the command
     try:
-        lex = shlex_module.shlex(value, posix=True, punctuation_chars=True)
-        tokens = list(lex)
+        tokens = constraint.tokenize(value)
     except ValueError as e:
         return CommandAnalysis(
             input=value,
