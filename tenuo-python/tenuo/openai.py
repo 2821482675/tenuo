@@ -1278,7 +1278,7 @@ class GuardedCompletions:
                 continue
 
             delta = choice.delta
-            choice_index = _stream_index(choice)
+            choice_index = self._stream_index_or_record(choice)
 
             function_call = getattr(delta, "function_call", None)
             if function_call:
@@ -1295,7 +1295,19 @@ class GuardedCompletions:
                 continue
 
             for tc_delta in delta.tool_calls:
-                key = (choice_index, _stream_index(tc_delta))
+                call_type = getattr(tc_delta, "type", None)
+                custom = _field(tc_delta, "custom")
+                if custom is not None or call_type == "custom":
+                    kind: Optional[str] = "custom"
+                    name_part = _field(custom, "name") if custom is not None else None
+                    data_part = _field(custom, "input") if custom is not None else None
+                else:
+                    kind = call_type if isinstance(call_type, str) and call_type != "function" else None
+                    func = getattr(tc_delta, "function", None)
+                    name_part = getattr(func, "name", None) if func else None
+                    data_part = getattr(func, "arguments", None) if func else None
+
+                key = (choice_index, self._stream_index_or_record(tc_delta, name_part))
 
                 # Initialize buffer if new tool call
                 if key not in buffers:
@@ -1303,21 +1315,19 @@ class GuardedCompletions:
                     buffers[key] = ToolCallBuffer(id=tc_id)
 
                 buffer = buffers[key]
-
-                call_type = getattr(tc_delta, "type", None)
-                custom = _field(tc_delta, "custom")
-                if custom is not None or call_type == "custom":
-                    buffer.kind = "custom"
-                    name_part = _field(custom, "name") if custom is not None else None
-                    data_part = _field(custom, "input") if custom is not None else None
-                else:
-                    if isinstance(call_type, str) and call_type != "function":
-                        buffer.kind = call_type
-                    func = getattr(tc_delta, "function", None)
-                    name_part = getattr(func, "name", None) if func else None
-                    data_part = getattr(func, "arguments", None) if func else None
-
+                if kind is not None:
+                    buffer.kind = kind
                 self._append_stream_fragment(buffer, name_part, data_part)
+
+    def _stream_index_or_record(self, obj: Any, tool_name: Optional[str] = None) -> int:
+        """Validate a stream index and record malformed inputs before failing closed."""
+        try:
+            return _stream_index(obj)
+        except MalformedToolCall as error:
+            name = tool_name or "unknown"
+            recorded_error = MalformedToolCall(name, error.error)
+            self._record_decision(name, {}, recorded_error)
+            raise recorded_error
 
     def _append_stream_fragment(self, buffer: ToolCallBuffer, name_part: Any, data_part: Any) -> None:
         """Append one streamed name/arguments fragment, enforcing the size limit."""

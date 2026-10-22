@@ -581,28 +581,49 @@ class TestStreamingChoicesAndNames:
 
         assert asyncio.run(go()) == ["read_file"]
 
-    def test_negative_tool_index_is_rejected(self, server: FakeServer) -> None:
-        server.chat_sse_override = [
-            _chat_chunk(
-                {
-                    "index": 0,
-                    "delta": {
-                        "tool_calls": [
-                            {
-                                "index": -1,
-                                "id": "call_bad",
-                                "type": "function",
-                                "function": {"name": "delete_file", "arguments": '{"path":"/data/x"}'},
-                            }
-                        ]
-                    },
-                    "finish_reason": None,
-                }
-            )
-        ]
-        client = guard(server.sync_client(), deny_tools=["delete_file"])
+    @staticmethod
+    def _invalid_index_event(location: str) -> Dict[str, Any]:
+        tool_call = {
+            "index": -1,
+            "id": "call_bad",
+            "type": "function",
+            "function": {"name": "delete_file", "arguments": '{"path":"/data/x"}'},
+        }
+        choice_index = -1 if location == "choice" else 0
+        return _chat_chunk(
+            {
+                "index": choice_index,
+                "delta": {"tool_calls": [dict(tool_call, index=0 if location == "choice" else -1)]},
+                "finish_reason": None,
+            }
+        )
+
+    @pytest.mark.parametrize("location,expected_tool", [("choice", "unknown"), ("tool", "delete_file")])
+    def test_negative_stream_index_is_rejected_and_audited(
+        self, server: FakeServer, location: str, expected_tool: str
+    ) -> None:
+        events: List[AuditEvent] = []
+        server.chat_sse_override = [self._invalid_index_event(location)]
+        client = guard(server.sync_client(), deny_tools=["delete_file"], audit_callback=events.append)
         with pytest.raises(MalformedToolCall, match="stream index must be a non-negative integer"):
             list(client.chat.completions.create(model="m", messages=MSGS, stream=True))
+        assert [(event.decision, event.tool_name) for event in events] == [("DENY", expected_tool)]
+
+    @pytest.mark.parametrize("location,expected_tool", [("choice", "unknown"), ("tool", "delete_file")])
+    def test_async_negative_stream_index_is_rejected_and_audited(
+        self, server: FakeServer, location: str, expected_tool: str
+    ) -> None:
+        events: List[AuditEvent] = []
+        server.chat_sse_override = [self._invalid_index_event(location)]
+        client = guard(server.async_client(), deny_tools=["delete_file"], audit_callback=events.append)
+
+        async def go() -> None:
+            stream = await client.chat.completions.create(model="m", messages=MSGS, stream=True)
+            [chunk async for chunk in stream]
+
+        with pytest.raises(MalformedToolCall, match="stream index must be a non-negative integer"):
+            asyncio.run(go())
+        assert [(event.decision, event.tool_name) for event in events] == [("DENY", expected_tool)]
 
     def test_skip_preserves_allowed_fragments_in_mixed_choice_chunk(self, server: FakeServer) -> None:
         def choice(index: int, delta: Dict[str, Any], finish: Optional[str] = None) -> Dict[str, Any]:
