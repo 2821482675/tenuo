@@ -540,3 +540,52 @@ class TestSignedFormCoversWhatTheActivityReceives:
         assert _normalize_pop_arg_value(sent, "c") == _normalize_pop_arg_value(received, "c")
         with pytest.raises(TenuoArgNormalizationError, match="dict key"):
             _normalize_pop_arg_value({(1, 2): "x"}, "c")
+
+    @pytest.mark.parametrize("kind", ["annotated", "json_encoders", "secret_subclass", "typed_extra"])
+    def test_other_ways_a_dump_can_hide_a_value_are_refused(self, kind):
+        pydantic = pytest.importorskip("pydantic")
+        from typing import Annotated, Dict
+
+        if kind == "annotated":
+            class Ctx(pydantic.BaseModel):
+                topic: Annotated[str, pydantic.PlainSerializer(lambda v: "***")]
+            value = Ctx(topic="t")
+        elif kind == "json_encoders":
+            class Ctx(pydantic.BaseModel):
+                model_config = pydantic.ConfigDict(json_encoders={str: lambda v: "***"})
+                topic: str
+            value = Ctx(topic="t")
+        elif kind == "secret_subclass":
+            class ApiToken(pydantic.SecretStr):
+                pass
+
+            class Ctx(pydantic.BaseModel):
+                token: ApiToken
+            value = Ctx(token=ApiToken("s"))
+        else:
+            class Child(pydantic.BaseModel):
+                publish: bool = pydantic.Field(False, exclude=True)
+
+            class Ctx(pydantic.BaseModel):
+                model_config = pydantic.ConfigDict(extra="allow")
+                __pydantic_extra__: Dict[str, Child]
+            value = Ctx(child={"publish": True})
+        with pytest.raises(TenuoArgNormalizationError, match="would not cover"):
+            _normalize_pop_arg_value(value, "tool_ctx")
+
+    def test_a_secret_outside_any_model_is_refused(self):
+        pydantic = pytest.importorskip("pydantic")
+
+        with pytest.raises(TenuoArgNormalizationError, match="secret"):
+            _normalize_pop_arg_value({"token": pydantic.SecretStr("s")}, "c")
+
+    def test_faithful_builtin_types_still_sign(self):
+        pydantic = pytest.importorskip("pydantic")
+        import ipaddress
+        from pathlib import Path
+
+        class Ctx(pydantic.BaseModel):
+            path: Path
+            host: ipaddress.IPv4Address
+
+        assert _normalize_pop_arg_value(Ctx(path=Path("/a"), host="10.0.0.1"), "c")

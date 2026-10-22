@@ -235,12 +235,14 @@ def _check_model_is_signable(model: Any, field_name: str) -> None:
     excluded = sorted(name for name, info in fields.items() if getattr(info, "exclude", None))
     decorators = getattr(cls, "__pydantic_decorators__", None)
     serializers = bool(decorators and (decorators.field_serializers or decorators.model_serializers))
+    config = getattr(cls, "__config__", None)  # Pydantic v1
+    serializers = serializers or bool(getattr(config, "json_encoders", None))
     secrets = sorted(name for name in fields if _is_secret(getattr(model, name, None)))
     why = (
         f"excluded field(s) {', '.join(excluded)}" if excluded
         else "a custom serializer" if serializers
         else f"secret field(s) {', '.join(secrets)}" if secrets
-        else None
+        else _core_schema_hides_values(getattr(cls, "__pydantic_core_schema__", None))
     )
     if why:
         raise TenuoArgNormalizationError(
@@ -250,8 +252,36 @@ def _check_model_is_signable(model: Any, field_name: str) -> None:
         )
 
 
+def _core_schema_hides_values(schema: Any) -> Optional[str]:
+    """Why a Pydantic v2 schema's JSON dump can drop or rewrite a value, or None.
+
+    The core schema records every serializer and exclusion, including annotated
+    serializers, json_encoders, secret types and their subclasses, nested
+    models and typed extras. Pydantic's own faithful ones (paths, IP
+    addresses) live in pydantic._internal.
+    """
+    stack, seen = [schema], set()
+    while stack:
+        node = stack.pop()
+        if isinstance(node, list):
+            stack.extend(node)
+            continue
+        if not isinstance(node, dict) or id(node) in seen:
+            continue
+        seen.add(id(node))
+        if node.get("serialization_exclude"):
+            return "an excluded field"
+        serialization = node.get("serialization")
+        if isinstance(serialization, dict) and str(serialization.get("type", "")).startswith("function"):
+            module = getattr(serialization.get("function"), "__module__", "") or ""
+            if not module.startswith("pydantic._internal"):
+                return "a custom serializer or secret type"
+        stack.extend(node.values())
+    return None
+
+
 def _is_secret(value: Any) -> bool:
-    return type(value).__name__ in ("SecretStr", "SecretBytes", "Secret")
+    return any(cls.__name__ in ("SecretStr", "SecretBytes", "Secret") for cls in type(value).__mro__)
 
 
 def _check_signable_tree(value: Any, field_name: str, depth: int = 0) -> None:
@@ -270,9 +300,8 @@ def _check_signable_tree(value: Any, field_name: str, depth: int = 0) -> None:
         )
     if _is_pydantic_model(value):
         _check_model_is_signable(value, field_name)
-        cls = type(value)
-        names = getattr(cls, "model_fields", None) or getattr(cls, "__fields__", {})
-        children: Any = [getattr(value, name, None) for name in names]
+        # Field values and allowed extras (v2 keeps extras apart; v1 in __dict__).
+        children: Any = [*vars(value).values(), *(getattr(value, "__pydantic_extra__", None) or {}).values()]
     elif _dataclasses.is_dataclass(value) and not isinstance(value, type):
         children = [getattr(value, f.name) for f in _dataclasses.fields(value)]
     elif isinstance(value, dict):
@@ -324,6 +353,12 @@ def _jsonable(value: Any, field_name: str, depth: int = 0) -> Any:
         return [_jsonable(v, field_name, depth + 1) for v in value]
     if isinstance(value, bytes):
         return base64.b64encode(value).decode("ascii")
+    if _is_secret(value):  # str() would mask every secret the same way
+        raise TenuoArgNormalizationError(
+            f"Activity argument '{field_name}' contains a secret value. "
+            + _MODEL_UNSIGNABLE.format(why="a secret value")
+            + " See docs/temporal-reference.md: 'Structured activity arguments'."
+        )
     return str(value)  # as before for leaf values such as datetime
 
 
