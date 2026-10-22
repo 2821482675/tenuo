@@ -169,6 +169,8 @@ result = await execute_workflow_authorized(
 )
 ```
 
+If `warrant` is delegated, pass its parents root-first (excluding the leaf) as `warrant_chain=[root, ...]` so a worker that trusts only the root can verify it; without it, activities are denied as untrusted.
+
 ### Long-running workflows: `start_workflow_authorized(...)`
 
 For workflows where you need a handle to signal, query, or await later (human-in-the-loop gates, multi-day pipelines):
@@ -189,7 +191,7 @@ await handle.signal(ApprovalWorkflow.approve, decision)
 result = await handle.result()
 ```
 
-Same header binding as `execute_workflow_authorized()` — but returns a `WorkflowHandle` immediately instead of blocking on the result.
+Same header binding as `execute_workflow_authorized()`, including `warrant_chain=` for delegated warrants, but returns a `WorkflowHandle` immediately instead of blocking on the result.
 
 ### Advanced: `set_headers_for_workflow(...)` + `client.execute_workflow(...)`
 
@@ -207,6 +209,8 @@ result = await client.execute_workflow(
     task_queue="data-processing",
 )
 ```
+
+`tenuo_headers(warrant, key_id, warrant_chain=[root, ...])` adds the `x-tenuo-warrant-chain` header for a delegated warrant; `warrant` may also be the whole root-first list or an encoded WarrantStack.
 
 ### Deprecated: `set_headers(...)`
 
@@ -430,7 +434,7 @@ config = TenuoPluginConfig(
     max_chain_depth=10,                        # Max delegation depth
     audit_callback=on_audit,                   # Optional audit event handler
     metrics=TenuoMetrics(),                    # Optional Prometheus metrics
-    authorized_signals=["approve"],            # Worker-wide. A name off the list fails the workflow.
+    authorized_signals=["approve"],            # Worker-wide. A name off the list is dropped.
     authorized_updates=["update_config"],      # Worker-wide. A name off the list rejects that update.
 )
 ```
@@ -534,7 +538,7 @@ The worker **appears healthy** while workflow executions are dead. Diagnose via 
 
 | Component | Supported | Notes |
 |-----------|-----------|-------|
-| Temporal Python SDK | `temporalio>=1.23.0` | `TenuoTemporalPlugin` needs `SimplePlugin` (1.23+) |
+| Temporal Python SDK | `temporalio>=1.33.0` | Floor of the `tenuo[temporal]` extra; `TenuoTemporalPlugin` uses `SimplePlugin` |
 | Python | 3.10 – 3.14 | `temporalio` itself requires 3.10+, so the Temporal integration does too |
 | Runtime mode | Single-process and distributed | Both supported |
 
@@ -608,6 +612,48 @@ This section covers the full threat model, trust boundaries, PoP windows, dedup,
 4. **Arguments outside constraints**: Field constraints enforced against the same argument map used for PoP.
 5. **Over-broad credentials**: Short TTLs, delegation / `workflow_grant` for least privilege, signal/update guards.
 6. **Mis-signing (named vs positional args)**: `strict_mode=True` fails fast on ambiguous PoP.
+
+### Limiting a capability to a workflow
+
+By default a warrant is scoped by its holder key, TTL and argument constraints,
+not by the workflow it was issued for: any workflow whose worker holds the
+holder key can use it until it expires. To limit a capability to one logical
+workflow, or a family of workflows, constrain both parts of Temporal's workflow
+identity using the reserved `_workflow_namespace` and `_workflow_id` arguments:
+
+```python
+warrant = (
+    Warrant.mint_builder()
+    .holder(agent_key.public_key)
+    .capability(
+        "issue_refund",
+        order_id=Exact("order-123"),
+        amount=Range(max=250),
+        _workflow_namespace=Exact("payments-prod"),
+        _workflow_id=Exact("refund-order-123"),  # or Pattern("refund-order-123*")
+    )
+    .ttl(600)
+    .mint(control_key)
+)
+```
+
+For a capability that names both fields, the outbound interceptor signs the
+running workflow's namespace and ID from `workflow.info()`, and the activity
+interceptor verifies them against `activity.info()`. Both come from Temporal;
+activity arguments cannot use either reserved name. A capability that names
+only one field fails closed because workflow IDs are unique only within a
+namespace. Capabilities that name neither field behave exactly as before.
+
+- `Pattern("refund-order-123*")` admits child workflows and Schedule triggers
+  whose IDs share the prefix. Attenuation can narrow it, e.g. to a child's
+  `Exact` ID, but never widen it.
+- It applies to activities. Child workflow starts, Nexus operations and signal or
+  update guards don't read it.
+- The client that starts a workflow chooses its ID, so this keeps authority to a
+  named logical workflow in one namespace and fails closed when headers reach
+  the wrong one; it is not proof of who started it. Who may start workflows is
+  governed by Temporal namespace access control, and a reject-duplicate ID reuse
+  policy stops a closed workflow's ID from being reused.
 
 ### Clock skew and PoP time windows
 
@@ -756,7 +802,7 @@ result = await tenuo_execute_child_workflow(
 
 ### Delegation Chain Verification
 
-When warrants are attenuated, the full chain is propagated via `x-tenuo-warrant-chain`. The activity interceptor calls `Authorizer.check_chain()` to verify every link back to a trusted root.
+When warrants are attenuated, in the workflow or before start (`warrant_chain=` on the start helpers), the full chain is propagated via `x-tenuo-warrant-chain`. The activity interceptor calls `Authorizer.check_chain()` to verify every link back to a trusted root.
 
 ---
 
@@ -774,7 +820,11 @@ config = TenuoPluginConfig(
 
 `authorized_signals` and `authorized_updates` are optional settings on the worker config. One worker uses one pair of lists for every workflow it runs. Leave them unset (`None`, the default) and every signal and update name is allowed. Queries are not checked.
 
-With `authorized_signals` set, a name that is not on the list raises `TemporalConstraintViolation` during signal handling, including a signal that arrives with the first workflow task. The plugin registers that exception as a workflow failure type, so the signal fails the workflow run. A caller who can send a signal can end the run by choosing a name that is not on the list. Set the list when that outcome is acceptable. Workflows that need different names need separate worker configs.
+With `authorized_signals` set, a signal whose name is not on the list is dropped before it reaches the workflow, including a signal that arrives with the first workflow task. The run continues. The drop is decided again on replay, so adding or removing a name changes how signals already in history replay; treat a change to the list like a workflow code change. Workflows that need different names need separate worker configs.
+
+Each drop emits a DENY `TemporalAuditEvent` with `tool="signal:<name>"` and the warrant id (`activity_name` and `activity_id` are empty), and increments the denied metric when `metrics` is set. The metric uses the fixed tool label `signal:<unlisted>`, since the sender picks the signal name; the event and the log line keep the real name.
+
+The metric update happens inline and is skipped on replay. The audit event is placed on a bounded, non-blocking worker queue; a daemon dispatcher invokes `audit_callback` outside workflow code, so normal sinks may perform I/O without violating the Temporal sandbox or blocking the workflow thread. Callback delivery is **best-effort**: a worker crash can lose queued events, and a full queue drops the new event. Queue overflows are counted inline and reported later by the dispatcher thread, so even a blocking logging handler cannot stall the workflow. Callback and metric failures are logged without changing the signal drop. Configure `audit_callback` before constructing the worker; mutating the callback afterward is unsupported.
 
 With `authorized_updates` set, the same check runs in the update validator when the update defines one, and in the update handler for every update, including an update with no validator. That failure rejects the update.
 
@@ -901,14 +951,17 @@ async with tenuo_warrant_context(warrant, key_id="agent1"):
     )
 ```
 
+For a delegated warrant, add `warrant_chain=[root, ...]` (parents, root-first, excluding the leaf).
+
 ### workflow_grant() - Scoped In-Workflow Grants
 
 ```python
+from tenuo import Exact
 from tenuo.temporal import workflow_grant
 
 file_warrant = await workflow_grant(
     "read_file",
-    constraints={"path": path},
+    constraints={"path": Exact(path)},
     ttl_seconds=60,
 )
 
@@ -921,7 +974,7 @@ contents = await tenuo_execute_activity(
 )
 ```
 
-Constraint keys must already exist in the parent warrant.
+Constraint values must be constraint objects (`Exact`, `Subpath`, `Range`, ...); raw strings and numbers are rejected. Constraint keys must already exist in the parent warrant.
 
 The per-Activity override is held in a workflow task-local `ContextVar`, so
 parallel workflow tasks cannot consume one another's warrant. When
@@ -938,7 +991,7 @@ Schedule lifetime or use an issuer warrant plus per-Activity execution warrants.
 Temporal action settings such as `execution_timeout` belong in
 `action_options=`. The legacy `workflow_kwargs=` alias remains temporarily
 supported with a deprecation warning; workflow input remains positional via
-`workflow_args=`.
+`workflow_args=`. For a delegated warrant, pass its parents as `warrant_chain=`.
 
 ### Async Activity Completion
 
