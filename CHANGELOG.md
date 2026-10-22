@@ -194,6 +194,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   calls by choice as well as index, so `n>1` streams can't mix calls, and
   joins tool names split across chunks. Streamed calls, malformed and
   duplicate-key arguments, and buffer overflows now emit audit events.
+- **OpenAI `guard()` checks legacy `function_call` responses.** A model
+  called with the older `functions=` parameter returns its call on
+  `message.function_call` (or `delta.function_call` when streaming), which the
+  guard did not read, so a denied function reached the app. It is now
+  checked like a tool call on every chat surface, sync and async, streamed or
+  not, and removed in `skip` and `log` modes. A call with malformed arguments
+  is also removed in those modes instead of raising.
+- **OpenAI denial text carries no argument values.**
+  `OpenAIConstraintViolation` included the rejected value in its message,
+  which `guard()` and `guard_agent()` log, return to the model, and send to
+  the control plane as the denial reason. The message now names the tool and
+  argument only; the value is still on the exception's `value` attribute.
+  `check_constraint` logs the type of a value whose constraint raised, not
+  the value.
+- **`openai-agents` floor is 0.3.3.** `guard_agent()` needs tool guardrails,
+  added in 0.3.3, and `TenuoToolGuardrail` in `input_guardrails` now raises,
+  so the `openai` extra no longer allows earlier releases.
 - **A2A server skill constraints apply with proof of possession.**
   Constraints declared with `@server.skill(..., constraints=...)` were only
   checked when `require_pop=False`, so with the default `require_pop=True` a
