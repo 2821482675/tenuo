@@ -126,7 +126,10 @@ def _resolve_warrant_chain(
     leaf, parents_or_chain = split_presented_warrant(warrant, warrant_chain)
     parents = list(parents_or_chain or [])
     leaf_bytes = bytes(leaf.to_bytes())
-    if parents and bytes(parents[-1].to_bytes()) == leaf_bytes:
+    # Only an explicit warrant_chain may carry the leaf as its last entry. A
+    # whole chain passed as ``warrant`` already had its leaf split off, so a
+    # second copy there is a malformed chain and must hit the check below.
+    if warrant_chain and parents and bytes(parents[-1].to_bytes()) == leaf_bytes:
         parents.pop()
     if any(bytes(parent.to_bytes()) == leaf_bytes for parent in parents):
         raise TenuoContextError(

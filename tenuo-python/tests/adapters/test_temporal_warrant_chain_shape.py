@@ -60,6 +60,34 @@ def test_tenuo_headers_rejects_leaf_before_end_of_chain():
             tenuo_headers(leaf, "agent1", warrant_chain=malformed)
 
 
+def test_whole_chain_as_warrant_matches_explicit_chain():
+    from tenuo_core import encode_warrant_stack
+
+    root, mid, leaf, _ = _chain()
+    expected = tenuo_headers(leaf, "agent1", compress=False, warrant_chain=[root, mid])
+    assert tenuo_headers([root, mid, leaf], "agent1", compress=False) == expected
+    assert tenuo_headers([root, mid, leaf], "agent1", compress=False, warrant_chain=[]) == expected
+    stack = encode_warrant_stack([root, mid, leaf])
+    assert tenuo_headers(stack, "agent1", compress=False) == expected
+
+
+def test_whole_chain_as_warrant_rejects_duplicate_leaf():
+    """A whole chain already had its leaf split off; a second copy is malformed.
+
+    Stripping it as if it were an explicit ``warrant_chain`` ending with the
+    leaf silently accepted ``[root, leaf, leaf]``.
+    """
+    from tenuo_core import encode_warrant_stack
+
+    root, mid, leaf, _ = _chain()
+    for malformed in ([root, mid, leaf, leaf], [leaf, leaf], [root, leaf, mid, leaf]):
+        for chain_arg in (None, []):
+            with pytest.raises(TenuoContextError, match="before its end"):
+                tenuo_headers(malformed, "agent1", warrant_chain=chain_arg)
+        with pytest.raises(TenuoContextError, match="before its end"):
+            tenuo_headers(encode_warrant_stack(malformed), "agent1")
+
+
 def test_chain_of_only_the_leaf_sends_the_leaf_alone():
     _root, _mid, leaf, _ = _chain()
     assert TENUO_CHAIN_HEADER not in tenuo_headers(leaf, "agent1", warrant_chain=[leaf])
