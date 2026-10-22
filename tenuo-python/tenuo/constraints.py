@@ -471,6 +471,24 @@ class Shlex:
 
         self.allowed_bins: Set[str] = set(allow)
 
+    @staticmethod
+    def tokenize(value: str) -> List[str]:
+        """Split a command the way ``matches()`` sees it.
+
+        ``#`` is an ordinary word character here, never a comment. Python's
+        shlex starts a comment at any unquoted ``#``, but POSIX shells only do
+        so at the start of a word (``ls a#b; rm x`` runs ``rm``), and some
+        shells (interactive zsh) don't recognise comments at all. Reading past
+        ``#`` means an operator after it is always rejected.
+
+        Raises:
+            ValueError: On unbalanced quotes or a trailing escape.
+        """
+        lex = shlex.shlex(value, posix=True, punctuation_chars=True)
+        lex.commenters = ""
+        lex.wordchars += "#"
+        return list(lex)
+
     @classmethod
     def unquoted_operator_tokens(cls, value: str) -> List[str]:
         r"""Return unquoted, unescaped runs of shell operator characters.
@@ -478,7 +496,7 @@ class Shlex:
         ``shlex`` removes quotes and escapes from its output, so inspecting its
         tokens cannot distinguish the operator ``|&`` from the literal
         arguments ``'|&'`` or ``\|\&``. Scan the original source while using
-        the same quote, escape, and comment boundaries as the parser.
+        the same quote and escape boundaries as ``tokenize()``.
         """
         operators: List[str] = []
         current: List[str] = []
@@ -514,10 +532,6 @@ class Shlex:
             elif char in {"'", '"'}:
                 flush()
                 quote = char
-            elif char == "#":
-                # shlex treats the remainder of an unquoted comment as inert.
-                flush()
-                break
             elif char in cls.OPERATOR_CHARS:
                 current.append(char)
             else:
@@ -573,8 +587,7 @@ class Shlex:
         # But keeps quoted operators as part of the token:
         #   'ls "foo; bar"' -> ['ls', 'foo; bar']    (safe)
         try:
-            lex = shlex.shlex(value, posix=True, punctuation_chars=True)
-            tokens = list(lex)
+            tokens = self.tokenize(value)
         except ValueError as e:
             # Unbalanced quotes, malformed escapes, etc.
             logger.debug(f"Shlex parse error: {e} in: {value!r}")

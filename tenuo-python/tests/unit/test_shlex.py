@@ -161,8 +161,61 @@ class TestShlexMergedOperatorTokens:
         assert not constraint.matches(r"grep \|& file")
         assert not constraint.matches(r"grep '|'& file")
 
-    def test_operators_in_an_unquoted_comment_are_ignored(self):
-        assert Shlex(allow=["ls"]).matches("ls # |& ignored by the shell")
+    def test_operators_after_a_comment_are_still_blocked(self):
+        """``#`` is never treated as a comment, so a shell that doesn't
+        recognise comments can't be handed an operator Shlex skipped."""
+        assert not Shlex(allow=["ls"]).matches("ls # |& sh")
+        assert not Shlex(allow=["ls"]).matches("ls # ; rm -rf /")
+
+    def test_comment_without_operators_is_allowed(self):
+        assert Shlex(allow=["ls"]).matches("ls -la # list everything")
+
+
+class TestShlexHashInsideWord:
+    """POSIX shells start a comment only at the start of a word. Python's
+    shlex starts one at any unquoted ``#``, which hid the rest of the line."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ls a#b; rm -rf /",
+            "ls a#b|sh",
+            "ls x#&&rm -rf /",
+            "ls a#b & sh",
+            "ls a#b > /etc/passwd",
+            "ls a#b $(id)",
+            "ls a#(x)",
+            "ls#; rm -rf /",
+        ],
+    )
+    def test_operator_after_mid_word_hash_is_blocked(self, command):
+        assert not Shlex(allow=["ls"]).matches(command)
+
+    def test_hash_attached_to_binary_is_part_of_its_name(self):
+        """``ls#x`` runs a binary named ``ls#x``, not ``ls``."""
+        assert not Shlex(allow=["ls"]).matches("ls#x")
+        assert Shlex(allow=["ls"]).tokenize("ls#x") == ["ls#x"]
+
+    @pytest.mark.parametrize(
+        "command",
+        ["ls a#b", "grep '#include' main.c", 'grep "a#b" file', r"grep \# file", "git log --grep=#123"],
+    )
+    def test_literal_hash_arguments_are_allowed(self, command):
+        assert Shlex(allow=["ls", "grep", "git"]).matches(command)
+
+    def test_explain_reports_operator_after_mid_word_hash(self):
+        from tenuo.explain_constraint import _explain_shlex
+
+        analysis = _explain_shlex(Shlex(allow=["ls"]), "ls a#b; rm -rf /")
+        assert not analysis.safe
+        assert ";" in analysis.dangerous_tokens
+        assert "rm" in analysis.tokens
+
+    def test_matches_rust_core(self):
+        """The Rust core Shlex already rejects these; the Python class agrees."""
+        tenuo_core = pytest.importorskip("tenuo_core")
+        for command in ("ls a#b; rm -rf /", "ls a#b|sh", "ls x#&&rm -rf /", "ls a#b"):
+            assert Shlex(allow=["ls"]).matches(command) == tenuo_core.Shlex(allow=["ls"]).matches(command), command
 
     def test_explain_reports_merged_operator(self):
         from tenuo.explain_constraint import _explain_shlex
