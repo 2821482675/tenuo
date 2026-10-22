@@ -42,7 +42,7 @@ Open an issue or a pull request with the comparison output, and say:
   section.
 
 Each disagreement is either a bug on one side or an ambiguity in the draft.
-Both are worth reporting, and ambiguities are fixed in the draft.
+Please report both; ambiguities are fixed in the draft.
 
 ## Results
 

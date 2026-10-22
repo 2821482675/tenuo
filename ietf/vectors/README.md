@@ -56,7 +56,7 @@ vector that depends on it. `python3 ietf/vectors/gen_vectors.py
 verifier in turn (each lettered step and sub-step, each §3.4 well-formedness
 rule, each `check` predicate and §4.5 subsumption rule, and the empty-map and
 entry-type normalizations) and fails unless some vector changes verdict. A
-handful of checks can never be the only fault, because another check always
+few checks can never be the only fault, because another check always
 fails with them; `UNREACHABLE` in the generator lists them with the reason, and
 the generated document repeats the list. Steps 4e, 4f and 5 are among them.
 `--fault-chains` prints, for every DENY vector, each check that fails once the
@@ -75,7 +75,7 @@ size limits, and duplicate members. Some PERMIT vectors catch over-strict
 verifiers: unknown header parameters and claims, a header `jwk`, payloads that
 are not JCS, same-key derivation, an `aud` array, and boundary values.
 
-## Conventions worth knowing
+## Conventions
 
 - AAT and PoP payloads are JCS-canonical except where a vector deliberately
   carries other bytes: an inadmissible number, number syntax that JCS would
@@ -86,14 +86,14 @@ are not JCS, same-key derivation, an `aud` array, and boundary values.
   limits (MAX_TOKEN_SIZE 65536, MAX_CHAIN_SIZE 262144). A vector's own `params`
   override them; J.23.2 and J.23.3 use smaller limits so that size is their only
   fault.
-- Numbers need a careful parser. Number admissibility (§3.4) is covered by
-  `J.8.7`-`J.8.14`, and the rule that NumericDates, `del_depth` and
-  `del_max_depth` have no fraction or exponent part (§3.2) by vectors such as
-  `J.21.16` (`3.0`) and `J.24.5` (`2e0`). A harness must read each `args_json`
-  and `payload_json` with a parser that keeps a number's exact value and
-  whether it was written with a fraction or exponent. Ordinary JavaScript
-  `JSON.parse` keeps neither: it cannot preserve `9007199254740993` or tell
-  `1.0` from `1`. The parsed `args` and `payload` fields are conveniences only.
+- Number admissibility (§3.4) is covered by `J.8.7`-`J.8.14`, and the rule that
+  NumericDates, `del_depth` and `del_max_depth` have no fraction or exponent
+  part (§3.2) by vectors such as `J.21.16` (`3.0`) and `J.24.5` (`2e0`). A
+  harness must read each `args_json` and `payload_json` with a parser that
+  keeps a number's exact value and whether it was written with a fraction or
+  exponent. Ordinary JavaScript `JSON.parse` keeps neither: it cannot preserve
+  `9007199254740993` or tell `1.0` from `1`. The parsed `args` and `payload`
+  fields are conveniences only.
 - No non-ASCII strings appear anywhere. Unicode tool-name matching needs its
   own vector set.
 - Stateful replay vectors include the accepted PoP `jti` set before and after
