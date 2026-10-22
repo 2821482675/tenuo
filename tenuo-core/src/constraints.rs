@@ -719,8 +719,20 @@ impl Constraint {
                 parent.validate_attenuation(child)
             }
 
-            // All can add more constraints
+            // All can add more constraints, or collapse to a single Exact value
+            // that every conjunct already admits.
             (Constraint::All(parent), Constraint::All(child)) => parent.validate_attenuation(child),
+            (Constraint::All(parent), Constraint::Exact(child_exact)) => {
+                for conjunct in &parent.constraints {
+                    if !conjunct.matches(&child_exact.value)? {
+                        return Err(Error::MonotonicityViolation(format!(
+                            "exact value is rejected by the parent's {} constraint",
+                            conjunct.type_name()
+                        )));
+                    }
+                }
+                Ok(())
+            }
 
             // Any: every child branch must be covered by some parent branch
             (Constraint::Any(parent), Constraint::Any(child)) => parent.validate_attenuation(child),
@@ -2346,6 +2358,43 @@ impl Subpath {
         result
     }
 
+    /// `true` when `path` is already the spelling [`Self::contains_path`] uses.
+    ///
+    /// `Pattern` and `NotOneOf` see the raw argument. The filesystem open uses
+    /// the normalized spelling, so a difference would let `//`, `.`, `..`,
+    /// `\`, or a trailing slash name a file those checks did not see.
+    #[cfg(feature = "filesystem")]
+    pub(crate) fn spelling_is_normalized(path: &str) -> bool {
+        path == Self::normalize_path(path)
+    }
+
+    /// Lexical path of `path` relative to this root.
+    ///
+    /// Uses the same normalization as [`Self::contains_path`]. `Ok(None)` means
+    /// `path` is not contained. `Ok(Some(""))` means `path` is the root itself.
+    /// Case-insensitive roots have no remainder: folding can change string length,
+    /// so a byte strip would not be the path the kernel should open.
+    #[cfg(feature = "filesystem")]
+    pub(crate) fn lexical_remainder(&self, path: &str) -> Result<Option<String>> {
+        if !self.case_sensitive {
+            return Err(Error::InvalidPath {
+                path: path.to_string(),
+                reason: "case-insensitive Subpath has no filesystem remainder".to_string(),
+            });
+        }
+        if path.contains('\0') || !Self::is_absolute(path) {
+            return Ok(None);
+        }
+        let normalized = Self::normalize_path(path);
+        if self.allow_equal && normalized == self.root {
+            return Ok(Some(String::new()));
+        }
+        let root_with_sep = format!("{}/", self.root.trim_end_matches('/'));
+        Ok(normalized
+            .strip_prefix(&root_with_sep)
+            .map(ToString::to_string))
+    }
+
     /// Check if a path is safely contained within root.
     ///
     /// # Security
@@ -2474,7 +2523,11 @@ impl From<Subpath> for Constraint {
 /// 2. Attacker-controlled domains can resolve to internal IPs (DNS rebinding)
 /// 3. Stateless validation enables caching and cross-language compatibility
 ///
-/// For DNS-aware validation, use `url_jail` at the execution layer.
+/// `UrlSafe` therefore protects literal IPs and URL/host policy, but is not by
+/// itself a complete defense against DNS rebinding. The HTTP execution layer
+/// must validate every resolved address (including redirects) and connect to
+/// that validated address without resolving the hostname again. For Python,
+/// `url_jail` is one execution-layer option.
 ///
 /// # Example
 ///
@@ -2531,6 +2584,63 @@ pub struct UrlSafe {
     pub block_internal_tlds: bool,
 }
 
+/// Why [`UrlSafe`] rejected a URL. Codes are stable for diagnostics and logs;
+/// messages are intended for local operator-facing explanations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UrlSafeRejection {
+    NullByte,
+    Malformed,
+    Scheme,
+    MissingHost,
+    Port,
+    Loopback,
+    InternalHostname,
+    Metadata,
+    AmbiguousIp,
+    DomainAllowList,
+    DomainDenyList,
+    PrivateNetwork,
+    ReservedAddress,
+}
+
+impl UrlSafeRejection {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::NullByte => "url_null_byte",
+            Self::Malformed => "url_malformed",
+            Self::Scheme => "url_scheme_not_allowed",
+            Self::MissingHost => "url_missing_host",
+            Self::Port => "url_port_not_allowed",
+            Self::Loopback => "url_loopback_blocked",
+            Self::InternalHostname => "url_internal_hostname_blocked",
+            Self::Metadata => "url_metadata_blocked",
+            Self::AmbiguousIp => "url_ambiguous_ip_blocked",
+            Self::DomainAllowList => "url_domain_not_allowed",
+            Self::DomainDenyList => "url_domain_denied",
+            Self::PrivateNetwork => "url_private_network_blocked",
+            Self::ReservedAddress => "url_reserved_address_blocked",
+        }
+    }
+
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::NullByte => "URL contains a null byte",
+            Self::Malformed => "URL is malformed",
+            Self::Scheme => "URL scheme is not allowed",
+            Self::MissingHost => "URL has no host",
+            Self::Port => "URL port is not allowed",
+            Self::Loopback => "loopback hosts and addresses are blocked",
+            Self::InternalHostname => "internal hostnames are blocked",
+            Self::Metadata => "cloud metadata hosts and addresses are blocked",
+            Self::AmbiguousIp => "ambiguous IP address notation is blocked",
+            Self::DomainAllowList => "host is not in the domain allow list",
+            Self::DomainDenyList => "host is in the domain deny list",
+            Self::PrivateNetwork => "private network addresses are blocked",
+            Self::ReservedAddress => "reserved addresses are blocked",
+        }
+    }
+}
+
 fn default_schemes() -> Vec<String> {
     vec!["http".to_string(), "https".to_string()]
 }
@@ -2556,6 +2666,85 @@ const INTERNAL_TLDS: &[&str] = &[
 ];
 
 impl UrlSafe {
+    fn canonical_domain_pattern(pattern: &str) -> Result<String> {
+        use url::Host;
+
+        if pattern.is_empty() {
+            return Err(Error::InvalidUrl {
+                url: pattern.to_string(),
+                reason: "domain pattern must not be empty".to_string(),
+            });
+        }
+
+        let (wildcard, host_pattern) = match pattern.strip_prefix("*.") {
+            Some(suffix) => (true, suffix),
+            None => (false, pattern),
+        };
+        if host_pattern.is_empty() || host_pattern.contains('*') {
+            return Err(Error::InvalidUrl {
+                url: pattern.to_string(),
+                reason: "domain pattern must be a host name or *.host name".to_string(),
+            });
+        }
+
+        let host = Host::parse(host_pattern).map_err(|error| Error::InvalidUrl {
+            url: pattern.to_string(),
+            reason: format!("invalid domain pattern: {error}"),
+        })?;
+        let canonical = match host {
+            Host::Domain(domain) if !wildcard || !domain.starts_with('.') => domain,
+            _ if wildcard => {
+                return Err(Error::InvalidUrl {
+                    url: pattern.to_string(),
+                    reason: "wildcards require a domain name suffix".to_string(),
+                });
+            }
+            host => host.to_string(),
+        }
+        .to_lowercase();
+        // Host::parse percent-decodes domains. Re-check the canonical value so
+        // an encoded `*` cannot become wildcard syntax after raw validation.
+        if canonical.contains('*') {
+            return Err(Error::InvalidUrl {
+                url: pattern.to_string(),
+                reason: "domain pattern must be a host name or *.host name".to_string(),
+            });
+        }
+        Ok(if wildcard {
+            format!("*.{canonical}")
+        } else {
+            canonical
+        })
+    }
+
+    /// Return whether every host matched by `candidate` is also matched by
+    /// `covering`. Both patterns are canonicalized before comparison.
+    fn domain_pattern_covers(covering: &str, candidate: &str) -> Result<bool> {
+        let covering = Self::canonical_domain_pattern(covering)?;
+        let candidate = Self::canonical_domain_pattern(candidate)?;
+
+        let Some(covering_suffix) = covering.strip_prefix("*.") else {
+            return Ok(covering == candidate);
+        };
+        let candidate_suffix = candidate.strip_prefix("*.").unwrap_or(&candidate);
+
+        Ok(candidate_suffix == covering_suffix
+            || candidate_suffix.ends_with(&format!(".{covering_suffix}")))
+    }
+
+    /// Validate domain allow- and deny-list configuration.
+    pub fn validate(&self) -> Result<()> {
+        for pattern in self
+            .allow_domains
+            .iter()
+            .flatten()
+            .chain(self.deny_domains.iter().flatten())
+        {
+            Self::canonical_domain_pattern(pattern)?;
+        }
+        Ok(())
+    }
+
     /// Create a new UrlSafe constraint with secure defaults.
     ///
     /// Blocks private IPs, loopback, metadata endpoints, and dangerous schemes.
@@ -2591,34 +2780,37 @@ impl UrlSafe {
         }
     }
 
-    /// Check if a URL is safe to fetch.
+    /// Return a stable, operator-facing reason when a URL is rejected.
     ///
-    /// Returns `Ok(true)` if the URL passes all SSRF checks.
-    /// Returns `Ok(false)` for any security violation or malformed URL.
-    pub fn is_safe(&self, url: &str) -> Result<bool> {
+    /// This is intentionally separate from the public authorization error:
+    /// callers can use it in local diagnostics without turning remote denials
+    /// into a policy oracle.
+    pub fn rejection_reason(&self, url: &str) -> Result<Option<UrlSafeRejection>> {
         use url::Url;
+
+        self.validate()?;
 
         // Reject null bytes
         if url.contains('\0') {
-            return Ok(false);
+            return Ok(Some(UrlSafeRejection::NullByte));
         }
 
         // Parse URL
         let parsed = match Url::parse(url) {
             Ok(u) => u,
-            Err(_) => return Ok(false),
+            Err(_) => return Ok(Some(UrlSafeRejection::Malformed)),
         };
 
         // Check scheme
         let scheme = parsed.scheme().to_lowercase();
         if !self.schemes.iter().any(|s| s.to_lowercase() == scheme) {
-            return Ok(false);
+            return Ok(Some(UrlSafeRejection::Scheme));
         }
 
         // Extract host
         let host = match parsed.host_str() {
             Some(h) if !h.is_empty() => h,
-            _ => return Ok(false), // No host or empty host
+            _ => return Ok(Some(UrlSafeRejection::MissingHost)),
         };
 
         // Decode percent-encoded hostname (SSRF bypass prevention)
@@ -2630,34 +2822,34 @@ impl UrlSafe {
         if let Some(ref allowed_ports) = self.allow_ports {
             if let Some(port) = parsed.port_or_known_default() {
                 if !allowed_ports.contains(&port) {
-                    return Ok(false);
+                    return Ok(Some(UrlSafeRejection::Port));
                 }
             }
         }
 
         // Check for localhost names
         if self.block_loopback && (host == "localhost" || host == "localhost.localdomain") {
-            return Ok(false);
+            return Ok(Some(UrlSafeRejection::Loopback));
         }
 
         // Check internal TLDs
         if self.block_internal_tlds {
             for tld in INTERNAL_TLDS {
                 if host.ends_with(tld) || host == tld[1..] {
-                    return Ok(false);
+                    return Ok(Some(UrlSafeRejection::InternalHostname));
                 }
             }
         }
 
         // Check metadata hosts
         if self.block_metadata && METADATA_HOSTS.contains(&host.as_str()) {
-            return Ok(false);
+            return Ok(Some(UrlSafeRejection::Metadata));
         }
 
         // Try to parse as IP address
         if let Some(ip) = self.parse_ip(&host) {
-            if !self.check_ip_safe(&ip) {
-                return Ok(false);
+            if let Some(reason) = self.ip_rejection_reason(&ip) {
+                return Ok(Some(reason));
             }
         } else {
             // It's a hostname - additional security checks
@@ -2670,14 +2862,14 @@ impl UrlSafe {
             //
             // This inconsistency creates SSRF bypass risk. Fail closed.
             if self.looks_like_ambiguous_ip(&host) {
-                return Ok(false);
+                return Ok(Some(UrlSafeRejection::AmbiguousIp));
             }
+        }
 
-            // Check domain allowlist (hostnames only — IPs use block_* flags)
-            if let Some(ref domains) = self.allow_domains {
-                if !self.check_domain_allowed(&host, domains) {
-                    return Ok(false);
-                }
+        // An allowlist constrains every host, including public IP literals.
+        if let Some(ref domains) = self.allow_domains {
+            if !self.check_domain_allowed(&host, domains) {
+                return Ok(Some(UrlSafeRejection::DomainAllowList));
             }
         }
 
@@ -2686,11 +2878,19 @@ impl UrlSafe {
         // deny_domains: ["169.254.169.254"] works as expected.
         if let Some(ref denied) = self.deny_domains {
             if self.check_domain_allowed(&host, denied) {
-                return Ok(false);
+                return Ok(Some(UrlSafeRejection::DomainDenyList));
             }
         }
 
-        Ok(true)
+        Ok(None)
+    }
+
+    /// Check if a URL is safe to fetch.
+    ///
+    /// Returns `Ok(true)` if the URL passes all SSRF checks.
+    /// Returns `Ok(false)` for any security violation or malformed URL.
+    pub fn is_safe(&self, url: &str) -> Result<bool> {
+        Ok(self.rejection_reason(url)?.is_none())
     }
 
     /// Parse host as IP address, handling various representations.
@@ -2799,7 +2999,7 @@ impl UrlSafe {
     }
 
     /// Check if IP address is safe to connect to.
-    fn check_ip_safe(&self, ip: &IpAddr) -> bool {
+    fn ip_rejection_reason(&self, ip: &IpAddr) -> Option<UrlSafeRejection> {
         // Handle IPv6 addresses that embed IPv4
         let ip = match ip {
             IpAddr::V6(v6) => {
@@ -2835,7 +3035,7 @@ impl UrlSafe {
 
         // Check loopback
         if self.block_loopback && ip.is_loopback() {
-            return false;
+            return Some(UrlSafeRejection::Loopback);
         }
 
         // Check private ranges (requires manual check for IPv4)
@@ -2844,15 +3044,15 @@ impl UrlSafe {
                 let octets = v4.octets();
                 // 10.0.0.0/8
                 if octets[0] == 10 {
-                    return false;
+                    return Some(UrlSafeRejection::PrivateNetwork);
                 }
                 // 172.16.0.0/12
                 if octets[0] == 172 && (16..=31).contains(&octets[1]) {
-                    return false;
+                    return Some(UrlSafeRejection::PrivateNetwork);
                 }
                 // 192.168.0.0/16
                 if octets[0] == 192 && octets[1] == 168 {
-                    return false;
+                    return Some(UrlSafeRejection::PrivateNetwork);
                 }
             }
             // IPv6 private ranges
@@ -2860,11 +3060,11 @@ impl UrlSafe {
                 let segments = v6.segments();
                 // fc00::/7 (unique local)
                 if (segments[0] & 0xfe00) == 0xfc00 {
-                    return false;
+                    return Some(UrlSafeRejection::PrivateNetwork);
                 }
                 // fe80::/10 (link-local)
                 if (segments[0] & 0xffc0) == 0xfe80 {
-                    return false;
+                    return Some(UrlSafeRejection::PrivateNetwork);
                 }
             }
         }
@@ -2875,15 +3075,15 @@ impl UrlSafe {
                 let octets = v4.octets();
                 // 0.0.0.0/8 ("This" network)
                 if octets[0] == 0 {
-                    return false;
+                    return Some(UrlSafeRejection::ReservedAddress);
                 }
                 // 224.0.0.0/4 (Multicast)
                 if (224..=239).contains(&octets[0]) {
-                    return false;
+                    return Some(UrlSafeRejection::ReservedAddress);
                 }
                 // 255.255.255.255 (Broadcast)
                 if octets == [255, 255, 255, 255] {
-                    return false;
+                    return Some(UrlSafeRejection::ReservedAddress);
                 }
             }
         }
@@ -2893,18 +3093,20 @@ impl UrlSafe {
             if let IpAddr::V4(v4) = ip {
                 let octets = v4.octets();
                 if octets[0] == 169 && octets[1] == 254 {
-                    return false;
+                    return Some(UrlSafeRejection::Metadata);
                 }
             }
         }
 
-        true
+        None
     }
 
     /// Check if hostname matches domain allowlist.
     fn check_domain_allowed(&self, host: &str, domains: &[String]) -> bool {
         for pattern in domains {
-            let pattern = pattern.to_lowercase();
+            let Ok(pattern) = Self::canonical_domain_pattern(pattern) else {
+                continue;
+            };
             if pattern.starts_with("*.") {
                 // Wildcard subdomain: *.example.com matches sub.example.com
                 let suffix = &pattern[1..]; // .example.com
@@ -2970,6 +3172,12 @@ impl UrlSafe {
     ///
     /// A child UrlSafe is valid if it is at least as restrictive as the parent.
     pub fn validate_attenuation(&self, child: &UrlSafe) -> Result<()> {
+        // Attenuation is only meaningful for well-formed policies. Validate
+        // here as well as at authorization time so malformed wire-decoded Rust
+        // values cannot be delegated and fail later in a surprising place.
+        self.validate()?;
+        child.validate()?;
+
         // Child schemes must be subset of parent
         for scheme in &child.schemes {
             if !self
@@ -3045,19 +3253,10 @@ impl UrlSafe {
                 Some(child_domains) => {
                     // Each child domain must be covered by a parent domain pattern
                     for cd in child_domains {
-                        if !parent_domains.iter().any(|pd| {
-                            let pd = pd.to_lowercase();
-                            let cd = cd.to_lowercase();
-                            // Exact match
-                            if pd == cd {
-                                return true;
-                            }
-                            // Parent wildcard covers child exact
-                            if pd.starts_with("*.") && cd.ends_with(&pd[1..]) {
-                                return true;
-                            }
-                            false
-                        }) {
+                        let covered = parent_domains.iter().try_fold(false, |covered, pd| {
+                            Ok::<_, Error>(covered || Self::domain_pattern_covers(pd, cd)?)
+                        })?;
+                        if !covered {
                             return Err(Error::MonotonicityViolation(format!(
                                 "child domain '{}' not covered by parent allowlist",
                                 cd
@@ -3078,8 +3277,12 @@ impl UrlSafe {
                 }
                 Some(child_denied) => {
                     for pd in parent_denied {
-                        let pd_lower = pd.to_lowercase();
-                        if !child_denied.iter().any(|cd| cd.to_lowercase() == pd_lower) {
+                        // A child may preserve a parent denial with an equivalent
+                        // canonical spelling or a broader wildcard denial.
+                        let preserved = child_denied.iter().try_fold(false, |preserved, cd| {
+                            Ok::<_, Error>(preserved || Self::domain_pattern_covers(cd, pd)?)
+                        })?;
+                        if !preserved {
                             return Err(Error::MonotonicityViolation(format!(
                                 "child removes denied domain '{}' from parent",
                                 pd
@@ -3404,7 +3607,15 @@ impl All {
     }
 
     /// Check if all constraints match.
+    ///
+    /// An empty conjunction is invalid rather than vacuously true: it would
+    /// accept every value while appearing to constrain the argument.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
+        if self.constraints.is_empty() {
+            return Err(Error::Validation(
+                "All constraint with an empty constraints array is invalid".to_string(),
+            ));
+        }
         for c in &self.constraints {
             if !c.matches(value)? {
                 return Ok(false);
@@ -3413,8 +3624,16 @@ impl All {
         Ok(true)
     }
 
-    /// Validate attenuation: child must have all parent constraints plus optionally more.
+    /// Validate attenuation: every parent clause must be subsumed by at least
+    /// one child clause. A single child clause may cover several parent clauses;
+    /// extra child clauses only narrow further. An empty `constraints` array is
+    /// invalid in either position because an empty `All` is not a constraint.
     pub fn validate_attenuation(&self, child: &All) -> Result<()> {
+        if self.constraints.is_empty() || child.constraints.is_empty() {
+            return Err(Error::MonotonicityViolation(
+                "All constraint with an empty constraints array is invalid".to_string(),
+            ));
+        }
         // Every parent constraint must appear in child
         for parent_c in &self.constraints {
             let found = child
@@ -4210,6 +4429,37 @@ mod tests {
         assert!(all.matches(&50i64.into()).unwrap());
         assert!(!all.matches(&(-10i64).into()).unwrap());
         assert!(!all.matches(&150i64.into()).unwrap());
+    }
+
+    #[test]
+    fn test_all_attenuates_to_exact() {
+        // A path glob: contained under a root *and* matching a filename shape.
+        let parent: Constraint = All::new([
+            Subpath::new("/workspace").unwrap().into(),
+            Pattern::new("*.json").unwrap().into(),
+        ])
+        .into();
+
+        // A delegatee may pin the argument to one concrete value that every
+        // conjunct already admits.
+        parent
+            .validate_attenuation(&Exact::new("/workspace/reports/q3.json").into())
+            .unwrap();
+
+        // Escaping the root is still refused, even though the glob matches.
+        assert!(parent
+            .validate_attenuation(&Exact::new("/etc/passwd.json").into())
+            .is_err());
+
+        // Staying under the root is not enough if the glob rejects the value.
+        assert!(parent
+            .validate_attenuation(&Exact::new("/workspace/secrets.env").into())
+            .is_err());
+
+        // Traversal out of the root is refused after normalization.
+        assert!(parent
+            .validate_attenuation(&Exact::new("/workspace/../etc/passwd.json").into())
+            .is_err());
     }
 
     #[test]
@@ -5594,6 +5844,10 @@ mod tests {
         assert!(!us.is_safe("http://127.0.0.1/").unwrap());
         assert!(!us.is_safe("http://localhost/").unwrap());
         assert!(!us.is_safe("http://[::1]/").unwrap());
+        assert_eq!(
+            us.rejection_reason("http://127.0.0.1/").unwrap(),
+            Some(UrlSafeRejection::Loopback)
+        );
     }
 
     #[test]
@@ -5665,6 +5919,40 @@ mod tests {
         assert!(us.is_safe("https://api.github.com/repos").unwrap());
         assert!(us.is_safe("https://sub.example.com/path").unwrap());
         assert!(!us.is_safe("https://other.com/").unwrap());
+        assert!(!us.is_safe("https://8.8.8.8/").unwrap());
+
+        let exact_ip = UrlSafe::with_domains(vec!["8.8.8.8"]);
+        assert!(exact_ip.is_safe("https://8.8.8.8/").unwrap());
+        assert!(!exact_ip.is_safe("https://1.1.1.1/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_rejects_invalid_domain_patterns() {
+        for pattern in [
+            "",
+            "*",
+            "*.",
+            "*..example.com",
+            "foo.*.com",
+            "https://example.com",
+        ] {
+            let us = UrlSafe::with_domains(vec![pattern]);
+            assert!(
+                us.validate().is_err(),
+                "accepted invalid pattern {pattern:?}"
+            );
+            assert!(
+                us.is_safe("https://example.com/").is_err(),
+                "evaluated invalid pattern {pattern:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_url_safe_accepts_hosts_supported_by_url_parser() {
+        let us = UrlSafe::with_domains(vec!["_service.internal"]);
+        assert!(us.validate().is_ok());
+        assert!(us.is_safe("https://_service.internal/").unwrap());
     }
 
     #[test]
@@ -5828,6 +6116,69 @@ mod tests {
             ..UrlSafe::new()
         };
         assert!(parent.validate_attenuation(&child_bad2).is_err());
+    }
+
+    #[test]
+    fn test_url_safe_attenuation_canonicalizes_domain_patterns() {
+        let parent = UrlSafe::with_domains(vec!["bücher.example", "*.example.com"]);
+
+        // IDNs are compared using the same canonical form as URL matching.
+        let idn_child = UrlSafe::with_domains(vec!["xn--bcher-kva.example"]);
+        assert!(parent.validate_attenuation(&idn_child).is_ok());
+
+        // Runtime wildcard semantics include both the base domain and nested
+        // wildcard policies, so attenuation must recognize both as subsets.
+        let base_child = UrlSafe::with_domains(vec!["example.com"]);
+        assert!(parent.validate_attenuation(&base_child).is_ok());
+        let nested_child = UrlSafe::with_domains(vec!["*.api.example.com"]);
+        assert!(parent.validate_attenuation(&nested_child).is_ok());
+    }
+
+    #[test]
+    fn test_url_safe_attenuation_rejects_malformed_policies() {
+        let malformed_parent = UrlSafe::with_domains(vec!["foo.*.example.com"]);
+        let valid = UrlSafe::with_domains(vec!["api.example.com"]);
+        assert!(malformed_parent.validate_attenuation(&valid).is_err());
+
+        let malformed_child = UrlSafe::with_domains(vec!["https://example.com"]);
+        assert!(valid.validate_attenuation(&malformed_child).is_err());
+
+        // Host parsing percent-decodes domains, so encoded wildcards must be
+        // rejected after canonicalization as well as in the raw input.
+        for pattern in ["%2A.example.com", "*.%2A.example.com"] {
+            let encoded_wildcard = UrlSafe::with_domains(vec![pattern]);
+            assert!(encoded_wildcard.validate().is_err());
+            assert!(encoded_wildcard.validate_attenuation(&valid).is_err());
+        }
+    }
+
+    #[test]
+    fn test_url_safe_deny_attenuation_uses_semantic_coverage() {
+        let idn_parent = UrlSafe {
+            deny_domains: Some(vec!["bücher.example".to_string()]),
+            ..UrlSafe::new()
+        };
+        let idn_child = UrlSafe {
+            deny_domains: Some(vec!["xn--bcher-kva.example".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(idn_parent.validate_attenuation(&idn_child).is_ok());
+
+        let parent = UrlSafe {
+            deny_domains: Some(vec!["*.api.example.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        let broader_child = UrlSafe {
+            deny_domains: Some(vec!["*.example.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(parent.validate_attenuation(&broader_child).is_ok());
+
+        let narrower_child = UrlSafe {
+            deny_domains: Some(vec!["*.v1.api.example.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(parent.validate_attenuation(&narrower_child).is_err());
     }
 
     // ========================================================================

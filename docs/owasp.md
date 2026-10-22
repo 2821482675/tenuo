@@ -6,9 +6,12 @@ canonical_url: https://tenuo.ai/owasp
 og_type: article
 og_image: /images/og-owasp-agentic.png
 og_image_alt: "Tenuo against the OWASP Top 10 for Agentic Applications"
-author: "Tenuo Team"
+author: "Tenuo Engineering"
 date: 2026-05-06
 tags: ["OWASP", "AI security", "agentic systems", "authorization"]
+blog_resource: true
+featured_resource: true
+resource_order: 3
 ---
 
 # Tenuo against the OWASP Top 10 for Agentic Applications
@@ -156,7 +159,7 @@ Tenuo is most differentiated at the argument layer. RBAC and tool-list approache
 Five examples illustrate the principle:
 
 - `Subpath(...)`: path containment with normalization for traversal and encoding edge cases.
-- `UrlSafe(...)`: SSRF protection covering IPv6, link-local, and DNS rebinding.
+- `UrlSafe(...)`: stateless SSRF protection covering IPv6, link-local, encoded IPs, and domain policy. DNS rebinding additionally requires resolved-address validation and connection pinning at the HTTP execution layer.
 - `Shlex(...)`: shell-aware argument parsing for command strings, with conservative rejection of shell metacharacter patterns.
 - `Range(...)`: numeric bounds.
 - `Pattern(...)`: glob matching with consistent escape rules.

@@ -105,6 +105,9 @@ describe("constraint set", () => {
     const s = probe(tenuo, "fetch2", { url: urlSafe({ allowDomains: ["*.example.com"] }) });
     await expect(s.ok({ url: "https://api.example.com/x" })).resolves.toEqual({ url: "https://api.example.com/x" });
     await s.denied({ url: "http://169.254.169.254/latest/meta-data" });
+    // Public IP literals are constrained by allowDomains too. This specifically
+    // guards the committed WASM artifact used by the published package.
+    await s.denied({ url: "https://8.8.8.8/" });
     await s.denied({ url: "https://evil.net/" });
   });
 
@@ -411,6 +414,8 @@ describe("approvals end to end", () => {
     expect(request.requiredApprovers).toHaveLength(2);
     const envelope = createTenuo.signApproval(request, approverA, { externalId: "alice@example.com" });
     const info = createTenuo.inspectApproval(envelope);
+    const bytesInfo = createTenuo.inspectApproval(new Uint8Array(Buffer.from(envelope, "base64")));
+    expect(bytesInfo).toEqual(info);
     expect(info).toMatchObject({
       signatureValid: true,
       expired: false,
@@ -454,9 +459,10 @@ describe("approvals end to end", () => {
     });
     expect(stricter.inspect().requiredApprovers).toHaveLength(2);
     expect(stricter.inspect().minApprovals).toBe(2);
-    // The threshold only rises: asking for less leaves it where it was.
-    const attempt = tenuo.narrow(stricter, { path: under("/data") }, { minApprovals: 1 });
-    expect(attempt.inspect().minApprovals).toBe(2);
+    // The threshold only rises: asking for less is refused, not ignored.
+    expect(() => tenuo.narrow(stricter, { path: under("/data") }, { minApprovals: 1 })).toThrow(
+      /below the parent's 2/,
+    );
   });
 
   it("produces the control-plane v1 body Python emits, with an attestation the holder signed", () => {
@@ -603,6 +609,25 @@ describe("explain()", () => {
     expect(issued.inspect().canAuthorize).toBe(false);
     expect(tenuo.explain(issued, "read_file", { path: "/data/a" }).outcome).toBe("allow");
     expect(tenuo.explain(issued, "read_file", { path: "/x" }).outcome).toBe("deny");
+  });
+
+  it("gives stable, specific UrlSafe diagnostics without exposing them in authorization errors", async () => {
+    const tenuo = dev();
+    const session = tenuo.session({
+      allow: { fetch: { url: urlSafe({ allowDomains: ["api.example.com"] }) } },
+    });
+    const explanation = tenuo.explain(session, "fetch", { url: "https://evil.example/x" });
+    expect(explanation.fields[0]).toMatchObject({
+      satisfied: false,
+      reasonCode: "url_domain_not_allowed",
+      reason: "host is not in the domain allow list",
+    });
+
+    const fetch = probe(tenuo, "fetch", { url: urlSafe({ allowDomains: ["api.example.com"] }) });
+    await expect(fetch.ok({ url: "https://evil.example/x" })).rejects.toMatchObject({
+      code: "TENUO_CONSTRAINT_VIOLATION",
+      message: expect.stringMatching(/Use tenuo\.explain\(session, tool, args\) locally/),
+    });
   });
 
   it("flags a chain the verifier does not trust", () => {

@@ -7,8 +7,10 @@ a running Temporal server.
 
 import asyncio
 import base64
+import contextlib
 import gzip
 import os
+import queue
 import threading
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -2066,6 +2068,115 @@ def test_context_propagator_sets_and_clears():
 
 
 # =============================================================================
+# Delegated warrant chain at workflow start
+# =============================================================================
+
+
+def _delegated_start_chain():
+    from tenuo_core import SigningKey, Warrant
+
+    root_key, orch_key, agent_key = SigningKey.generate(), SigningKey.generate(), SigningKey.generate()
+    root = Warrant.mint_builder().holder(orch_key.public_key).capability("echo").ttl(3600).mint(root_key)
+    leaf = root.grant_builder().holder(agent_key.public_key).capability("echo").ttl(1800).grant(orch_key)
+    return root, leaf
+
+
+def _decoded_chain_header(raw: bytes) -> list:
+    from tenuo_core import decode_warrant_stack_base64
+
+    return [bytes(w.to_bytes()) for w in decode_warrant_stack_base64(raw.decode("utf-8"))]
+
+
+def test_tenuo_headers_warrant_chain_emits_chain_header():
+    from tenuo.temporal._constants import TENUO_CHAIN_HEADER
+    from tenuo.temporal._headers import _extract_warrant_from_headers
+
+    root, leaf = _delegated_start_chain()
+    headers = tenuo_headers(leaf, "agent1", warrant_chain=[root])
+
+    assert _decoded_chain_header(headers[TENUO_CHAIN_HEADER]) == [bytes(root.to_bytes()), bytes(leaf.to_bytes())]
+    assert bytes(_extract_warrant_from_headers(headers).to_bytes()) == bytes(leaf.to_bytes())
+
+
+def test_tenuo_headers_accepts_whole_chain_as_warrant():
+    from tenuo_core import encode_warrant_stack
+    from tenuo.temporal._constants import TENUO_CHAIN_HEADER
+
+    root, leaf = _delegated_start_chain()
+    expected = tenuo_headers(leaf, "agent1", warrant_chain=[root])
+
+    for presented in ([root, leaf], encode_warrant_stack([root, leaf])):
+        headers = tenuo_headers(presented, "agent1")
+        assert headers[TENUO_CHAIN_HEADER] == expected[TENUO_CHAIN_HEADER]
+        assert gzip.decompress(headers["x-tenuo-warrant"]) == bytes(leaf.to_bytes())
+
+
+def test_tenuo_headers_without_chain_sends_leaf_only():
+    from tenuo.temporal._constants import TENUO_CHAIN_HEADER
+
+    _root, leaf = _delegated_start_chain()
+    assert TENUO_CHAIN_HEADER not in tenuo_headers(leaf, "agent1")
+
+
+def test_tenuo_headers_rejects_leaf_inside_warrant_chain():
+    from tenuo.temporal.exceptions import TenuoContextError
+
+    root, leaf = _delegated_start_chain()
+    for malformed_chain in ([root, leaf], [leaf, root]):
+        with pytest.raises(TenuoContextError, match="parent warrants only"):
+            tenuo_headers(leaf, "agent1", warrant_chain=malformed_chain)
+
+
+def test_start_workflow_authorized_binds_warrant_chain():
+    from tenuo.temporal._client import TenuoClientInterceptor
+    from tenuo.temporal._constants import TENUO_CHAIN_HEADER
+    from tenuo.temporal._workflow import start_workflow_authorized
+
+    root, leaf = _delegated_start_chain()
+    ci = TenuoClientInterceptor()
+    client = MagicMock()
+    client.start_workflow = AsyncMock(return_value="handle")
+
+    asyncio.run(
+        start_workflow_authorized(
+            client=client,
+            client_interceptor=ci,
+            workflow_run_fn="wf",
+            workflow_id="wf-delegated",
+            warrant=leaf,
+            key_id="agent1",
+            warrant_chain=[root],
+        )
+    )
+
+    bound = ci._headers_by_workflow_id["wf-delegated"][0]
+    assert _decoded_chain_header(bound[TENUO_CHAIN_HEADER]) == [bytes(root.to_bytes()), bytes(leaf.to_bytes())]
+
+
+def test_tenuo_warrant_context_sends_warrant_chain():
+    from types import SimpleNamespace
+
+    from tenuo.temporal._client import TenuoClientInterceptor, tenuo_warrant_context
+    from tenuo.temporal._constants import TENUO_CHAIN_HEADER
+
+    root, leaf = _delegated_start_chain()
+    nxt = MagicMock()
+    nxt.start_workflow = AsyncMock(return_value="handle")
+    outbound = TenuoClientInterceptor().intercept_client(nxt)
+    start_input = SimpleNamespace(id="wf-ctx", headers={})
+
+    async def run():
+        async with tenuo_warrant_context(leaf, "agent1", warrant_chain=[root]) as active:
+            assert active is leaf
+            await outbound.start_workflow(start_input)
+
+    asyncio.run(run())
+
+    raw = start_input.headers[TENUO_CHAIN_HEADER].data
+    assert _decoded_chain_header(raw) == [bytes(root.to_bytes()), bytes(leaf.to_bytes())]
+
+
+# =============================================================================
 # Phase 1.7 — WarrantSource abstraction + implementations
 # =============================================================================
 
@@ -2085,6 +2196,37 @@ def test_env_warrant_source_missing_var():
     source = EnvWarrantSource("TENUO_TEST_WARRANT_MISSING", "k1")
     with pytest.raises(TenuoContextError, match="is not set"):
         asyncio.run(source.resolve())
+
+
+def test_env_warrant_source_resolves_valid_warrant(monkeypatch):
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal._warrant_source import EnvWarrantSource
+
+    key = SigningKey.generate()
+    warrant = Warrant.issue(key, capabilities={"read_file": {}}, holder=key.public_key, ttl_seconds=3600)
+    monkeypatch.setenv("TENUO_TEST_WARRANT_VALID", base64.b64encode(warrant.to_bytes()).decode("ascii"))
+
+    resolved, key_id = asyncio.run(EnvWarrantSource("TENUO_TEST_WARRANT_VALID", "k1").resolve())
+
+    assert resolved.to_bytes() == warrant.to_bytes()
+    assert key_id == "k1"
+
+
+def test_env_warrant_source_rejects_expired_warrant(monkeypatch):
+    import time
+
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal._warrant_source import EnvWarrantSource
+    from tenuo.temporal.exceptions import TenuoContextError
+
+    key = SigningKey.generate()
+    # ttl=0 is rejected at decode time; use the shortest valid TTL and wait it out.
+    warrant = Warrant.issue(key, capabilities={"read_file": {}}, holder=key.public_key, ttl_seconds=1)
+    time.sleep(1.1)
+    monkeypatch.setenv("TENUO_TEST_WARRANT_EXPIRED", base64.b64encode(warrant.to_bytes()).decode("ascii"))
+
+    with pytest.raises(TenuoContextError, match="has expired"):
+        asyncio.run(EnvWarrantSource("TENUO_TEST_WARRANT_EXPIRED", "k1").resolve())
 
 
 def test_warrant_source_and_literal_mutually_exclusive():
@@ -2124,6 +2266,39 @@ def test_cloud_trigger_warrant_source_uses_event_mapper():
     )
     # We can't call resolve() without an httpx mock, but verify event_mapper is stored
     assert source._event_mapper is mapper
+
+
+def test_cloud_trigger_warrant_source_checks_expiry(monkeypatch):
+    import time
+
+    httpx = pytest.importorskip("httpx")
+    from tenuo_core import SigningKey, Warrant
+    from tenuo.temporal._warrant_source import CloudTriggerWarrantSource
+    from tenuo.temporal.exceptions import TenuoContextError
+
+    key = SigningKey.generate()
+    fired = {}
+
+    def handler(request):
+        return httpx.Response(200, json={"warrant": fired["b64"]})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+    source = CloudTriggerWarrantSource(
+        base_url="https://example.com", trigger_id="trig_123", api_key="key", key_id="agent1"
+    )
+
+    valid = Warrant.issue(key, capabilities={"read_file": {}}, holder=key.public_key, ttl_seconds=3600)
+    fired["b64"] = base64.b64encode(valid.to_bytes()).decode("ascii")
+    resolved, key_id = asyncio.run(source.resolve())
+    assert resolved.to_bytes() == valid.to_bytes()
+    assert key_id == "agent1"
+
+    expired = Warrant.issue(key, capabilities={"read_file": {}}, holder=key.public_key, ttl_seconds=1)
+    time.sleep(1.1)
+    fired["b64"] = base64.b64encode(expired.to_bytes()).decode("ascii")
+    with pytest.raises(TenuoContextError, match="already expired"):
+        asyncio.run(source.resolve())
 
 
 # =============================================================================
@@ -2204,15 +2379,9 @@ async def test_create_scheduled_workflow_carries_tenuo_headers_not_warrant_memo(
 
     from temporalio.client import ScheduleIntervalSpec, ScheduleSpec
     from temporalio.converter import DataConverter
-    from tenuo_core import SigningKey, Warrant
     from tenuo.temporal import create_scheduled_workflow_with_warrant
 
-    holder = SigningKey.generate()
-    warrant = Warrant.issue(
-        holder,
-        capabilities={"read_file": {}},
-        holder=holder.public_key,
-    )
+    root, warrant = _delegated_start_chain()
     client = MagicMock()
     client.data_converter = DataConverter.default
     client.namespace = "default"
@@ -2229,12 +2398,17 @@ async def test_create_scheduled_workflow_carries_tenuo_headers_not_warrant_memo(
         ),
         workflow_args=["tenant-a"],
         memo={"purpose": "nightly report"},
+        warrant_chain=[root],
     )
 
     assert result == "schedule-handle"
     schedule = client.create_schedule.await_args.args[1]
     assert schedule.action.headers[TENUO_KEY_ID_HEADER].data == b"report-agent"
     assert TENUO_WARRANT_HEADER in schedule.action.headers
+    assert _decoded_chain_header(schedule.action.headers[TENUO_CHAIN_HEADER].data) == [
+        bytes(root.to_bytes()),
+        bytes(warrant.to_bytes()),
+    ]
     assert schedule.action.memo == {"purpose": "nightly report"}
     assert "tenuo_warrant" not in schedule.action.memo
     assert schedule.action.args
@@ -2246,6 +2420,10 @@ async def test_create_scheduled_workflow_carries_tenuo_headers_not_warrant_memo(
     start = wire_action.start_workflow
     assert start.header.fields[TENUO_KEY_ID_HEADER].data == b"report-agent"
     assert TENUO_WARRANT_HEADER in start.header.fields
+    assert _decoded_chain_header(start.header.fields[TENUO_CHAIN_HEADER].data) == [
+        bytes(root.to_bytes()),
+        bytes(warrant.to_bytes()),
+    ]
 
 
 @pytest.mark.asyncio
@@ -3608,7 +3786,7 @@ class TestApprovalGates:
     """
 
     @staticmethod
-    def _mint_gated_warrant(control_key, holder_key, *, approver_key):
+    def _mint_gated_warrant(control_key, holder_key, *, approver_key, ttl=3600):
         from tenuo import Warrant
 
         return (
@@ -3618,7 +3796,7 @@ class TestApprovalGates:
             .required_approvers([approver_key.public_key])
             .min_approvals(1)
             .approval_gates({"deploy": None})
-            .ttl(3600)
+            .ttl(ttl)
             .mint(control_key)
         )
 
@@ -3642,7 +3820,7 @@ class TestApprovalGates:
         return tenuo_core.SignedApproval.create(payload, approver_key)
 
     @staticmethod
-    def _build_activity_inputs(warrant, pop_bytes, approvals_header=None):
+    def _build_activity_inputs(warrant, pop_bytes, approvals_header=None, args=None):
         from tenuo.temporal._constants import (
             TENUO_APPROVALS_HEADER,
             TENUO_ARG_KEYS_HEADER,
@@ -3657,7 +3835,8 @@ class TestApprovalGates:
             if k.startswith("x-tenuo-"):
                 act_headers[k] = raw_v
         act_headers[TENUO_POP_HEADER] = base64.b64encode(bytes(pop_bytes))
-        act_headers[TENUO_ARG_KEYS_HEADER] = b""
+        args = args or {}
+        act_headers[TENUO_ARG_KEYS_HEADER] = ",".join(args).encode("utf-8")
         if approvals_header is not None:
             act_headers[TENUO_APPROVALS_HEADER] = approvals_header
 
@@ -3677,7 +3856,7 @@ class TestApprovalGates:
 
         inp = MagicMock()
         inp.fn = lambda: None
-        inp.args = ()
+        inp.args = tuple(args.values())
         inp.headers = {k: FakePayload(data=v) for k, v in act_headers.items()}
         return info, inp
 
@@ -3798,6 +3977,176 @@ class TestApprovalGates:
         msg = str(exc_info.value)
         assert "approval" in msg.lower() or "gate" in msg.lower() or \
             isinstance(exc_info.value, ApprovalGateTriggered)
+
+    @pytest.mark.parametrize("async_handler", [False, True], ids=["sync", "async"])
+    @pytest.mark.parametrize("outcome", ["allowed", "revoked", "expired", "invalid_pop"])
+    def test_approval_retry_lifecycle(self, async_handler, outcome):
+        """Pending never dispatches; a later approval cannot bypass authorization."""
+        import time as _time
+        from datetime import timedelta
+
+        from temporalio.exceptions import ApplicationError
+
+        from tenuo import SigningKey
+        from tenuo_core import SignedRevocationList
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        approver_key = SigningKey.generate()
+
+        warrant = self._mint_gated_warrant(
+            control_key, agent_key, approver_key=approver_key,
+            ttl=1 if outcome == "expired" else 3600,
+        )
+        pop = warrant.sign(agent_key, "deploy", {}, int(_time.time()))
+        if outcome == "invalid_pop":
+            pop = bytes(64)
+        signed = self._sign_approval(warrant, approver_key, "deploy", {})
+        retry_error = ApplicationError(
+            "approval service temporarily unavailable", {"request": "deploy"},
+            type="ApprovalServiceUnavailable", non_retryable=False,
+            next_retry_delay=timedelta(seconds=7),
+        )
+        requests = []
+
+        def handler(request):
+            requests.append(request)
+            if len(requests) == 1:
+                raise retry_error
+            return signed
+
+        async def async_handler_fn(request):
+            await asyncio.sleep(0)
+            return handler(request)
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            approval_handler=async_handler_fn if async_handler else handler,
+        )
+        plugin = TenuoWorkerInterceptor(cfg)
+        info, inp = self._build_activity_inputs(warrant, pop)
+        next_activity = MagicMock(execute_activity=AsyncMock(return_value="ok"), init=MagicMock())
+        inbound = plugin.intercept_activity(next_activity)
+
+        with patch("temporalio.activity.info", return_value=info):
+            with patch.object(inbound, "_emit_denial_event") as deny_event:
+                with patch.object(inbound, "_emit_allow_event") as allow_event:
+                    with pytest.raises(ApplicationError) as exc_info:
+                        asyncio.run(inbound.execute_activity(inp))
+                    assert exc_info.value is retry_error
+                    assert exc_info.value.next_retry_delay == timedelta(seconds=7)
+                    deny_event.assert_not_called()
+                    allow_event.assert_not_called()
+            next_activity.execute_activity.assert_not_awaited()
+
+            if outcome == "revoked":
+                builder = SignedRevocationList.builder()
+                builder.revoke(warrant.id)
+                revocations = builder.build(control_key)
+                for authorizer in (inbound._authorizer, inbound._retry_authorizer):
+                    authorizer.set_revocation_list(revocations)
+            elif outcome == "expired":
+                # The native verifier reads the real clock. Expire the same
+                # signed warrant, rather than mocking away authorization.
+                _time.sleep(1.1)
+
+            # Temporal retries retain the original headers, including PoP.
+            info.attempt = 2
+            if outcome == "allowed":
+                assert asyncio.run(inbound.execute_activity(inp)) == "ok"
+                next_activity.execute_activity.assert_awaited_once_with(inp)
+            else:
+                with pytest.raises(ApplicationError) as denied:
+                    asyncio.run(inbound.execute_activity(inp))
+                assert denied.value.non_retryable
+                expected = "proof-of-possession" if outcome == "invalid_pop" else outcome
+                assert expected in str(denied.value).lower()
+                next_activity.execute_activity.assert_not_awaited()
+        assert len(requests) == 2
+        assert requests[0].request_hash == requests[1].request_hash
+
+    @pytest.mark.parametrize("async_handler", [False, True], ids=["sync", "async"])
+    @pytest.mark.parametrize("application_error", [False, True], ids=["unexpected", "non_retryable"])
+    def test_non_retryable_handler_failure_never_dispatches(self, async_handler, application_error):
+        import time as _time
+
+        from temporalio.exceptions import ApplicationError
+
+        from tenuo import SigningKey
+
+        control_key, agent_key, approver_key = (SigningKey.generate() for _ in range(3))
+        warrant = self._mint_gated_warrant(control_key, agent_key, approver_key=approver_key)
+        pop = warrant.sign(agent_key, "deploy", {}, int(_time.time()))
+        error = (ApplicationError("approval rejected", non_retryable=True)
+                 if application_error else RuntimeError("broken handler"))
+
+        def handler(request):
+            raise error
+
+        async def async_handler_fn(request):
+            await asyncio.sleep(0)
+            return handler(request)
+
+        plugin = TenuoWorkerInterceptor(TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(), trusted_roots=[control_key.public_key],
+            approval_handler=async_handler_fn if async_handler else handler,
+        ))
+        info, inp = self._build_activity_inputs(warrant, pop)
+        next_activity = MagicMock(execute_activity=AsyncMock(), init=MagicMock())
+        inbound = plugin.intercept_activity(next_activity)
+        with patch("temporalio.activity.info", return_value=info):
+            with pytest.raises(ApplicationError) as exc_info:
+                asyncio.run(inbound.execute_activity(inp))
+        assert exc_info.value.non_retryable
+        next_activity.execute_activity.assert_not_awaited()
+
+    def test_call_outside_capability_is_denied_without_asking_approvers(self):
+        """A gated tool called with arguments the warrant does not grant is denied
+        by authorization; the approval handler is never invoked.
+        """
+        import time as _time
+
+        from temporalio.exceptions import ApplicationError
+
+        from tenuo import Range, SigningKey, Warrant
+
+        control_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        approver_key = SigningKey.generate()
+
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent_key.public_key)
+            .capability("deploy", replicas=Range(1, 10))
+            .required_approvers([approver_key.public_key])
+            .min_approvals(1)
+            .approval_gates({"deploy": None})
+            .ttl(3600)
+            .mint(control_key)
+        )
+        args = {"replicas": 50}
+        pop = warrant.sign(agent_key, "deploy", args, int(_time.time()))
+
+        calls: list = []
+
+        def handler(request):
+            calls.append(request)
+            return self._sign_approval(warrant, approver_key, "deploy", args)
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[control_key.public_key],
+            approval_handler=handler,
+        )
+        plugin = TenuoWorkerInterceptor(cfg)
+        info, inp = self._build_activity_inputs(warrant, pop, args=args)
+
+        with pytest.raises(ApplicationError) as exc_info:
+            self._run(plugin, info, inp)
+        assert exc_info.value.non_retryable
+        assert "replicas" in str(exc_info.value)
+        assert calls == []
 
     def test_malformed_approvals_header_raises_invalid_approval(self):
         """Malformed x-tenuo-approvals must raise InvalidApproval, not be ignored."""
@@ -4896,21 +5245,21 @@ class TestSignalAndUpdateRuntimeDenial:
             self._cleanup(wf_id)
         nxt.handle_signal.assert_called_once_with(sig_input)
 
-    def test_signal_outside_allowlist_denies_and_names_warrant(self):
+    def test_signal_outside_allowlist_is_dropped_and_logged(self, caplog):
+        """A raised denial would fail the run, so an off-list signal is dropped instead."""
         inbound, nxt, _, wf_id = self._stub_inbound(authorized_signals=["add"])
         sig_input = MagicMock(signal="drop_tables")
         try:
             with patch("temporalio.workflow.info", return_value=self._fake_wf_info(wf_id)):
                 loop = asyncio.new_event_loop()
                 try:
-                    with pytest.raises(TemporalConstraintViolation) as excinfo:
-                        loop.run_until_complete(inbound.handle_signal(sig_input))
+                    loop.run_until_complete(inbound.handle_signal(sig_input))
                 finally:
                     loop.close()
         finally:
             self._cleanup(wf_id)
 
-        assert "drop_tables" in str(excinfo.value)
+        assert "Signal 'drop_tables' dropped" in caplog.text
         nxt.handle_signal.assert_not_called()
 
     def test_update_allowed_passes_through(self):
@@ -4934,6 +5283,312 @@ class TestSignalAndUpdateRuntimeDenial:
             self._cleanup(wf_id)
         assert "wipe" in str(excinfo.value)
         nxt.handle_update_validator.assert_not_called()
+
+    def _unregistered_inbound(
+        self,
+        *,
+        authorized_signals=None,
+        authorized_updates=None,
+        run_id="run-early",
+    ):
+        """Inbound interceptor whose run config has not been stored yet.
+
+        Update-with-start delivers the handler before ``execute_workflow``
+        writes ``_workflow_config_store``. The worker still has ``_config``
+        on the interceptor.
+        """
+        from tenuo.temporal._interceptors import _TenuoWorkflowInboundInterceptor
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=_TEMPORAL_TRUST_ROOTS,
+            authorized_signals=authorized_signals,
+            authorized_updates=authorized_updates,
+        )
+        next_interceptor = MagicMock()
+        next_interceptor.handle_signal = AsyncMock(return_value=None)
+        next_interceptor.handle_update_validator = MagicMock(return_value=None)
+        next_interceptor.handle_update_handler = AsyncMock(return_value="pong")
+        next_interceptor.execute_workflow = AsyncMock(return_value="done")
+        inbound = _TenuoWorkflowInboundInterceptor(next_interceptor=next_interceptor)
+        inbound._config = cfg
+        return inbound, next_interceptor, run_id
+
+    def _early_info(self, run_id):
+        info = self._fake_wf_info(run_id)
+        info.headers = {}
+        return info
+
+    def _cleanup_run(self, run_id):
+        from tenuo.temporal._state import (
+            _store_lock,
+            _workflow_config_store,
+            _workflow_headers_store,
+        )
+
+        with _store_lock:
+            _workflow_config_store.pop(run_id, None)
+            _workflow_headers_store.pop(run_id, None)
+
+    def test_update_handler_allowlist_applies_before_run_registration(self):
+        """A handler with no validator still denies when the run is unregistered."""
+        inbound, nxt, run_id = self._unregistered_inbound(authorized_updates=["install"])
+        upd_input = MagicMock(update="ping", headers={})
+        try:
+            with patch("temporalio.workflow.info", return_value=self._early_info(run_id)):
+                loop = asyncio.new_event_loop()
+                try:
+                    with pytest.raises(TemporalConstraintViolation) as excinfo:
+                        loop.run_until_complete(inbound.handle_update_handler(upd_input))
+                finally:
+                    loop.close()
+        finally:
+            self._cleanup_run(run_id)
+        assert "ping" in str(excinfo.value)
+        nxt.handle_update_handler.assert_not_called()
+
+    def test_dropped_signals_share_one_metric_key(self):
+        """The sender picks signal names, so they must not become metric labels."""
+        from tenuo.temporal import TenuoMetrics
+        from tenuo.temporal._observability import _install_dropped_signal_audit_dispatcher
+
+        inbound, _, cfg, wf_id = self._stub_inbound(authorized_signals=["add"])
+        cfg.metrics = TenuoMetrics(prefix="sigdrop_unit")
+        events = []
+        delivered = threading.Event()
+
+        def capture(event):
+            events.append(event)
+            if len(events) == 2:
+                delivered.set()
+
+        cfg.audit_callback = capture
+        _install_dropped_signal_audit_dispatcher(cfg)
+        try:
+            with patch("temporalio.workflow.info", return_value=self._fake_wf_info(wf_id)), \
+                    patch("temporalio.workflow.unsafe.is_replaying", return_value=False), \
+                    patch("temporalio.workflow.now"):
+                loop = asyncio.new_event_loop()
+                try:
+                    for name in ("drop_a", "drop_b"):
+                        loop.run_until_complete(inbound.handle_signal(MagicMock(signal=name)))
+                finally:
+                    loop.close()
+        finally:
+            self._cleanup(wf_id)
+        assert delivered.wait(1)
+        assert list(cfg.metrics.get_stats()["denied"].values()) == [2]
+        assert [e.tool for e in events] == ["signal:drop_a", "signal:drop_b"]
+
+    def test_saturated_audit_queue_never_logs_on_workflow_thread(self):
+        """A blocking logging handler cannot stall queue-full submission."""
+        from tenuo.temporal._observability import _DroppedSignalAuditDispatcher
+
+        event = TemporalAuditEvent(
+            workflow_id="wf",
+            workflow_type="SignalWorkflow",
+            workflow_run_id="run",
+            activity_name="",
+            activity_id="",
+            task_queue="queue",
+            decision="DENY",
+            tool="signal:blocked",
+            arguments={},
+            warrant_id="<no-warrant>",
+            warrant_expires_at=None,
+            warrant_capabilities=[],
+        )
+        dispatcher = object.__new__(_DroppedSignalAuditDispatcher)
+        dispatcher._queue = queue.Queue(maxsize=1)
+        dispatcher._queue.put_nowait((lambda _event: None, event))
+        dispatcher._overflow_lock = threading.Lock()
+        dispatcher._overflow_count = 0
+
+        logger_entered = threading.Event()
+        release_logger = threading.Event()
+        submit_finished = threading.Event()
+        result = []
+
+        def blocking_logger(*_args, **_kwargs):
+            logger_entered.set()
+            release_logger.wait(2)
+
+        def submit():
+            result.append(dispatcher.submit(lambda _event: None, event))
+            submit_finished.set()
+
+        with patch(
+            "tenuo.temporal._observability.logger.error",
+            side_effect=blocking_logger,
+        ):
+            thread = threading.Thread(target=submit)
+            thread.start()
+            try:
+                assert submit_finished.wait(0.5)
+            finally:
+                release_logger.set()
+                thread.join(timeout=2)
+
+        assert not logger_entered.is_set()
+        assert result == [False]
+        assert dispatcher._overflow_count == 1
+
+    def test_signal_allowlist_applies_before_run_registration(self, caplog):
+        inbound, nxt, run_id = self._unregistered_inbound(authorized_signals=["add"])
+        sig_input = MagicMock(signal="drop_tables", headers={})
+        try:
+            with patch("temporalio.workflow.info", return_value=self._early_info(run_id)):
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(inbound.handle_signal(sig_input))
+                finally:
+                    loop.close()
+        finally:
+            self._cleanup_run(run_id)
+        assert "Signal 'drop_tables' dropped" in caplog.text
+        nxt.handle_signal.assert_not_called()
+
+    def test_start_headers_replace_empty_early_registration(self):
+        """The workflow body still records start headers after an early handler."""
+        from tenuo.temporal._state import _store_lock, _workflow_headers_store
+
+        inbound, nxt, run_id = self._unregistered_inbound(authorized_updates=["ping"])
+        upd_input = MagicMock(update="ping", headers={})
+        seen = {}
+
+        async def _capture(_input):
+            with _store_lock:
+                seen["headers"] = dict(_workflow_headers_store.get(run_id, {}))
+            return "done"
+
+        nxt.execute_workflow = AsyncMock(side_effect=_capture)
+        start = MagicMock()
+        start.headers = {"x-tenuo-warrant": MagicMock(data=b"warrant-bytes")}
+        try:
+            with patch("temporalio.workflow.info", return_value=self._early_info(run_id)):
+                inbound.handle_update_validator(upd_input)
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(inbound.execute_workflow(start))
+                finally:
+                    loop.close()
+        finally:
+            self._cleanup_run(run_id)
+        assert seen["headers"]["x-tenuo-warrant"] == b"warrant-bytes"
+        nxt.handle_update_validator.assert_called_once_with(upd_input)
+
+    @pytest.mark.parametrize("entrypoint", ["signal", "validator", "handler"])
+    @pytest.mark.parametrize("failure", ["denied", "raised", "cancelled"])
+    def test_early_handler_failure_releases_registration(self, entrypoint, failure):
+        """No workflow body/finally is needed to release early run state."""
+        from tenuo.temporal._state import _store_lock, _workflow_config_store, _workflow_headers_store
+
+        inbound, nxt, run_id = self._unregistered_inbound(
+            authorized_signals=["allowed"], authorized_updates=["allowed"],
+        )
+        info = self._early_info(run_id)
+        info.headers = {"x-tenuo-key-id": MagicMock(data=b"agent1")}
+        name = "blocked" if failure == "denied" else "allowed"
+        inp = MagicMock(signal=name, update=name, headers={})
+        error_type = {
+            "denied": TemporalConstraintViolation,
+            "raised": RuntimeError,
+            "cancelled": asyncio.CancelledError,
+        }[failure]
+        method = {
+            "signal": "handle_signal",
+            "validator": "handle_update_validator",
+            "handler": "handle_update_handler",
+        }[entrypoint]
+
+        def fail(_input):
+            with _store_lock:
+                assert _workflow_config_store[run_id] is inbound._config
+                assert _workflow_headers_store[run_id]["x-tenuo-key-id"] == b"agent1"
+            raise error_type("handler failed")
+
+        getattr(nxt, method).side_effect = fail
+        try:
+            # An off-list signal is dropped, not raised.
+            dropped = entrypoint == "signal" and failure == "denied"
+            with patch("temporalio.workflow.info", return_value=info):
+                with contextlib.nullcontext() if dropped else pytest.raises(error_type):
+                    result = getattr(inbound, method)(inp)
+                    if entrypoint != "validator":
+                        asyncio.run(result)
+            with _store_lock:
+                assert run_id not in _workflow_config_store
+                assert run_id not in _workflow_headers_store
+            if failure == "denied":
+                getattr(nxt, method).assert_not_called()
+            nxt.execute_workflow.assert_not_called()
+        finally:
+            self._cleanup_run(run_id)
+
+    @pytest.mark.parametrize("start_body", [False, True], ids=["handlers_only", "body_takes_ownership"])
+    def test_overlapping_early_handlers_keep_registration_until_owner_exits(self, start_body):
+        from tenuo.temporal._state import _store_lock, _workflow_config_store, _workflow_headers_store
+
+        inbound, nxt, run_id = self._unregistered_inbound(authorized_updates=["ping"])
+        info = self._early_info(run_id)
+        info.headers = {"x-tenuo-key-id": MagicMock(data=b"agent1")}
+
+        def assert_registered():
+            with _store_lock:
+                assert _workflow_config_store[run_id] is inbound._config
+                assert _workflow_headers_store[run_id]["x-tenuo-key-id"] == b"agent1"
+
+        async def run():
+            entered = [asyncio.Event(), asyncio.Event()]
+            release = [asyncio.Event(), asyncio.Event()]
+            body_entered, body_release = asyncio.Event(), asyncio.Event()
+
+            async def handler(inp):
+                assert_registered()
+                entered[inp.id].set()
+                await release[inp.id].wait()
+                assert_registered()
+                return "pong"
+
+            async def body(_input):
+                body_entered.set()
+                await body_release.wait()
+                return "done"
+
+            nxt.handle_update_handler = AsyncMock(side_effect=handler)
+            nxt.execute_workflow = AsyncMock(side_effect=body)
+            tasks = []
+            try:
+                for index in range(2):
+                    tasks.append(asyncio.create_task(inbound.handle_update_handler(
+                        MagicMock(update="ping", id=index, headers={}),
+                    )))
+                    await entered[index].wait()
+                if start_body:
+                    tasks.append(asyncio.create_task(inbound.execute_workflow(MagicMock(headers=info.headers))))
+                    await body_entered.wait()
+                release[0].set()
+                assert await tasks[0] == "pong"
+                assert_registered()
+                release[1].set()
+                assert await tasks[1] == "pong"
+                if start_body:
+                    assert_registered()
+                    body_release.set()
+                    assert await tasks[2] == "done"
+                with _store_lock:
+                    assert run_id not in _workflow_config_store
+                    assert run_id not in _workflow_headers_store
+            finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            with patch("temporalio.workflow.info", return_value=info):
+                asyncio.run(asyncio.wait_for(run(), timeout=5))
+        finally:
+            self._cleanup_run(run_id)
 
 
 class TestSetActivityApprovalsOverwriteWarning:

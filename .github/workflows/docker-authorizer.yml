@@ -50,21 +50,22 @@ jobs:
         run: |
           BUILD=$(grep -oP 'AUTHORIZER_BUILD:\s*u32\s*=\s*\K\d+' tenuo-core/src/bin/authorizer.rs || echo "1")
           CRATE_VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' tenuo-core/Cargo.toml)
-          FULL_VERSION="${CRATE_VERSION}+authz.${BUILD}"
-          
+
+          # Docker tags reject '+'. Keep the build suffix hyphenated
+          # ("0.3.2-authz-3"), not dotted ("0.3.2-authz.3"): a dotted suffix
+          # has more dots than the crate tag and wins the Hub version badge.
           if [ -n "${{ github.event.inputs.version_tag }}" ]; then
-            VERSION="${{ github.event.inputs.version_tag }}"
+            DOCKER_VERSION="${{ github.event.inputs.version_tag }}"
+            DOCKER_VERSION="${DOCKER_VERSION/+authz./-authz-}"
+            DOCKER_VERSION="${DOCKER_VERSION//+/-}"
           else
-            VERSION="${FULL_VERSION}"
+            DOCKER_VERSION="${CRATE_VERSION}-authz-${BUILD}"
           fi
-          
-          # Docker tags don't allow '+' (SemVer build metadata), replace with '-'
-          DOCKER_VERSION="${VERSION//+/-}"
           echo "version=${DOCKER_VERSION}" >> $GITHUB_OUTPUT
           echo "crate_version=${CRATE_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to Docker Hub
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -80,7 +81,7 @@ jobs:
 
       - name: Build and push by digest
         id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ./tenuo-core
           file: ./tenuo-core/deploy/docker/Dockerfile.authorizer
@@ -119,16 +120,17 @@ jobs:
         run: |
           BUILD=$(grep -oP 'AUTHORIZER_BUILD:\s*u32\s*=\s*\K\d+' tenuo-core/src/bin/authorizer.rs || echo "1")
           CRATE_VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' tenuo-core/Cargo.toml)
-          FULL_VERSION="${CRATE_VERSION}+authz.${BUILD}"
-          
+
+          # Docker tags reject '+'. Keep the build suffix hyphenated
+          # ("0.3.2-authz-3"), not dotted ("0.3.2-authz.3"): a dotted suffix
+          # has more dots than the crate tag and wins the Hub version badge.
           if [ -n "${{ github.event.inputs.version_tag }}" ]; then
-            VERSION="${{ github.event.inputs.version_tag }}"
+            DOCKER_VERSION="${{ github.event.inputs.version_tag }}"
+            DOCKER_VERSION="${DOCKER_VERSION/+authz./-authz-}"
+            DOCKER_VERSION="${DOCKER_VERSION//+/-}"
           else
-            VERSION="${FULL_VERSION}"
+            DOCKER_VERSION="${CRATE_VERSION}-authz-${BUILD}"
           fi
-          
-          # Docker tags don't allow '+' (SemVer build metadata), replace with '-'
-          DOCKER_VERSION="${VERSION//+/-}"
           echo "version=${DOCKER_VERSION}" >> $GITHUB_OUTPUT
           echo "crate_version=${CRATE_VERSION}" >> $GITHUB_OUTPUT
 
@@ -140,7 +142,7 @@ jobs:
           merge-multiple: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to Docker Hub
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -154,10 +156,15 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ steps.version.outputs.version }}
+            # Order matters for the Docker Hub version badge (sort=date):
+            # it shows the newest tag, unless that tag is "latest", in which
+            # case it shows the same-digest tag with the most dots (oldest
+            # wins a tie). Crate version first, "latest" last. Never a bare
+            # numeric SHA: that is what made the badge read 0777990.
             type=raw,value=${{ steps.version.outputs.crate_version }}
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=sha,prefix=sha-
             type=raw,value=latest
-            type=sha,prefix=
 
       - name: Create manifest list and push
         working-directory: /tmp/digests

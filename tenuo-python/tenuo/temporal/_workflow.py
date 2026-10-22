@@ -794,6 +794,7 @@ async def _bind_warrant_headers(
     args: Optional[List[Any]],
     compress: bool,
     extra_kwargs: Dict[str, Any],
+    warrant_chain: Optional[List[Any]] = None,
 ) -> None:
     """Resolve warrant source (if needed) and bind headers to the interceptor.
 
@@ -818,7 +819,7 @@ async def _bind_warrant_headers(
         )
     client_interceptor.set_headers_for_workflow(
         workflow_id,
-        tenuo_headers(warrant, key_id, compress=compress),
+        tenuo_headers(warrant, key_id, compress=compress, warrant_chain=warrant_chain),
     )
 
 
@@ -833,6 +834,7 @@ async def execute_workflow_authorized(
     warrant_source: Optional[WarrantSource] = None,
     args: Optional[List[Any]] = None,
     compress: bool = True,
+    warrant_chain: Optional[List[Any]] = None,
     **execute_kwargs: Any,
 ) -> Any:
     """Execute a workflow with deterministic per-workflow header binding.
@@ -848,6 +850,10 @@ async def execute_workflow_authorized(
     ``client_interceptor`` is optional when the client was created with
     ``Client.connect(plugins=[TenuoTemporalPlugin(...)])``.  The interceptor
     is discovered automatically from the client's active config.
+
+    For a delegated ``warrant``, pass its parents root-first (excluding the
+    leaf) as ``warrant_chain`` so workers that trust only the root can verify
+    it; see :func:`tenuo_headers`.
     """
     resolved = _resolve_client_interceptor(client, client_interceptor)
     await _bind_warrant_headers(
@@ -860,6 +866,7 @@ async def execute_workflow_authorized(
         args=args,
         compress=compress,
         extra_kwargs=execute_kwargs,
+        warrant_chain=warrant_chain,
     )
     return await client.execute_workflow(
         workflow_run_fn,
@@ -880,6 +887,7 @@ async def start_workflow_authorized(
     warrant_source: Optional["WarrantSource"] = None,
     args: Optional[List[Any]] = None,
     compress: bool = True,
+    warrant_chain: Optional[List[Any]] = None,
     **start_kwargs: Any,
 ) -> Any:
     """Start a workflow with Tenuo authorization headers, returning immediately.
@@ -891,6 +899,9 @@ async def start_workflow_authorized(
 
     ``client_interceptor`` is optional when the client was created with
     ``Client.connect(plugins=[TenuoTemporalPlugin(...)])``.
+
+    ``warrant_chain`` carries a delegated warrant's parents, as in
+    :func:`execute_workflow_authorized`.
     """
     resolved = _resolve_client_interceptor(client, client_interceptor)
     await _bind_warrant_headers(
@@ -903,6 +914,7 @@ async def start_workflow_authorized(
         args=args,
         compress=compress,
         extra_kwargs=start_kwargs,
+        warrant_chain=warrant_chain,
     )
     return await client.start_workflow(
         workflow_run_fn,
@@ -1194,6 +1206,7 @@ async def create_scheduled_workflow_with_warrant(
     compress: bool = True,
     memo: Optional[dict] = None,
     action_options: Optional[dict] = None,
+    warrant_chain: Optional[List[Any]] = None,
     **schedule_kwargs: Any,
 ) -> Any:
     """Create a Temporal Schedule whose workflow starts carry Tenuo headers.
@@ -1230,7 +1243,7 @@ async def create_scheduled_workflow_with_warrant(
             f"action_options cannot override helper-managed fields: {names}"
         )
 
-    raw_headers = tenuo_headers(warrant, key_id, compress=compress)
+    raw_headers = tenuo_headers(warrant, key_id, compress=compress, warrant_chain=warrant_chain)
     payload_headers = {name: Payload(data=value) for name, value in raw_headers.items()}
 
     action = ScheduleActionStartWorkflow(  # type: ignore[call-overload]
@@ -1343,13 +1356,14 @@ async def tenuo_complete_async_activity(
                     "trusted_roots_provider returned empty during async completion; "
                     "retaining last good roots"
                 )
-    with worker_cfg._provider_state_lock:
-        roots = list(
-            refreshed_roots
-            or worker_cfg._last_good_trusted_roots
-            or worker_cfg.trusted_roots
-            or []
-        )
+    # Snapshot reads need no lock: the last-known-good record is immutable and
+    # swapped in whole, so a concurrent refresh cannot be observed half-applied.
+    roots = list(
+        refreshed_roots
+        or worker_cfg._last_good_trusted_roots
+        or worker_cfg.trusted_roots
+        or []
+    )
     if not roots:
         raise TenuoContextError(
             "tenuo_complete_async_activity: trusted roots are required."
@@ -1392,20 +1406,20 @@ async def tenuo_complete_async_activity(
                     "revocation_list_provider returned None during async completion; "
                     "retaining last good revocation list"
                 )
-    with worker_cfg._provider_state_lock:
-        if (
-            refreshed_revocations is not _MISSING_REVOCATION_LIST
-            and worker_cfg._last_good_revocation_list is not None
-        ):
-            _ensure_srl_refresh_not_rolled_back(
-                worker_cfg._last_good_revocation_list,
-                refreshed_revocations,
-            )
-        revocations = (
-            refreshed_revocations
-            if refreshed_revocations is not _MISSING_REVOCATION_LIST
-            else worker_cfg._last_good_revocation_list
+    last_good_revocations = worker_cfg._last_good_revocation_list
+    if (
+        refreshed_revocations is not _MISSING_REVOCATION_LIST
+        and last_good_revocations is not None
+    ):
+        _ensure_srl_refresh_not_rolled_back(
+            last_good_revocations,
+            refreshed_revocations,
         )
+    revocations = (
+        refreshed_revocations
+        if refreshed_revocations is not _MISSING_REVOCATION_LIST
+        else last_good_revocations
+    )
 
     from tenuo.exceptions import ConfigurationError
     from tenuo_core import Authorizer
@@ -1426,11 +1440,14 @@ async def tenuo_complete_async_activity(
             "set_revocation_list; upgrade tenuo_core to a build that exposes "
             "revocation-list installation."
         ) from exc
-    with worker_cfg._provider_state_lock:
-        if refreshed_roots is not None:
-            worker_cfg._last_good_trusted_roots = list(refreshed_roots)
-        if refreshed_revocations is not _MISSING_REVOCATION_LIST:
-            worker_cfg._last_good_revocation_list = refreshed_revocations
+    worker_cfg._record_provider_snapshot(
+        trusted_roots=refreshed_roots,
+        revocation_list=(
+            None
+            if refreshed_revocations is _MISSING_REVOCATION_LIST
+            else refreshed_revocations
+        ),
+    )
     try:
         authorizer.verify_chain(chain)
     except Exception as exc:

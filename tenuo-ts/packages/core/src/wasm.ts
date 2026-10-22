@@ -158,6 +158,7 @@ export type WasmExplainField = {
   constraint: unknown;
   value?: unknown;
   satisfied: boolean;
+  reason_code?: string;
   reason?: string;
 };
 
@@ -207,6 +208,7 @@ export type WasmAttestation = {
 export type WasmApprovalInfo = {
   approver_public_key: string;
   request_hash: string;
+  nonce: string;
   external_id: string;
   approved_at: number;
   expires_at: number;
@@ -259,6 +261,29 @@ export type WasmContext = {
   loadRevocationList(srl: string): void;
   signRevocationList(ids: string[]): string;
   signPop(session: WasmSession, tool: string, args: unknown): string;
+  signMeta(
+    session: WasmSession,
+    tool: string,
+    argsJson: string,
+    timestamp: number,
+    approvals?: unknown,
+  ): { warrant: string; signature: string; approvals?: string[] };
+  /** Holder proof only; does not authorize execution. */
+  verifyMetaPop(
+    warrant: string,
+    signature: string,
+    tool: string,
+    argsJson: string,
+    timestamp: number,
+  ): boolean;
+  /** Compatibility alias for verifyMetaPop. */
+  verifyMeta(
+    warrant: string,
+    signature: string,
+    tool: string,
+    argsJson: string,
+    timestamp: number,
+  ): boolean;
   authorizePresented(
     warrants: unknown,
     tool: string,
@@ -300,7 +325,7 @@ type Generated = {
     ttlSeconds?: number,
     warrantExpiresAt?: number,
   ): string;
-  sdkInspectApproval(envelope: string): WasmApprovalInfo;
+  sdkInspectApproval(envelope: string | Uint8Array): WasmApprovalInfo;
   sdkSignRevocationList(ids: string[], issuerSecret: Uint8Array): string;
   sdkSignRevocationListVersioned(ids: string[], version: number | undefined, issuerSecret: Uint8Array): string;
   sdkSignPublishedRevocationList(ids: string[], version: number, issuerSecret: Uint8Array): string;
@@ -321,6 +346,7 @@ type Generated = {
     tool: string,
     args: unknown,
   ): { approval_required: boolean; tool: string; error?: string };
+  parse_strict_json(jsonText: string): void;
 };
 
 let loaded: Generated | undefined;
@@ -458,6 +484,19 @@ function throwIfGateError(error: string | undefined): void {
   if (error) {
     throw new TenuoConfigurationError(error);
   }
+}
+
+/**
+ * Parse JSON text and reject a repeated key in any object.
+ *
+ * `verify()` receives an object the host already parsed. A duplicate key is
+ * gone by then. Call this while the text is still available. After the check,
+ * the value is `JSON.parse` of the original text, so each key is an own data
+ * property and `null` stays `null`.
+ */
+export function parseStrictJson(text: string): unknown {
+  loadWasm().parse_strict_json(text);
+  return JSON.parse(text);
 }
 
 /**

@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tenuo.a2a import A2AServer
+from tenuo.a2a import A2AClient, A2AServer
 from tenuo.a2a.errors import (
     ChainValidationError,
     UntrustedIssuerError,
@@ -918,3 +918,235 @@ class TestWarrantStackEndToEnd:
             _preloaded_parents=parents,
         )
         assert validated is not None
+
+
+class TestTrustDelegatedWarrantStack:
+    """trust_delegated=False rejects a delegated chain sent as a WarrantStack."""
+
+    @staticmethod
+    def _chain_and_server(trust_delegated):
+        core = pytest.importorskip("tenuo_core")
+        root_key = core.SigningKey.generate()
+        mid_key = core.SigningKey.generate()
+        leaf_key = core.SigningKey.generate()
+        root_w = core.Warrant.issue(
+            keypair=root_key,
+            holder=root_key.public_key,
+            capabilities={"ping": {}},
+            ttl_seconds=3600,
+        )
+        mid_w = root_w.attenuate(
+            capabilities={"ping": {}},
+            signing_key=root_key,
+            holder=mid_key.public_key,
+            ttl_seconds=1800,
+        )
+        # Leaf is issued by mid_key, which is not a trusted root, so it is only
+        # acceptable as a delegated warrant.
+        leaf_w = mid_w.attenuate(
+            capabilities={"ping": {}},
+            signing_key=mid_key,
+            holder=leaf_key.public_key,
+            ttl_seconds=900,
+        )
+        server = A2AServer(
+            name="Trust Test",
+            url="https://trust.example.com",
+            public_key="server_key",
+            trusted_issuers=[root_key.public_key.to_bytes().hex()],
+            trust_delegated=trust_delegated,
+            require_warrant=True,
+            check_replay=False,
+            require_audience=False,
+            require_pop=True,
+            audit_log=None,
+        )
+
+        @server.skill("ping")
+        async def ping():
+            return "pong"
+
+        pop = bytes(leaf_w.sign(leaf_key, "ping", {}, int(time.time())))
+        return server, [root_w, mid_w], leaf_w, pop
+
+    @pytest.mark.asyncio
+    async def test_stack_rejected_when_trust_delegated_false(self):
+        server, parents, leaf_w, pop = self._chain_and_server(trust_delegated=False)
+        with pytest.raises(UntrustedIssuerError):
+            await server.validate_warrant(leaf_w.to_base64(), "ping", {}, _preloaded_parents=parents, pop_signature=pop)
+
+    @pytest.mark.asyncio
+    async def test_legacy_chain_rejected_when_trust_delegated_false(self):
+        server, parents, leaf_w, pop = self._chain_and_server(trust_delegated=False)
+        with pytest.raises(UntrustedIssuerError):
+            await server.validate_warrant(
+                leaf_w.to_base64(),
+                "ping",
+                {},
+                warrant_chain=";".join(p.to_base64() for p in parents),
+                pop_signature=pop,
+            )
+
+    @pytest.mark.asyncio
+    async def test_stack_accepted_when_trust_delegated_true(self):
+        server, parents, leaf_w, pop = self._chain_and_server(trust_delegated=True)
+        validated = await server.validate_warrant(
+            leaf_w.to_base64(), "ping", {}, _preloaded_parents=parents, pop_signature=pop
+        )
+        assert validated is not None
+
+
+class TestClientSignedTask:
+    """A2AClient signs PoP with plain arguments and a real warrant chain."""
+
+    @pytest.mark.asyncio
+    async def test_send_task_signs_pop_for_parent_child_chain(self):
+        """send_task reaches an A2AServer that requires proof of possession."""
+        httpx = pytest.importorskip("httpx")
+        core = pytest.importorskip("tenuo_core")
+
+        root_key = core.SigningKey.generate()
+        child_key = core.SigningKey.generate()
+        parent = core.Warrant.issue(
+            keypair=root_key,
+            holder=root_key.public_key,
+            capabilities={"search": {}},
+            ttl_seconds=3600,
+        )
+        child = parent.attenuate(
+            capabilities={"search": {}},
+            signing_key=root_key,
+            holder=child_key.public_key,
+            ttl_seconds=900,
+        )
+
+        server = A2AServer(
+            name="PoP Agent",
+            url="http://test",
+            public_key="server_key",
+            trusted_issuers=[root_key.public_key.to_bytes().hex()],
+            trust_delegated=True,
+            require_warrant=True,
+            require_audience=False,
+            require_pop=True,
+            check_replay=False,
+            audit_log=None,
+        )
+
+        @server.skill("search")
+        async def search(query: str) -> str:
+            return f"found {query}"
+
+        transport = httpx.ASGITransport(app=server.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+            client = A2AClient("http://test")
+            client._client = http
+            result = await client.send_task(
+                message="Search for papers",
+                warrant=child,
+                skill="search",
+                arguments={"query": "AI safety"},
+                warrant_chain=[parent],
+                signing_key=child_key,
+            )
+
+        assert result.status == "complete"
+        assert result.output == "found AI safety"
+
+    @staticmethod
+    def _signed_setup():
+        """Parent and child warrants and a server that requires proof of possession."""
+        pytest.importorskip("httpx")
+        core = pytest.importorskip("tenuo_core")
+        root_key = core.SigningKey.generate()
+        child_key = core.SigningKey.generate()
+        parent = core.Warrant.issue(
+            keypair=root_key,
+            holder=root_key.public_key,
+            capabilities={"search": {}},
+            ttl_seconds=3600,
+        )
+        child = parent.attenuate(
+            capabilities={"search": {}},
+            signing_key=root_key,
+            holder=child_key.public_key,
+            ttl_seconds=900,
+        )
+        server = A2AServer(
+            name="PoP Agent",
+            url="http://test",
+            public_key="server_key",
+            trusted_issuers=[root_key.public_key.to_bytes().hex()],
+            trust_delegated=True,
+            require_warrant=True,
+            require_audience=False,
+            require_pop=True,
+            check_replay=False,
+            audit_log=None,
+        )
+        return server, parent, child, child_key
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            {"query": "x", "limit": 5, "exact": True, "ratio": 0.5},
+            {"query": "x", "tags": ["a", "b"], "filters": {"year": 2026}},
+            {"query": "x", "cursor": None},
+            {"query": "naïve ✓"},
+        ],
+        ids=["scalars", "nested", "null", "unicode"],
+    )
+    async def test_send_task_signs_pop_for_any_argument_types(self, arguments):
+        """The server verifies proofs signed over non-string and nested arguments."""
+        import httpx
+
+        server, parent, child, child_key = self._signed_setup()
+
+        @server.skill("search")
+        async def search(**kwargs) -> str:
+            return "ok"
+
+        transport = httpx.ASGITransport(app=server.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+            client = A2AClient("http://test")
+            client._client = http
+            result = await client.send_task(
+                message="Search",
+                warrant=child,
+                skill="search",
+                arguments=arguments,
+                warrant_chain=[parent],
+                signing_key=child_key,
+            )
+
+        assert result.status == "complete"
+
+    @pytest.mark.asyncio
+    async def test_send_task_streaming_signs_pop(self):
+        """send_task_streaming signs proof of possession the same way."""
+        import httpx
+
+        server, parent, child, child_key = self._signed_setup()
+
+        @server.skill("search")
+        async def search(query: str, limit: int) -> str:
+            return f"found {query} {limit}"
+
+        transport = httpx.ASGITransport(app=server.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+            client = A2AClient("http://test")
+            client._client = http
+            events = [
+                event
+                async for event in client.send_task_streaming(
+                    message="Search",
+                    warrant=child,
+                    skill="search",
+                    arguments={"query": "papers", "limit": 3},
+                    warrant_chain=[parent],
+                    signing_key=child_key,
+                )
+            ]
+
+        assert "found papers 3" in repr(events)

@@ -58,7 +58,7 @@ They're the core security building blocks across all Tenuo integrations.
 import logging
 import posixpath
 import shlex
-from typing import TYPE_CHECKING, Any, Dict, List, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 logger = logging.getLogger("tenuo.constraints")
 
@@ -77,6 +77,8 @@ if TYPE_CHECKING:
 
 try:
     from tenuo_core import (
+        All,  # AND composite, used to build path_glob()
+        Pattern,  # Glob over the whole string, used to build path_glob()
         Subpath,  # Secure path containment constraint
         UrlSafe,  # SSRF-safe URL constraint
     )
@@ -101,10 +103,57 @@ except ImportError:
         def is_safe(self, url: str) -> bool:
             raise ImportError("tenuo_core not available")
 
+    class All:  # type: ignore[no-redef]
+        """Fallback - Rust extension not available."""
+
+        def __init__(self, *args, **kwargs):
+            raise ImportError("tenuo_core not available - rebuild with maturin")
+
+    class Pattern:  # type: ignore[no-redef]
+        """Fallback - Rust extension not available."""
+
+        def __init__(self, *args, **kwargs):
+            raise ImportError("tenuo_core not available - rebuild with maturin")
+
 
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+
+def path_glob(
+    root: str,
+    glob: str,
+    *,
+    case_sensitive: bool = True,
+    allow_equal: bool = True,
+) -> Any:
+    """
+    A traversal-safe filesystem glob: the value must stay under ``root`` and
+    match ``glob``.
+
+    ``Pattern`` on its own is a generic string glob whose ``*`` crosses ``/``,
+    so ``Pattern("*.json")`` admits ``/etc/passwd.json``. Pairing it with
+    ``Subpath`` is what makes it a filesystem boundary.
+
+    The glob is tested against the whole path, not against the part below
+    ``root``, so it matches at any depth::
+
+        path_glob("/workspace", "*.json")
+        # /workspace/reports/q3.json  OK
+        # /workspace/secrets.env      BLOCKED (glob)
+        # /etc/passwd.json            BLOCKED (root)
+
+    A delegatee can narrow this to a single ``Exact`` path the parent already
+    admits, or to a tighter ``path_glob``. Narrowing to a value outside the
+    root, or one the glob rejects, raises ``MonotonicityError``.
+    """
+    return All(
+        [
+            Subpath(root, case_sensitive=case_sensitive, allow_equal=allow_equal),
+            Pattern(glob),
+        ]
+    )
 
 
 def ensure_constraint(value: Any) -> Any:
@@ -380,6 +429,12 @@ class Shlex:
         ")",  # Subshells
     }
 
+    # shlex with punctuation_chars=True emits every unquoted run of these
+    # characters as one token, so "|&", ">|", "&>", "<>", ">&" and other
+    # combinations never equal a single entry in DANGEROUS_TOKENS. Any
+    # unquoted, unescaped run of these characters is rejected.
+    OPERATOR_CHARS: frozenset = frozenset("();<>|&")
+
     # Characters that trigger shell expansion (checked in raw string)
     # These are dangerous even inside double quotes ("$VAR" expands)
     EXPANSION_CHARS: Set[str] = {"$", "`"}
@@ -415,6 +470,70 @@ class Shlex:
             raise ValueError("Shlex requires at least one allowed binary")
 
         self.allowed_bins: Set[str] = set(allow)
+
+    @classmethod
+    def unquoted_operator_tokens(cls, value: str) -> List[str]:
+        r"""Return unquoted, unescaped runs of shell operator characters.
+
+        ``shlex`` removes quotes and escapes from its output, so inspecting its
+        tokens cannot distinguish the operator ``|&`` from the literal
+        arguments ``'|&'`` or ``\|\&``. Scan the original source while using
+        the same quote, escape, and comment boundaries as the parser.
+        """
+        operators: List[str] = []
+        current: List[str] = []
+        quote: Optional[str] = None
+        escaped = False
+
+        def flush() -> None:
+            if current:
+                operators.append("".join(current))
+                current.clear()
+
+        for char in value:
+            if escaped:
+                escaped = False
+                continue
+
+            if quote == "'":
+                # Backslashes are literal inside POSIX single quotes.
+                if char == quote:
+                    quote = None
+                continue
+
+            if quote == '"':
+                if char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+                continue
+
+            if char == "\\":
+                flush()
+                escaped = True
+            elif char in {"'", '"'}:
+                flush()
+                quote = char
+            elif char == "#":
+                # shlex treats the remainder of an unquoted comment as inert.
+                flush()
+                break
+            elif char in cls.OPERATOR_CHARS:
+                current.append(char)
+            else:
+                flush()
+
+        flush()
+        return operators
+
+    @classmethod
+    def dangerous_operator_tokens(cls, value: str, tokens: List[str]) -> List[str]:
+        """Return dangerous operators without misclassifying merged literals."""
+        dangerous = [token for token in tokens if token in cls.DANGEROUS_TOKENS]
+        for token in cls.unquoted_operator_tokens(value):
+            if token not in dangerous:
+                dangerous.append(token)
+        return dangerous
 
     def matches(self, value: Any) -> bool:
         """Check if command string is safe to execute.
@@ -481,11 +600,15 @@ class Shlex:
 
         # R3: Dangerous token check
         # Because we used punctuation_chars=True, any unquoted operator
-        # is guaranteed to be its own token.
-        for token in tokens:
-            if token in self.DANGEROUS_TOKENS:
-                logger.debug(f"Shlex rejected operator token '{token}' in: {value!r}")
-                return False
+        # is guaranteed to be its own token, possibly merged with adjacent
+        # operator characters (see OPERATOR_CHARS).
+        # Preserve the former conservative treatment of the standard operator
+        # tokens even when quoted or escaped (for example find's ``\;``), while
+        # using the raw source to distinguish newly covered merged operators
+        # from quoted/escaped literal arguments.
+        for token in self.dangerous_operator_tokens(value, tokens):
+            logger.debug(f"Shlex rejected operator token '{token}' in: {value!r}")
+            return False
 
         return True
 
@@ -509,6 +632,7 @@ __all__ = [
     "Shlex",
     # Helper functions
     "ensure_constraint",
+    "path_glob",
     # Capability API
     "Capability",
     "Constraints",

@@ -204,10 +204,10 @@ async def read_file(path: str, maxSize: int = 4096) -> str:
 ```
 
 The middleware:
-- Extracts warrant + PoP from `params._meta.tenuo`
+- Extracts warrant + PoP from `params._meta.tenuo` or the reserved `arguments._tenuo`
 - Verifies the warrant chain, signature, constraints, and PoP
-- Strips `tenuo` from `_meta` before forwarding to the handler
-- Returns `-32001` (denied) or `-32002` (approval required) on failure
+- Strips the authorization envelope before forwarding to the handler
+- On failure, returns a tool result with `isError: true` whose `structuredContent.tenuo.code` is `-32001` (denied), `-32002` (approval required) or `-32602` (invalid params); it is not a JSON-RPC error response
 
 Install the `tenuo[fastmcp]` extra, which pins FastMCP ≥3.2.1 (includes [hardened client parsing](https://github.com/PrefectHQ/fastmcp/pull/3778) of tool error results).
 
@@ -243,7 +243,61 @@ async with SecureMCPClient(
     inject_warrant=True,
 ) as client:
     ...
+
+# Gateway that drops params._meta (proxy/aggregator compatibility)
+async with SecureMCPClient(
+    url="https://gateway.example.com/mcp",
+    transport="http",
+    inject_warrant="argument",
+) as client:
+    ...
 ```
+
+`inject_warrant="argument"` places the same envelope in the reserved `_tenuo`
+tool argument. The PoP covers only the real tool arguments, excluding `_tenuo`.
+`MCPVerifier` strips the carrier before constraint extraction or tool dispatch
+and denies the request if `_meta.tenuo` and `_tenuo` are both present but differ.
+
+On the server, use a middleware so tool signatures stay plain: `TenuoMiddleware`
+on FastMCP, or `TenuoServerMiddleware` on the official SDK's `MCPServer`
+(`mcp>=2`). Both verify the envelope from either carrier and remove it before
+the SDK validates the arguments. A decorated tool cannot receive `_tenuo` as a
+parameter itself: the SDK builds a pydantic model from the signature, and
+pydantic rejects field names with a leading underscore. Only a raw `tools/call`
+handler that reads `params.arguments` directly can pass the carrier to
+`MCPVerifier.verify()` by hand.
+
+```python
+from mcp.server.mcpserver import MCPServer
+from tenuo import Authorizer, PublicKey
+from tenuo.mcp import MCPVerifier, TenuoServerMiddleware
+
+verifier = MCPVerifier(authorizer=Authorizer(trusted_roots=[PublicKey.from_bytes(root_pub)]))
+authorization = TenuoServerMiddleware(verifier)
+mcp = MCPServer("app", middleware=[authorization])
+
+@authorization.tool(mcp)
+def read_file(path: str) -> str:
+    return open(path).read()
+```
+
+`TenuoServerMiddleware` requires registration through `@authorization.tool(mcp)`
+instead of `@mcp.tool()`. It uses the SDK's public decorator and forwards its
+options, including `name="alias"`. Registration and guarding happen together,
+so decorator order cannot leave the registered callback unguarded.
+The guard runs after SDK argument validation and refuses to
+execute if the final arguments differ from the verified request. Callers must
+explicitly supply defaults and sign the exact final values. Added defaults,
+coercions, transforming validators, changed argument names, nulls, and non-JSON
+Python values fail closed; only the SDK's injected `Context` is excluded.
+Keep protected effects out of validators and dependency resolvers and inside
+the guarded function body. This check does not repeat verification or consume
+the nonce twice.
+
+For a **low-level `Server` only**, `TenuoServerMiddleware(verifier,
+raw_handler=True)` permits an undecorated raw handler whose owner guarantees
+that it executes the returned clean argument map unchanged. Never use that
+option to bypass the guard on `MCPServer` tools.
 
 ### Pattern 3: MCPVerifier (Framework-Agnostic Server)
 
@@ -341,9 +395,11 @@ except MCPApprovalRequired as e:
     )
 ```
 
-### JSON-RPC Error Codes
+### Denial Codes
 
-| Code | Meaning | `error.data` | Action |
+`TenuoMiddleware` and `TenuoServerMiddleware` return denials as tool results with `isError: true`, the reason as text, and the code below in `structuredContent.tenuo.code` (with `request_hash`, `got`, `need` beside it). `SecureMCPClient` reads that block (raising `MCPApprovalRequired` for `-32002`). A raw handler that uses `MCPVerifier` directly can send the code as a JSON-RPC error with `result.to_jsonrpc_error()`, which puts the extra fields in `error.data`.
+
+| Code | Meaning | Extra fields | Action |
 |------|---------|--------------|--------|
 | `-32602` | Invalid params (missing required extraction field) | — | Fix arguments |
 | `-32001` | Access denied (constraint, expired, bad PoP, invalid approval) | — | Fix warrant or args |
@@ -356,6 +412,10 @@ Both first-call gate hits and partial multi-sig use `-32002` so clients can shar
 ## MCP Configuration
 
 Define how to extract constraints from MCP tool call arguments.
+
+> With a config, `MCPVerifier` is closed-world, as without one: an argument (or nested key) that no rule reads is checked as an unknown field under its dotted path (`follow_symlinks`, `query.where`), which the warrant denies unless it allows unknown fields. When a rule's `default` is used because the argument is missing, the tool receives that default, so it runs with the value that was checked.
+
+Defaults on wildcard or indexed body paths are denied when used because there is no unambiguous argument location at which to inject the checked value. Put defaults on ordinary object-field paths, or have the caller supply the value explicitly.
 
 > This configuration defines **extraction**, not **policy**. It tells Tenuo where to find the arguments in the JSON-RPC call. The actual limits (which paths are allowed, what ranges are valid) are defined in the Warrant. See [Argument Extraction](./constraints#argument-extraction) for a deep dive.
 
@@ -465,6 +525,11 @@ Tenuo sends warrant metadata via `params._meta.tenuo`:
 
 The `warrant` field accepts either a single base64-encoded warrant (for root warrants issued directly by a trusted root) or a **WarrantStack** — the full delegation chain encoded as a CBOR array. See [Multi-Agent Delegation](#advanced-multi-agent-delegation) below.
 
+For gateways that strip `_meta`, set `inject_warrant="argument"`. This sends
+the envelope as the reserved `arguments._tenuo` field instead. The server
+removes `_tenuo` before verification and dispatch, and the PoP covers the tool
+arguments without that field.
+
 ---
 
 ## Security Best Practices
@@ -511,11 +576,67 @@ for warning in warnings:
 | Each `approvals[]` entry | 8 KB |
 | `approvals` count | 64 |
 
-Oversized payloads are rejected with `-32602` (invalid params). Override the module-level constants in `tenuo.mcp.server` if needed.
+Oversized payloads are rejected with `-32602` (invalid params). These are core
+limits; adapter constants cannot raise them. Apply request-body limits at your
+HTTP/stdio gateway too, before the framework constructs a host object.
+
+Argument JSON is capped at 256 KiB before the core parses it. During traversal,
+the core allows at most 4,096 values (including containers), 64 KiB of aggregate
+decoded string/key bytes (a single string or key may use all of it), and 256
+entries per container.
+The root object is depth zero; values may reach depth nine. Limits are checked
+while building the tree, not after allocating the complete result.
+
+### 5. Replay Protection
+
+`MCPVerifier` rejects a repeated PoP signature only when it has a nonce store: pass `nonce_store=NonceStore(...)` (a shared backend such as Redis when you run several servers) or call `tenuo.nonce.enable_default_nonce_store()` at startup. Without one, an identical envelope can be replayed until its PoP window closes. The PoP covers the warrant, tool, arguments and a 30-second time window, so two legitimate identical calls in the same window produce the same signature; with a nonce store the second is rejected as a replay. Enable it for tools with side effects, and expect callers to vary arguments (or wait) when they repeat such a call.
+
+### Envelope and argument contract
+
+The Rust core owns `_meta.tenuo` framing, base64 and decoding. The Rust SDK's
+MCP decoder delegates to the same implementation. Producers write standard
+padded base64; consumers also accept URL-safe base64 and line-wrapped tokens.
+Missing or null `approvals` means no approvals. A present approval list must
+contain only strings; malformed entries are rejected, never filtered out.
+Decoding an approval token does not establish that it authorizes the request.
+
+Adapters capture argument JSON once. Proof verification and execution use
+that snapshot, including nested values, even if the caller's object changes
+during replay admission. Null remains part of the proof. Legacy callers that
+stripped null must upgrade and re-sign the actual arguments; there is no
+null-stripping verification fallback. Non-string Python keys are rejected,
+not converted into potentially colliding strings.
+
+Core numbers use signed 64-bit integers and finite IEEE-754 binary64 values.
+Integral floating values within the integer range have the same proof as
+integers (`1.0` and `1`, including signed zero). Python integer inputs must fit
+in i64. For exact integers crossing JavaScript hosts, stay within the safe
+integer range or encode identifiers as strings. Different host number types
+are not distinct authority: tools must not treat `1` and `1.0` as different
+privileges. NaN and infinity are not supported as argument JSON numbers.
+
+`verify_meta_pop` (Python/Rust) and `verifyMetaPop` (WASM) check **only the
+holder proof**. Their old `verify_meta` / `verifyMeta` names remain compatibility
+aliases. None checks trusted roots, chain validity, expiry, constraints,
+approvals or replay. Use `MCPVerifier`, `tenuo.mcp.verify`/`handler`, or the Rust
+`Authorizer`/`Guard` to authorize execution.
+
+The shared cases in `tests/vectors/tenuo-meta-conformance.json` are consumed by
+Rust, Python and TypeScript. They cover proof equivalence and tampering,
+escaped duplicate keys, numeric boundaries, nested nulls, malformed envelopes,
+and a delegated chain with an approval. The fixed timestamp tests codec/PoP
+conformance, not whether the historical fixture grants authority today.
 
 ---
 
 ## Error Handling
+
+`MCPVerifier.verify()` returns argument-conversion and resource-limit failures
+as denial results and emits them through the same audit path as other denials.
+Boundary `error_type` values include `invalid_arguments`, `payload_too_large`,
+`malformed_envelope`, and `invalid_pop`. Invalid argument denials contain no
+argument values or parser exception text. Hosts should branch on codes rather
+than parsing human-readable messages.
 
 MCP integration uses typed `TenuoError` exceptions with canonical wire codes:
 

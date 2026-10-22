@@ -51,7 +51,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
@@ -106,7 +106,8 @@ jobs:
             mcp)
               # 1.9.4: first release whose streamable-HTTP transport yields the
               # (read, write, get_session_id) triple tenuo.mcp unpacks
-              pip install "mcp==1.9.4"
+              # pydantic 2.14 removed a private helper mcp 1.9.4 imports
+              pip install "mcp==1.9.4" "pydantic<2.14"
               ;;
             fastmcp)
               # Explicit dual-line floors: FastMCP 3 + MCP 1.x
@@ -174,6 +175,7 @@ jobs:
               pytest tenuo-python/tests/adapters/test_crewai.py \
                 tenuo-python/tests/adapters/test_crewai_adversarial.py \
                 tenuo-python/tests/adapters/test_crewai_integration.py \
+                tenuo-python/tests/examples/test_crewai_guarded_crew_builder.py \
                 -v --tb=short
               ;;
             autogen)
@@ -192,11 +194,13 @@ jobs:
             fastapi)
               pytest tenuo-python/tests/adapters/test_fastapi_integration.py \
                 tenuo-python/tests/adapters/test_fastapi_delegation.py \
+                tenuo-python/tests/adapters/test_fastapi_secure_router.py \
                 -v --tb=short
               ;;
             google_adk)
               pytest tenuo-python/tests/adapters/test_google_adk.py \
                 tenuo-python/tests/adapters/test_google_adk_adversarial.py \
+                tenuo-python/tests/adapters/test_google_adk_runner.py \
                 -v --tb=short
               ;;
             mcp)
@@ -283,7 +287,7 @@ jobs:
         with:
           workspaces: tenuo-python
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'

@@ -11,15 +11,15 @@ Tenuo integrates with OpenAI's APIs using a **two-tier** protection model:
 
 | Tier | Setup | Best For |
 |------|-------|----------|
-| **Tier 1: Guardrails** | Inline constraints | Quick hardening, prototyping, single-process agents |
-| **Tier 2: Warrants** | Warrant + signing key | Production systems, multi-agent, audit requirements |
+| **Tier 1: Guardrails** | Inline constraints | Policy in trusted code, including production |
+| **Tier 2: Warrants** | Warrant + signing key | Verifiable delegated authority, distributed enforcement |
 
-**Tier 1** catches LLM mistakes and prompt injection with minimal setup. Constraints are defined inline in your code. Good for getting started, but constraints can drift from tool definitions.
+**Tier 1** rejects out-of-policy tool and argument calls in trusted application code. A manipulated prompt cannot authorize a call the policy rejects.
 
-**Tier 2** adds cryptographic proof. Constraints live in the warrant (issued by a control plane), ensuring they're defined once and enforced everywhere. Required when agents run in separate processes or you need audit trails.
+**Tier 2** keeps those checks and adds signed warrants, holder proof, and delegation that can only narrow. An independently configured verifier checks that authority locally. Your own issuer or a control plane can mint the warrant.
 
 > [!IMPORTANT]
-> **Production Recommendation**: Use **Tier 2** for production deployments. Tier 1 guardrails can be modified or bypassed by anyone with code access, making them unsuitable for environments where insider threats or container compromise are concerns.
+> **Production Recommendation**: Use **Tier 1** when trusted application code owns the policy. Use **Tier 2** when a tool or downstream service must verify issuer-granted, holder-bound authority on its own. This wrapper checks the tool calls the model returns before they run. When the agent can skip the wrapper, run that check in the component that performs the effect, outside the agent's control.
 
 ---
 
@@ -35,19 +35,18 @@ uv pip install tenuo
 
 **Answer these questions:**
 
-1. **Are your tools running in the same process as the LLM client?**
-   - Yes -> Tier 1 (GuardBuilder with inline constraints)
-   - No -> Tier 2 (Warrant + Proof-of-Possession)
+1. **Do you need application-owned local policy checks?**
+   - Yes -> Tier 1. Trusted application code enforces tool allowlists and argument constraints, including in production.
+   - A separate verifier must check issuer, holder, or delegation -> Tier 2 (question 2).
 
-2. **Do you need protection against insider threats or code tampering?**
-   - Yes -> Tier 2 (constraints in cryptographic warrant)
-   - No -> Tier 1 is sufficient
+2. **Do you need independently verifiable issuer authority, holder proof, or delegation?**
+   - Yes -> Tier 2. The verifier checks issuer, holder, and narrowing delegation locally, in one process or across many.
 
 3. **Are you using the OpenAI Agents SDK?**
-   - Yes -> Use `create_tier1_guardrail()` or `create_tier2_guardrail()`
+   - Yes -> Use `guard_agent()`
    - No -> Use `guard()` or `GuardBuilder()`
 
-**TL;DR:** Start with Tier 1. Move to Tier 2 when you need crypto.
+**TL;DR:** Tier 1 rejects out-of-policy calls in trusted code. Tier 2 adds signed, holder-bound authority an independent verifier can check. Run the check on the path that performs the effect.
 
 ---
 
@@ -106,7 +105,7 @@ client = protect(openai.OpenAI(), tools=["search", "read_file"])
 - Arguments violating constraints (e.g., `/etc/passwd` blocked by `Subpath("/data")`)
 - Streaming TOCTOU attacks (buffer-verify-emit)
 
-### Tier 2: Warrants (when you need crypto)
+### Tier 2: Warrants (verifiable authority)
 
 ```python
 from tenuo.openai import GuardBuilder
@@ -149,51 +148,42 @@ client = (GuardBuilder(openai.OpenAI())
 
 ### What Tier 1 Protects Against
 
-**Trust Boundary**: Code access
+**Trust boundary:** the model proposes calls; trusted application code enforces policy before dispatch.
 
-Tier 1 enforces constraints at runtime, protecting against:
+Tier 1 provides deterministic allowlist and argument checks, not another prompt asking the model to behave. Calls that violate the configured policy are blocked on the guarded path, whether they originated from prompt injection, a model mistake, or application logic.
 
-| Threat | Protection | Example |
-|--------|------------|---------|
-| **Prompt Injection** | Strong | Attacker manipulates LLM to call `read_file("/etc/passwd")` - blocked by `Subpath("/data")` |
-| **LLM Hallucinations** | Strong | Model invents tool call with invalid args - blocked by constraints |
-| **SSRF Attempts** | Strong | LLM tries `http://169.254.169.254/` - blocked by `UrlSafe()` |
-| **Path Traversal** | Strong | `../../../etc/passwd` - normalized and blocked by `Subpath` |
-| **Development Bugs** | Strong | Accidental misconfiguration caught before production |
+| Attempt | Enforced check | Example |
+|---------|----------------|---------|
+| Out-of-policy tool call | Tool allowlist and argument constraints | A model-selected recipient outside the permitted set is rejected |
+| Invalid or unexpected arguments | Configured constraints and closed-world argument checking | An unlisted argument is rejected |
+| Disallowed URL | URL constraints | `UrlSafe()` rejects a literal metadata-service URL such as `http://169.254.169.254/` |
+| Path traversal | Path constraints | `Subpath("/data")` rejects traversal outside the permitted root |
 
-**Key Insight**: Tier 1 is effective because **constraints are outside the LLM's control**. Even if an attacker fully manipulates the prompt, they cannot bypass Python-enforced guardrails.
+**Why this matters:** the policy lives in trusted code, outside the model. A fully manipulated prompt still cannot get an out-of-policy call through the guard. Tighten the policy for actions that are allowed and still harmful. Symlinks, URL redirects, DNS resolution, and shell behavior need a control at the resource too.
 
-### What Tier 1 Does NOT Protect Against
+### Where Tier 2 and placement take over
 
-| Threat | Protection | Why Not |
-|--------|------------|---------|
-| **Insider Threats** | None | Developer can modify code to bypass guards |
-| **Container Compromise** | None | Attacker with code execution can disable guards |
-| **Tampering** | None | No cryptographic proof of enforcement |
-| **Multi-Process Delegation** | Limited | Downstream service must trust caller's honesty |
+| Need | What covers it |
+|------|----------------|
+| **Forged or widened authority** | Tier 2: issuer signature, holder proof, and delegation that can only narrow |
+| **A service that must check the caller** | Tier 2: local verification against trusted roots |
+| **Proof of the allow or deny decision** | Tier 2 signed receipts, when configured. Tier 1 still emits audit events |
+| **A caller that can skip this wrapper** | The same tier, running in the component that performs the effect |
 
-**Example Bypass**:
+The guard runs on the client you wrap. A direct client skips it:
+
 ```python
-# Production code with guard
 client = guard(openai.OpenAI(), allow_tools=[...])
-
-# Insider threat: Just remove the guard
-client = openai.OpenAI()  # Bypassed
+client = openai.OpenAI()  # this call is outside the guard
 ```
 
 ### When to Use Tier 1
 
 **Good for**:
-- Single-process agents (LLM and tools in same Python runtime)
-- Trusted execution environment (your laptop, internal servers)
-- Prototyping and development
-- Defense against external attackers (via prompt injection)
 
-**Not suitable for**:
-- Untrusted execution environment (shared infrastructure)
-- Zero-trust security model
-- Compliance requirements for audit trails
-- Multi-process systems with untrusted intermediaries
+- Production agents whose trusted code holds the tool and argument policy.
+- Rejecting model-chosen calls outside that policy, including calls from a manipulated prompt.
+- A local check beside network and credential controls.
 
 ### When to Upgrade to Tier 2
 
@@ -202,15 +192,21 @@ Upgrade when you need:
 1. **Cryptographic Proof**: Verifiable evidence of what was authorized
 2. **Delegation Chains**: Multi-agent systems where agents delegate to each other
 3. **Untrusted Callers**: Cannot trust calling agent to honestly report tool calls
-4. **Audit Requirements**: Need non-repudiable logs of authorization decisions
+4. **Audit Requirements**: Need verifiable authority and, with receipt signing configured, signed records of authorization decisions
 
 **Tier 2 adds**:
+- The same tool allowlists and argument constraints, carried in the warrant
 - Warrant signatures (cryptographic authorization)
 - Proof-of-Possession (PoP) per tool call
-- Tamper-evident audit trail
-- Cross-process verification
+- Cross-process verification against independently configured trusted roots
+- Signed receipts of the authority presented and the verifier's decision, including denials, when receipt signing is configured
+
+A warrant is proof of the scope that was issued. A signed receipt is proof of what the verifier decided. Your own issuer can mint the warrant. Completion of the downstream effect is a separate record.
 
 **Migration is simple**:
+
+In the OpenAI adapter, warrant constraints replace the inline argument constraints; explicit tool allow/deny lists still apply. Carry the intended argument restrictions into the warrant when migrating.
+
 ```python
 # Tier 1
 client = guard(openai.OpenAI(), allow_tools=[...], constraints={...})
@@ -221,13 +217,11 @@ client = guard(openai.OpenAI(), warrant=my_warrant, signing_key=agent_key)
 
 ### Bottom Line
 
-Tier 1 stops prompt injection, LLM hallucinations, and SSRF attacks. It enforces constraints at runtime within a single Python process.
+**Tier 1 rejects out-of-policy calls in trusted code. Tier 2 keeps those checks and adds signed authority.** The prompt cannot widen a Tier 1 policy. An independent verifier accepts a Tier 2 warrant only when the issuer, the holder, and any narrowing delegation all check out.
 
-Tier 2 adds cryptographic verification for distributed systems and untrusted execution environments.
-
-**Choose based on your threat model:**
-- Single-process, trusted execution: Tier 1
-- Multi-process, delegation, or untrusted execution: Tier 2
+- Use Tier 1 when trusted application code owns the policy.
+- Use Tier 2 when the component that performs the effect must verify issuer-granted, holder-bound authority, including across agents or processes.
+- When the agent can skip an in-process wrapper, run that same check in the component that performs the effect, outside the agent's control.
 
 ---
 
@@ -298,7 +292,7 @@ Pattern("/data/*").matches("/data/../etc/passwd")  # True (BAD!)
 Subpath("/data").matches("/data/../etc/passwd")    # False (SAFE!)
 ```
 
-For maximum security, combine `Subpath` with [path_jail](https://github.com/tenuo-ai/path_jail) at execution time.
+Rust executors open the file with the `filesystem` feature (`AuthorizedCall::open`). Python still joins with [path_jail](https://github.com/tenuo-ai/path_jail) and then reads. That check and the read are separate steps on Linux, macOS, and BSD. See [Defense in Depth: File Paths](constraints.md#defense-in-depth-file-paths).
 
 ### UrlSafe: SSRF Protection
 
@@ -428,57 +422,68 @@ for chunk in client.chat.completions.create(..., stream=True):
 
 ## OpenAI Agents SDK Integration
 
-Tenuo integrates with the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) via guardrails.
+`guard_agent()` checks every tool call an [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) agent makes, before the tool runs. It attaches a Tenuo [tool guardrail](https://openai.github.io/openai-agents-python/guardrails/) to each function tool, to each MCP server on the agent, and to every agent reachable through handoffs.
 
-### Tier 1: Constraint-Based Guardrails
+Requires `openai-agents` 0.3.3 or later.
+
+> **Use `guard_agent()`, not `input_guardrails`.** An agent's input guardrails only see the input it is given, never the tool calls the model makes during the run, so they can't enforce tool authorization. `TenuoToolGuardrail` raises a configuration error if you put it in `Agent(input_guardrails=...)`.
+
+### Tier 1: inline constraints
 
 ```python
 from agents import Agent, Runner
-from tenuo.openai import create_tier1_guardrail, Pattern
+from tenuo.openai import Pattern, guard_agent
 
-# Create guardrail with inline constraints
-guardrail = create_tier1_guardrail(
-    constraints={"send_email": {"to": Pattern("*@company.com")}}
+agent = guard_agent(
+    Agent(name="Assistant", instructions="Help with email", tools=[send_email, search]),
+    allow_tools=["send_email", "search"],
+    constraints={"send_email": {"to": Pattern("*@company.com")}},
 )
 
-# Attach to agent
-agent = Agent(
-    name="Assistant",
-    instructions="Help the user with email tasks",
-    input_guardrails=[guardrail],
-)
-
-# Run - unauthorized tool calls trigger tripwire
-result = await Runner.run(agent, "Send email to alice@company.com")
+result = await Runner.run(agent, "Email the Q3 summary to alice@company.com")
 ```
 
-### Tier 2: Warrant-Based Guardrails
+### Tier 2: warrants
 
 ```python
-from tenuo.openai import create_tier2_guardrail
-from tenuo import SigningKey, Warrant, Pattern
+from tenuo import Pattern, SigningKey, Warrant
+from tenuo.openai import guard_agent
 
-# Control plane issues warrant to agent
+# The control plane issues a warrant for this task to the agent's key.
 agent_key = SigningKey.generate()
-warrant = (Warrant.mint_builder()
-    .capability("send_email", {"to": Pattern("*@company.com")})
+warrant = (
+    Warrant.mint_builder()
+    .capability("send_email", to=Pattern("*@company.com"))
     .holder(agent_key.public_key)
     .ttl(3600)
-    .mint(control_plane_key))
-
-# Create Tier 2 guardrail with PoP
-guardrail = create_tier2_guardrail(
-    warrant=warrant,
-    signing_key=agent_key,
+    .mint(control_plane_key)
 )
 
-agent = Agent(
-    name="Authorized Assistant",
-    input_guardrails=[guardrail],
+agent = guard_agent(
+    Agent(name="Authorized Assistant", tools=[send_email]),
+    warrant=warrant,
+    signing_key=agent_key,
+    trusted_roots=[control_plane_key.public_key],
 )
 ```
 
-### Guardrail Options
+### What happens on a denial
+
+By default (`on_denial="reject"`), the tool doesn't run and the model receives the denial as the tool result, so the run continues and the model can choose another action. With `on_denial="raise"`, the run halts with `ToolInputGuardrailTripwireTriggered`.
+
+### Policies belong to agents, not tools
+
+Agents often share tool objects and MCP servers. The policy you pass to `guard_agent()` is registered for that agent, and every call is checked against the policy of the agent making it, so two agents built from the same tools keep separate policies. Calling `guard_agent()` again on an agent replaces its policy. A guarded tool denies calls from an agent that has no policy, including a copy made with `agent.clone()`, so guard clones too.
+
+### What `guard_agent()` refuses
+
+It fails closed instead of leaving a tool unchecked:
+
+- **Hosted tools** that run on OpenAI's side (for example `WebSearchTool`) can't be intercepted, so `guard_agent()` raises `OpenAIConfigurationError`. Remove them or use a function tool.
+- **MCP servers** on an `openai-agents` release without MCP server guardrails raise the same error. Upgrade `openai-agents`.
+- **Handoffs** whose target agent can't be resolved raise the same error. Call `guard_agent()` on that agent directly.
+
+### Options
 
 | Parameter | Description |
 |-----------|-------------|
@@ -487,7 +492,9 @@ agent = Agent(
 | `constraints` | Per-tool argument constraints |
 | `warrant` | Tier 2 warrant (optional) |
 | `signing_key` | Required if warrant provided |
-| `tripwire` | If True, halt agent on violation (default: True) |
+| `trusted_roots` | Trusted issuer public keys for Tier 2 |
+| `on_denial` | `"reject"` (default) or `"raise"` |
+| `include_handoffs` | Also guard agents reachable through handoffs (default: True) |
 | `audit_callback` | Optional callback for audit events |
 
 ---
@@ -524,6 +531,8 @@ client = guard(
 | `tier` | "tier1" or "tier2" |
 | `constraint_hash` | Hash of Tier 1 config |
 | `warrant_id` | Warrant ID (Tier 2 only) |
+
+Every decision is recorded, including streamed tool calls, malformed or duplicate-key arguments, and streams cut off by the buffer limit.
 
 ---
 
@@ -584,7 +593,7 @@ except TenuoOpenAIError as e:
 | `OpenAIConstraintViolation` | 1+ | T1_002 | Argument fails constraint |
 | `WarrantDenied` | 2 | T2_001 | Warrant doesn't allow tool/args |
 | `MissingSigningKey` | 2 | T2_002 | Warrant provided without signing_key |
-| `OpenAIConfigurationError` | 1+ | CFG_002, CFG_003, C1_003 | Invalid guard() configuration |
+| `OpenAIConfigurationError` | 1+ | CFG_002, CFG_003, CFG_004, CFG_005, CFG_006, C1_003 | Invalid guard() configuration, or an endpoint guard can't verify |
 | `MalformedToolCall` | 1+ | T1_003 | Invalid JSON in tool arguments |
 | `BufferOverflow` | 1+ | T1_004 | Streaming buffer limit exceeded |
 
@@ -604,6 +613,32 @@ client = guard(openai.OpenAI(), allow_tools=["search"])
 # Works with Responses API
 response = client.responses.create(...)
 ```
+
+> [!NOTE]
+> Streaming Responses (`responses.create(..., stream=True)`) isn't supported under guard yet. The call raises `OpenAIConfigurationError` (`CFG_004`) before any request is sent, so you never get an unverified stream.
+
+### Tool calls other than functions
+
+Every output item your app is asked to run is checked, not only `function_call`. Custom (freeform) tools, `local_shell_call`, `shell_call`, `apply_patch_call` and `computer_call` must be allowed by name. A denylist on its own never lets them through.
+
+| Item | Tool name to allow | Arguments checked |
+|------|--------------------|-------------------|
+| custom tool call (chat or Responses) | the tool's name | `input` |
+| `local_shell_call` | `local_shell` | fields of `action` (`command`, `env`, ...) |
+| `shell_call` | `shell` | fields of `action` (`commands`, ...) |
+| `apply_patch_call` | `apply_patch` | fields of `operation` (`type`, `path`, `diff`) |
+| `computer_call` | `computer` | fields of `action` |
+| client-executed `tool_search_call` | `tool_search` | `arguments` and `execution` |
+
+```python
+client = guard(openai.OpenAI(), allow_tools=["search", "local_shell"])
+```
+
+Under Tier 2 the warrant must grant the same tool name. Hosted tools that OpenAI runs itself (web search, file search, code interpreter, image generation, remote MCP, and server-executed tool search) pass through unchanged.
+
+### Client surfaces
+
+`with_options()` and `copy()` return a client with the same guard and session. `chat.completions.parse()`, `beta.chat.completions.parse()` and `responses.parse()` are verified like `create()`. Endpoints guard can't verify fail closed with `OpenAIConfigurationError` (`CFG_005`): `conversations` (whose stored items can include tool calls), `with_raw_response`, `with_streaming_response`, `realtime`, the raw HTTP methods (`get`, `post`, ...), and everything under `beta` except `beta.chat.completions`. Use your unguarded client for endpoints that can't return tool calls.
 
 ---
 
@@ -634,7 +669,7 @@ response = client_simple.chat.completions.create(
 )
 
 # ============================================================
-# TIER 2: Full Crypto (when you need it)
+# TIER 2: Verifiable, holder-bound authority
 # ============================================================
 
 # Setup keys
@@ -699,4 +734,3 @@ client = guard(openai.OpenAI(), warrant=child, signing_key=worker)
 - [LangGraph Integration](./langgraph) - Multi-agent graph security
 - [Security](./security) - Threat model, best practices
 - [Quickstart](./quickstart) - Getting started guide
-
