@@ -67,6 +67,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Temporal `warrant_chain=` takes one shape everywhere.** The workflow start
+  helpers took the parents only and rejected a chain that ended with the leaf,
+  while `tenuo_execute_activity`, the Nexus helpers, and
+  `tenuo_complete_async_activity` required the full chain ending with the leaf.
+  The same list could not be passed to both. Every Temporal helper now accepts
+  either the parents, root-first, or the full chain ending with the leaf, and
+  both produce the same headers. The leaf anywhere but last is still rejected
+  with `TenuoContextError`.
+- **Temporal activities without PoP are denied before approvals.** A task with
+  a copied warrant header and no PoP signature could reach `approval_handler`
+  before it was denied. A missing PoP is now rejected before the approval step,
+  with the same `POP_VERIFICATION_FAILED` error. Out-of-scope calls are still
+  denied before an approver is asked.
+- **Temporal dropped-signal warning is logged once.** The warning for a signal
+  outside `authorized_signals` ran in workflow code on every replay. It is now
+  skipped during replay, like the dropped-signal audit event and metric.
 - **Temporal retry window and approval order match the verifier.**
   `retry_pop_max_windows=40` covers about 10 minutes on the past side.
   Ten immediate retries under Temporal's default backoff take about 7

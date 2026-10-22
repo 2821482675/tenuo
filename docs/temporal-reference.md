@@ -169,7 +169,9 @@ result = await execute_workflow_authorized(
 )
 ```
 
-If `warrant` is delegated, pass its parents root-first (excluding the leaf) as `warrant_chain=[root, ...]` so a worker that trusts only the root can verify it; without it, activities are denied as untrusted.
+If `warrant` is delegated, pass `warrant_chain=` so a worker that trusts only the root can verify it; without it, activities are denied as untrusted.
+
+`warrant_chain=` takes the same shape on every Temporal helper (start helpers, `tenuo_execute_activity`, the Nexus helpers, `tenuo_complete_async_activity`): the parents, root-first, or the full chain ending with the leaf. `[root, mid]` and `[root, mid, leaf]` produce identical headers. The leaf anywhere but last is rejected with `TenuoContextError`.
 
 ### Long-running workflows: `start_workflow_authorized(...)`
 
@@ -210,7 +212,7 @@ result = await client.execute_workflow(
 )
 ```
 
-`tenuo_headers(warrant, key_id, warrant_chain=[root, ...])` adds the `x-tenuo-warrant-chain` header for a delegated warrant; `warrant` may also be the whole root-first list or an encoded WarrantStack.
+`tenuo_headers(warrant, key_id, warrant_chain=[root, ...])` adds the `x-tenuo-warrant-chain` header for a delegated warrant (parents, or the full chain ending with the leaf); `warrant` may also be the whole root-first list or an encoded WarrantStack.
 
 ### Deprecated: `set_headers(...)`
 
@@ -951,7 +953,7 @@ async with tenuo_warrant_context(warrant, key_id="agent1"):
     )
 ```
 
-For a delegated warrant, add `warrant_chain=[root, ...]` (parents, root-first, excluding the leaf).
+For a delegated warrant, add `warrant_chain=[root, ...]` (parents root-first, or the full chain ending with the leaf).
 
 ### workflow_grant() - Scoped In-Workflow Grants
 
@@ -979,7 +981,8 @@ Constraint values must be constraint objects (`Exact`, `Subpath`, `Range`, ...);
 The per-Activity override is held in a workflow task-local `ContextVar`, so
 parallel workflow tasks cannot consume one another's warrant. When
 `warrant_chain=` is omitted, Tenuo extends the active workflow chain with the
-override warrant automatically.
+override warrant automatically. When it is given, it takes the parents or the
+full chain ending with the override warrant, as everywhere else.
 
 ### Scheduled Workflows
 
@@ -991,7 +994,7 @@ Schedule lifetime or use an issuer warrant plus per-Activity execution warrants.
 Temporal action settings such as `execution_timeout` belong in
 `action_options=`. The legacy `workflow_kwargs=` alias remains temporarily
 supported with a deprecation warning; workflow input remains positional via
-`workflow_args=`. For a delegated warrant, pass its parents as `warrant_chain=`.
+`workflow_args=`. For a delegated warrant, pass `warrant_chain=` (parents, or the full chain ending with the leaf).
 
 ### Async Activity Completion
 
@@ -1006,7 +1009,7 @@ field, so the helper validates locally before releasing the completion:
 This is warrant liveness, not capability scope: the helper does not check
 whether the warrant authorizes completing this Activity.
 
-Delegated warrants must include `warrant_chain=[root, ..., leaf]`. Validation is
+Delegated warrants must include `warrant_chain=` (parents root-first, or the full chain ending with the leaf). Validation is
 performed before this helper calls the completion handle; it never falls back
 to an unverified completion. This is a caller-side preflight, not a Temporal
 enforcement boundary: code that directly invokes `AsyncActivityHandle.complete()`

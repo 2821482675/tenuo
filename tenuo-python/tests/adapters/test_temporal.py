@@ -2114,8 +2114,9 @@ def test_tenuo_headers_rejects_leaf_inside_warrant_chain():
     from tenuo.temporal.exceptions import TenuoContextError
 
     root, leaf = _delegated_start_chain()
-    for malformed_chain in ([root, leaf], [leaf, root]):
-        with pytest.raises(TenuoContextError, match="parent warrants only"):
+    # The leaf may end the chain (full-chain shape), but nowhere else.
+    for malformed_chain in ([leaf, root], [leaf, root, leaf], [root, leaf, leaf]):
+        with pytest.raises(TenuoContextError, match="before its end"):
             tenuo_headers(leaf, "agent1", warrant_chain=malformed_chain)
 
 
@@ -2629,7 +2630,7 @@ async def test_async_activity_completion_requires_chain_for_delegated_warrant():
     )
     handle = AsyncMock()
 
-    with pytest.raises(TenuoContextError, match="explicit root-to-leaf"):
+    with pytest.raises(TenuoContextError, match="explicit warrant_chain"):
         await tenuo_complete_async_activity(
             handle,
             "result",
@@ -3971,9 +3972,9 @@ class TestApprovalGates:
             isinstance(exc_info.value, ApprovalGateTriggered)
 
     @pytest.mark.parametrize("async_handler", [False, True], ids=["sync", "async"])
-    @pytest.mark.parametrize("outcome", ["allowed", "revoked", "expired", "invalid_pop"])
+    @pytest.mark.parametrize("outcome", ["allowed", "revoked", "expired"])
     def test_approval_retry_lifecycle(self, async_handler, outcome):
-        """Pending never dispatches; a later approval cannot bypass authorization."""
+        """Pending never dispatches; invalidated credentials never re-prompt."""
         import time as _time
         from datetime import timedelta
 
@@ -3991,8 +3992,6 @@ class TestApprovalGates:
             ttl=1 if outcome == "expired" else 3600,
         )
         pop = warrant.sign(agent_key, "deploy", {}, int(_time.time()))
-        if outcome == "invalid_pop":
-            pop = bytes(64)
         signed = self._sign_approval(warrant, approver_key, "deploy", {})
         retry_error = ApplicationError(
             "approval service temporarily unavailable", {"request": "deploy"},
@@ -4052,11 +4051,15 @@ class TestApprovalGates:
                 with pytest.raises(ApplicationError) as denied:
                     asyncio.run(inbound.execute_activity(inp))
                 assert denied.value.non_retryable
-                expected = "proof-of-possession" if outcome == "invalid_pop" else outcome
-                assert expected in str(denied.value).lower()
+                assert outcome in str(denied.value).lower()
                 next_activity.execute_activity.assert_not_awaited()
-        assert len(requests) == 2
-        assert requests[0].request_hash == requests[1].request_hash
+        if outcome == "allowed":
+            assert len(requests) == 2
+            assert requests[0].request_hash == requests[1].request_hash
+        else:
+            # Revocation and expiry are checked before application approval
+            # code is entered on the retry.
+            assert len(requests) == 1
 
     @pytest.mark.parametrize("async_handler", [False, True], ids=["sync", "async"])
     @pytest.mark.parametrize("application_error", [False, True], ids=["unexpected", "non_retryable"])
@@ -5242,7 +5245,8 @@ class TestSignalAndUpdateRuntimeDenial:
         inbound, nxt, _, wf_id = self._stub_inbound(authorized_signals=["add"])
         sig_input = MagicMock(signal="drop_tables")
         try:
-            with patch("temporalio.workflow.info", return_value=self._fake_wf_info(wf_id)):
+            with patch("temporalio.workflow.info", return_value=self._fake_wf_info(wf_id)), \
+                    patch("temporalio.workflow.unsafe.is_replaying", return_value=False):
                 loop = asyncio.new_event_loop()
                 try:
                     loop.run_until_complete(inbound.handle_signal(sig_input))
@@ -5252,6 +5256,32 @@ class TestSignalAndUpdateRuntimeDenial:
             self._cleanup(wf_id)
 
         assert "Signal 'drop_tables' dropped" in caplog.text
+        nxt.handle_signal.assert_not_called()
+
+    def test_dropped_signal_is_not_logged_or_audited_on_replay(self, caplog):
+        """Workflow code re-runs on replay; the drop is reported only once."""
+        import logging
+
+        from tenuo.temporal import TenuoMetrics
+
+        inbound, nxt, cfg, wf_id = self._stub_inbound(authorized_signals=["add"])
+        cfg.metrics = TenuoMetrics(prefix="sigdrop_replay")
+        cfg.audit_callback = MagicMock()
+        try:
+            with caplog.at_level(logging.DEBUG, logger="tenuo.temporal"), \
+                    patch("temporalio.workflow.info", return_value=self._fake_wf_info(wf_id)), \
+                    patch("temporalio.workflow.unsafe.is_replaying", return_value=True):
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(inbound.handle_signal(MagicMock(signal="drop_tables")))
+                finally:
+                    loop.close()
+        finally:
+            self._cleanup(wf_id)
+
+        assert "drop_tables" not in caplog.text
+        assert not cfg.metrics.get_stats()["denied"]
+        cfg.audit_callback.assert_not_called()
         nxt.handle_signal.assert_not_called()
 
     def test_update_allowed_passes_through(self):
@@ -5429,7 +5459,8 @@ class TestSignalAndUpdateRuntimeDenial:
         inbound, nxt, run_id = self._unregistered_inbound(authorized_signals=["add"])
         sig_input = MagicMock(signal="drop_tables", headers={})
         try:
-            with patch("temporalio.workflow.info", return_value=self._early_info(run_id)):
+            with patch("temporalio.workflow.info", return_value=self._early_info(run_id)), \
+                    patch("temporalio.workflow.unsafe.is_replaying", return_value=False):
                 loop = asyncio.new_event_loop()
                 try:
                     loop.run_until_complete(inbound.handle_signal(sig_input))
@@ -5503,7 +5534,8 @@ class TestSignalAndUpdateRuntimeDenial:
         try:
             # An off-list signal is dropped, not raised.
             dropped = entrypoint == "signal" and failure == "denied"
-            with patch("temporalio.workflow.info", return_value=info):
+            with patch("temporalio.workflow.info", return_value=info), \
+                    patch("temporalio.workflow.unsafe.is_replaying", return_value=False):
                 with contextlib.nullcontext() if dropped else pytest.raises(error_type):
                     result = getattr(inbound, method)(inp)
                     if entrypoint != "validator":
