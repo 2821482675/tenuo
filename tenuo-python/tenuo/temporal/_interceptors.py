@@ -607,12 +607,16 @@ class _TenuoWorkflowInboundInterceptor:
             if signal_name not in config.authorized_signals:
                 # Drop, don't raise: a raised denial fails the run, so any
                 # caller who can signal could end the workflow.
+                from temporalio import workflow  # type: ignore[import-not-found]
+
                 warrant_id = self._resolve_warrant_id()
-                logger.warning(
-                    "Signal '%s' dropped (warrant_id=%s): not in authorized_signals",
-                    signal_name,
-                    warrant_id,
-                )
+                # Workflow code re-runs on every replay; log the drop once.
+                if not workflow.unsafe.is_replaying():
+                    logger.warning(
+                        "Signal '%s' dropped (warrant_id=%s): not in authorized_signals",
+                        signal_name,
+                        warrant_id,
+                    )
                 _record_dropped_signal(config, f"signal:{signal_name}", warrant_id)
                 return
         return await self.next.handle_signal(input)
@@ -1329,18 +1333,20 @@ class TenuoActivityInboundInterceptor:
                         activity_name=tool_name,
                     ) from _e
 
-            # -- 11. Multi-Sig Approval Resolution --
-            gate_approvals = await self._resolve_approval_gate_approvals(
-                warrant, tool_name, args, headers,
-            )
-
-            # Keep approval ordering unchanged, but report a missing PoP using
-            # the same stable wire category as every other PoP failure.
+            # A task without PoP is denied before the approval step, so a
+            # copied warrant header alone can never reach approval_handler.
+            # Same wire category as every other PoP failure; the signature
+            # itself is verified in step 12.
             if pop_bytes is None:
                 raise PopVerificationError(
                     reason="Missing proof-of-possession signature",
                     activity_name=tool_name,
                 )
+
+            # -- 11. Multi-Sig Approval Resolution --
+            gate_approvals = await self._resolve_approval_gate_approvals(
+                warrant, tool_name, args, headers,
+            )
 
             # -- 12. Cryptographic Authorization Evaluation --
             from tenuo._enforcement import parents_from_presented_chain, verify_inbound_call

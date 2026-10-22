@@ -29,6 +29,7 @@ from tenuo.temporal._dedup import _default_pop_dedup_store
 from tenuo.temporal._headers import (
     _extract_key_id_from_headers,
     _extract_warrant_from_headers,
+    _resolve_warrant_chain,
     _validate_chain_ends_with_warrant,
     tenuo_headers,
 )
@@ -139,18 +140,12 @@ def tenuo_nexus_headers(
     code usually wants :func:`tenuo_execute_nexus_operation` or
     :func:`tenuo_start_nexus_operation`, which resolve the signer from the
     active ``TenuoPluginConfig``.
-    """
-    raw_headers = tenuo_headers(warrant, key_id, compress=compress)
-    chain = list(warrant_chain) if warrant_chain is not None else [warrant]
-    _validate_chain_ends_with_warrant(
-        chain,
-        warrant,
-        operation="tenuo_nexus_headers",
-    )
-    if len(chain) > 1:
-        from tenuo_core import encode_warrant_stack
 
-        raw_headers[TENUO_CHAIN_HEADER] = encode_warrant_stack(chain).encode("utf-8")
+    ``warrant_chain`` is root-first: the parents of ``warrant``, or the full
+    chain ending with ``warrant``.
+    """
+    warrant, chain = _resolve_warrant_chain(warrant, warrant_chain, operation="tenuo_nexus_headers")
+    raw_headers = tenuo_headers(warrant, key_id, compress=compress, warrant_chain=chain)
 
     tool_name = nexus_tool_name(endpoint, operation, service=service)
     args = nexus_input_args(input)
@@ -938,7 +933,11 @@ def _resolve_workflow_nexus_authority(
 
     assert key_id is not None
     if warrant_chain is not None:
-        chain = list(warrant_chain)
+        warrant, chain = _resolve_warrant_chain(
+            warrant,
+            warrant_chain,
+            operation="tenuo_execute_nexus_operation",
+        )
     elif getattr(warrant, "parent_hash", None) is None:
         chain = [warrant]
     else:
@@ -1165,14 +1164,8 @@ def _workflow_headers_for_warrant(
     compress: bool,
     operation: str,
 ) -> Dict[str, bytes]:
-    raw_headers = tenuo_headers(warrant, key_id, compress=compress)
-    chain = list(warrant_chain) if warrant_chain is not None else [warrant]
-    _validate_chain_ends_with_warrant(chain, warrant, operation=operation)
-    if len(chain) > 1:
-        from tenuo_core import encode_warrant_stack
-
-        raw_headers[TENUO_CHAIN_HEADER] = encode_warrant_stack(chain).encode("utf-8")
-    return raw_headers
+    warrant, chain = _resolve_warrant_chain(warrant, warrant_chain, operation=operation)
+    return tenuo_headers(warrant, key_id, compress=compress, warrant_chain=chain)
 
 
 def _coerce_workflow_envelope(envelope: Any) -> TenuoNexusWorkflowEnvelope:

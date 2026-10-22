@@ -18,6 +18,7 @@ from tenuo.temporal._headers import (
     _current_workflow_headers,
     _extract_key_id_from_headers,
     _extract_warrant_from_headers,
+    _resolve_warrant_chain,
     _validate_chain_ends_with_warrant,
     tenuo_headers,
 )
@@ -265,8 +266,9 @@ async def tenuo_execute_activity(
         args: Arguments to pass to the activity
         warrant: Optional warrant for this Activity dispatch only.
         key_id: Holder key ID for ``warrant``. Required with ``warrant``.
-        warrant_chain: Optional full root-to-leaf chain. When omitted, the
-            active workflow chain is extended with ``warrant``.
+        warrant_chain: Optional chain for ``warrant``, root-first: its
+            parents, or the full chain ending with ``warrant``. When omitted,
+            the active workflow chain is extended with ``warrant``.
         compress: Whether to compress the per-dispatch warrant header.
         start_to_close_timeout: Timeout for activity execution
         schedule_to_close_timeout: Timeout from schedule to completion
@@ -321,10 +323,12 @@ async def tenuo_execute_activity(
     override_headers: Optional[Dict[str, bytes]] = None
     if warrant is not None:
         assert key_id is not None  # narrowed by the paired-argument check above
-        override_headers = tenuo_headers(warrant, key_id, compress=compress)
-
         if warrant_chain is not None:
-            chain = list(warrant_chain)
+            warrant, chain = _resolve_warrant_chain(
+                warrant,
+                warrant_chain,
+                operation="tenuo_execute_activity",
+            )
         elif getattr(warrant, "parent_hash", None) is None:
             chain = [warrant]
         else:
@@ -347,6 +351,7 @@ async def tenuo_execute_activity(
             warrant,
             operation="tenuo_execute_activity",
         )
+        override_headers = tenuo_headers(warrant, key_id, compress=compress)
         if len(chain) > 1:
             from tenuo_core import encode_warrant_stack as _encode_stack
 
@@ -851,9 +856,9 @@ async def execute_workflow_authorized(
     ``Client.connect(plugins=[TenuoTemporalPlugin(...)])``.  The interceptor
     is discovered automatically from the client's active config.
 
-    For a delegated ``warrant``, pass its parents root-first (excluding the
-    leaf) as ``warrant_chain`` so workers that trust only the root can verify
-    it; see :func:`tenuo_headers`.
+    For a delegated ``warrant``, pass ``warrant_chain`` root-first (its
+    parents, or the full chain ending with the leaf) so workers that trust
+    only the root can verify it; see :func:`tenuo_headers`.
     """
     resolved = _resolve_client_interceptor(client, client_interceptor)
     await _bind_warrant_headers(
@@ -900,7 +905,8 @@ async def start_workflow_authorized(
     ``client_interceptor`` is optional when the client was created with
     ``Client.connect(plugins=[TenuoTemporalPlugin(...)])``.
 
-    ``warrant_chain`` carries a delegated warrant's parents, as in
+    ``warrant_chain`` carries a delegated warrant's chain (its parents, or
+    the full chain ending with the leaf), as in
     :func:`execute_workflow_authorized`.
     """
     resolved = _resolve_client_interceptor(client, client_interceptor)
@@ -1215,6 +1221,9 @@ async def create_scheduled_workflow_with_warrant(
     every trigger. Its TTL must therefore cover the intended Schedule lifetime.
     For unbounded recurring Schedules, start a workflow under a longer-lived
     issuer warrant and mint short-lived execution warrants per Activity.
+
+    For a delegated ``warrant``, pass ``warrant_chain`` root-first: its
+    parents, or the full chain ending with the leaf (see :func:`tenuo_headers`).
     """
     from temporalio.client import Schedule, ScheduleActionStartWorkflow
     from temporalio.api.common.v1 import Payload
@@ -1282,7 +1291,8 @@ async def tenuo_complete_async_activity(
     cannot select another tenant's key resolver. For compatibility, omission
     is temporarily accepted only when exactly one config is registered and
     emits a deprecation warning. Supply ``warrant_chain`` for delegated
-    warrants; root warrants default to a one-element chain.
+    warrants, either as the parents (root-first) or as the full chain ending
+    with ``warrant``; root warrants default to a one-element chain.
 
     No completion PoP is returned or attached: Temporal's async-completion RPC
     has no user-header field. Older versions computed a signature and discarded
@@ -1373,11 +1383,16 @@ async def tenuo_complete_async_activity(
         if getattr(warrant, "parent_hash", None) is not None:
             raise TenuoContextError(
                 "tenuo_complete_async_activity: delegated warrants require an "
-                "explicit root-to-leaf warrant_chain."
+                "explicit warrant_chain (its parents, or the full chain "
+                "ending with the warrant)."
             )
         chain = [warrant]
     else:
-        chain = list(warrant_chain)
+        warrant, chain = _resolve_warrant_chain(
+            warrant,
+            warrant_chain,
+            operation="tenuo_complete_async_activity",
+        )
     # Authorizer validates signatures, linkage, attenuation, and policy. This
     # separate check binds the caller's ``warrant`` argument (used below for
     # holder-key verification) to the verified chain leaf.
