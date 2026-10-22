@@ -12,8 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ControlPlaneClient.status`.** Reports the connection state
   (`registering`, `connected`, `degraded`, `standalone`, `stopped`), the last
   error, and buffered, flushed and dropped audit event counts. It does no I/O,
-  so a health check can read it. Rust callers get the same through
-  `HeartbeatConfig::status`.
+  so a health check can read it. Rust callers pass an
+  `Arc<ControlPlaneStatus>` to the new `start_heartbeat_loop_with_status` and
+  keep a clone to read. `HeartbeatConfig` has the same fields as in 0.3.2, so
+  existing struct literals still compile.
 - **Optional filesystem open on the Rust guard.** The `filesystem` feature
   pins a local jail with `path_jail` 0.5 and opens an authorized `Subpath`
   argument from `AuthorizedCall::open`. The logical ceiling and the host
