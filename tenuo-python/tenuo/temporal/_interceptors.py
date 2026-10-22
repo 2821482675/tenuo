@@ -1333,6 +1333,14 @@ class TenuoActivityInboundInterceptor:
                 warrant, tool_name, args, headers,
             )
 
+            # Keep approval ordering unchanged, but report a missing PoP using
+            # the same stable wire category as every other PoP failure.
+            if pop_bytes is None:
+                raise PopVerificationError(
+                    reason="Missing proof-of-possession signature",
+                    activity_name=tool_name,
+                )
+
             # -- 12. Cryptographic Authorization Evaluation --
             from tenuo._enforcement import parents_from_presented_chain, verify_inbound_call
             from tenuo.runtime import bind_runtime, get_runtime
@@ -1349,6 +1357,11 @@ class TenuoActivityInboundInterceptor:
                     approvals=gate_approvals,
                 )
             if not enforcement.allowed:
+                if enforcement.error_type == "invalid_pop":
+                    raise PopVerificationError(
+                        reason=enforcement.denial_reason or "Invalid proof-of-possession",
+                        activity_name=tool_name,
+                    )
                 enforcement.raise_if_denied()
             chain_result = enforcement.chain_result
 
