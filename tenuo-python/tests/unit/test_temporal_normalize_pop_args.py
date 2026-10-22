@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import dataclasses
 import json
+from typing import Any
 
 import pytest
 
@@ -515,3 +516,27 @@ class TestSignedFormCoversWhatTheActivityReceives:
             value = Ctx(topic="t", token="s")
         with pytest.raises(TenuoArgNormalizationError, match="would not cover"):
             _normalize_pop_arg_value(value, "tool_ctx")
+
+    @pytest.mark.parametrize("where", ["field", "list", "dict"])
+    def test_a_nested_model_that_could_hide_a_value_is_refused(self, where):
+        pydantic = pytest.importorskip("pydantic")
+
+        class Child(pydantic.BaseModel):
+            publish: bool = pydantic.Field(False, exclude=True)
+
+        class Ctx(pydantic.BaseModel):
+            child: Any
+
+        child = Child(publish=True)
+        nested = {"field": child, "list": [child], "dict": {"c": child}}[where]
+        with pytest.raises(TenuoArgNormalizationError, match="would not cover"):
+            _normalize_pop_arg_value(Ctx(child=nested), "tool_ctx")
+        with pytest.raises(TenuoArgNormalizationError, match="would not cover"):
+            _normalize_pop_arg_value({"ctx": nested}, "tool_ctx")
+
+    def test_dict_keys_sign_as_json_transport_writes_them(self):
+        sent = {True: "a", False: "b", None: "c", 2: "d", 1.5: "e"}
+        received = json.loads(json.dumps(sent))
+        assert _normalize_pop_arg_value(sent, "c") == _normalize_pop_arg_value(received, "c")
+        with pytest.raises(TenuoArgNormalizationError, match="dict key"):
+            _normalize_pop_arg_value({(1, 2): "x"}, "c")

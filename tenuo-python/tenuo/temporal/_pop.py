@@ -235,10 +235,7 @@ def _check_model_is_signable(model: Any, field_name: str) -> None:
     excluded = sorted(name for name, info in fields.items() if getattr(info, "exclude", None))
     decorators = getattr(cls, "__pydantic_decorators__", None)
     serializers = bool(decorators and (decorators.field_serializers or decorators.model_serializers))
-    secrets = sorted(
-        name for name in fields
-        if type(getattr(model, name, None)).__name__ in ("SecretStr", "SecretBytes", "Secret")
-    )
+    secrets = sorted(name for name in fields if _is_secret(getattr(model, name, None)))
     why = (
         f"excluded field(s) {', '.join(excluded)}" if excluded
         else "a custom serializer" if serializers
@@ -251,6 +248,54 @@ def _check_model_is_signable(model: Any, field_name: str) -> None:
             + _MODEL_UNSIGNABLE.format(why=why)
             + " See docs/temporal-reference.md: 'Structured activity arguments'."
         )
+
+
+def _is_secret(value: Any) -> bool:
+    return type(value).__name__ in ("SecretStr", "SecretBytes", "Secret")
+
+
+def _check_signable_tree(value: Any, field_name: str, depth: int = 0) -> None:
+    """Check every model inside a value before any of it is dumped.
+
+    Dumping an outer model drops a nested model's excluded fields and masks its
+    secrets, so the nested model has to be checked while it is still a model.
+    """
+    if depth > _POP_NORMALIZE_MAX_DEPTH:
+        return  # _jsonable reports the depth error
+    if _is_secret(value):
+        raise TenuoArgNormalizationError(
+            f"Activity argument '{field_name}' contains a secret value. "
+            + _MODEL_UNSIGNABLE.format(why="a secret value")
+            + " See docs/temporal-reference.md: 'Structured activity arguments'."
+        )
+    if _is_pydantic_model(value):
+        _check_model_is_signable(value, field_name)
+        cls = type(value)
+        names = getattr(cls, "model_fields", None) or getattr(cls, "__fields__", {})
+        children: Any = [getattr(value, name, None) for name in names]
+    elif _dataclasses.is_dataclass(value) and not isinstance(value, type):
+        children = [getattr(value, f.name) for f in _dataclasses.fields(value)]
+    elif isinstance(value, dict):
+        children = value.values()
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        children = value
+    else:
+        return
+    for child in children:
+        _check_signable_tree(child, field_name, depth + 1)
+
+
+def _json_key(key: Any, field_name: str) -> str:
+    """A dict key as JSON transport writes it: True as "true", None as "null"."""
+    if isinstance(key, str):
+        return key
+    if key is None or isinstance(key, (bool, int, float)):
+        return json.dumps(key)
+    raise TenuoArgNormalizationError(
+        f"Activity argument '{field_name}' has a dict key of type {type(key).__name__}; "
+        "JSON keys must be strings, numbers, booleans or None. "
+        "See docs/temporal-reference.md: 'Structured activity arguments'."
+    )
 
 
 def _jsonable(value: Any, field_name: str, depth: int = 0) -> Any:
@@ -268,13 +313,13 @@ def _jsonable(value: Any, field_name: str, depth: int = 0) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if _is_pydantic_model(value):
-        _check_model_is_signable(value, field_name)
+        _check_signable_tree(value, field_name, depth)
         dumped = value.model_dump(mode="json") if hasattr(value, "model_dump") else json.loads(value.json())
         return _jsonable(dumped, field_name, depth + 1)
     if _dataclasses.is_dataclass(value) and not isinstance(value, type):
         return {f.name: _jsonable(getattr(value, f.name), field_name, depth + 1) for f in _dataclasses.fields(value)}
     if isinstance(value, dict):
-        return {str(k): _jsonable(v, field_name, depth + 1) for k, v in value.items()}
+        return {_json_key(k, field_name): _jsonable(v, field_name, depth + 1) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_jsonable(v, field_name, depth + 1) for v in value]
     if isinstance(value, bytes):
