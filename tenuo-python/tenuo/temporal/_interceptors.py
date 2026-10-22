@@ -24,7 +24,9 @@ from tenuo.exceptions import (
     ConstraintViolation,
     InsufficientApprovals,
     InvalidApproval,
+    MissingSignature,
     RevokedError,
+    SignatureInvalid,
     ToolNotAuthorized,
 )
 from tenuo.temporal._constants import (
@@ -1336,33 +1338,104 @@ class TenuoActivityInboundInterceptor:
             # A task without PoP is denied before the approval step, so a
             # copied warrant header alone can never reach approval_handler.
             # Same wire category as every other PoP failure; the signature
-            # itself is verified in step 12.
+            # itself is verified in step 11.
             if pop_bytes is None:
                 raise PopVerificationError(
                     reason="Missing proof-of-possession signature",
                     activity_name=tool_name,
                 )
 
-            # -- 11. Multi-Sig Approval Resolution --
-            gate_approvals = await self._resolve_approval_gate_approvals(
-                warrant, tool_name, args, headers,
-            )
-
-            # -- 12. Cryptographic Authorization Evaluation --
+            # -- 11. Cryptographic PoP Preflight --
+            # A syntactically valid PoP header is not proof of possession. Go
+            # directly to the Rust authorizer first: ``verify_inbound_call``
+            # evaluates approval gates before entering the core, so using it
+            # alone as a preflight would let an invalid signature look like an
+            # approval-required call.
             from tenuo._enforcement import parents_from_presented_chain, verify_inbound_call
+            from tenuo._pop_canonicalize import strip_none_values
             from tenuo.runtime import bind_runtime, get_runtime
+            from tenuo.runtime import apply_runtime_revocation
 
             runtime = getattr(self._config, "runtime", None) or get_runtime()
+            presented_parents = parents_from_presented_chain(chain, warrant)
+            full_chain = list(presented_parents) + [warrant]
+            constraint_args = strip_none_values(args)
             with bind_runtime(runtime):
-                enforcement = verify_inbound_call(
+                apply_runtime_revocation(authorizer)
+                try:
+                    # Verify the chain separately so a bad warrant signature is
+                    # not mislabeled as a bad holder PoP (both use the core's
+                    # SignatureInvalid exception type).
+                    authorizer.verify_chain(full_chain)
+                    if constraint_args != args:
+                        authorizer.check_chain_with_pop_args(
+                            full_chain,
+                            tool_name,
+                            args,
+                            constraint_args,
+                            signature=pop_bytes,
+                            approvals=[],
+                        )
+                    else:
+                        authorizer.check_chain(
+                            full_chain,
+                            tool_name,
+                            args,
+                            signature=pop_bytes,
+                            approvals=[],
+                        )
+                except (ApprovalGateTriggered, InsufficientApprovals):
+                    # Reaching the approval gate proves that all preceding core
+                    # checks, including holder PoP verification, succeeded.
+                    pass
+                except (SignatureInvalid, MissingSignature) as pop_exc:
+                    raise PopVerificationError(
+                        reason=str(pop_exc),
+                        activity_name=tool_name,
+                    ) from pop_exc
+
+                # Preserve the shared Python policy checks and its structured
+                # result mapping after cryptographic identity is established.
+                preflight = verify_inbound_call(
                     tool_name=tool_name,
                     tool_args=args,
                     warrant=warrant,
                     pop_signature=pop_bytes,
                     authorizer=authorizer,
-                    warrant_chain=parents_from_presented_chain(chain, warrant),
-                    approvals=gate_approvals,
+                    warrant_chain=presented_parents,
+                    approvals=[],
                 )
+
+            approval_needed = preflight.error_type in ("approval_required", "insufficient_approvals")
+            if not preflight.allowed and not approval_needed:
+                if preflight.error_type == "invalid_pop":
+                    raise PopVerificationError(
+                        reason=preflight.denial_reason or "Invalid proof-of-possession",
+                        activity_name=tool_name,
+                    )
+                preflight.raise_if_denied()
+
+            # -- 12. Multi-Sig Approval Resolution --
+            # Only a cryptographically authenticated caller can reach an
+            # approval handler or cause supplied approvals to be parsed.
+            if approval_needed:
+                gate_approvals = await self._resolve_approval_gate_approvals(
+                    warrant, tool_name, args, headers,
+                )
+                with bind_runtime(runtime):
+                    enforcement = verify_inbound_call(
+                        tool_name=tool_name,
+                        tool_args=args,
+                        warrant=warrant,
+                        pop_signature=pop_bytes,
+                        authorizer=authorizer,
+                        warrant_chain=presented_parents,
+                        approvals=gate_approvals,
+                    )
+            else:
+                enforcement = preflight
+
+            # -- 13. Final Authorization Evaluation --
             if not enforcement.allowed:
                 if enforcement.error_type == "invalid_pop":
                     raise PopVerificationError(
@@ -1372,7 +1445,7 @@ class TenuoActivityInboundInterceptor:
                 enforcement.raise_if_denied()
             chain_result = enforcement.chain_result
 
-            # -- 13. Replay Deduplication --
+            # -- 14. Replay Deduplication --
             if info.attempt <= 1:
                 base_dedup = warrant.dedup_key(tool_name, args)
                 dedup_key = (
@@ -1389,7 +1462,7 @@ class TenuoActivityInboundInterceptor:
                 _active_span.set_attribute("tenuo.decision", "allow")
                 _active_span.set_attribute("tenuo.constraint_violated", "")
 
-        # -- 14. Fail-Closed Error Mapping & Tracing --
+        # -- 15. Fail-Closed Error Mapping & Tracing --
         except (
             TemporalConstraintViolation,
             PopVerificationError,

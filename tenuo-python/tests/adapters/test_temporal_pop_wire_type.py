@@ -78,7 +78,7 @@ def test_untrusted_issuer_keeps_its_code():
     assert _run(pop_signer="holder", trusted_root=SigningKey.generate()) == "CONSTRAINT_VIOLATED"
 
 
-def _gated_inputs(with_pop):
+def _gated_inputs(pop_kind):
     """A warrant whose ``deploy`` call is in scope but approval-gated."""
     root, agent, approver = SigningKey.generate(), SigningKey.generate(), SigningKey.generate()
     warrant = (
@@ -96,8 +96,11 @@ def _gated_inputs(with_pop):
         for k, v in tenuo_headers(warrant, "agent1").items()
         if k.startswith("x-tenuo-")
     }
-    if with_pop:
-        headers[TENUO_POP_HEADER] = base64.b64encode(bytes(warrant.sign(agent, "deploy", {}, int(time.time()))))
+    if pop_kind != "missing":
+        signer = agent if pop_kind == "valid" else SigningKey.generate()
+        headers[TENUO_POP_HEADER] = base64.b64encode(
+            bytes(warrant.sign(signer, "deploy", {}, int(time.time())))
+        )
     info = MagicMock(
         activity_type="deploy",
         activity_id="1",
@@ -112,12 +115,12 @@ def _gated_inputs(with_pop):
     return root, info, inp
 
 
-@pytest.mark.parametrize("with_pop", [False, True], ids=["missing_pop", "with_pop"])
-def test_missing_pop_is_denied_before_approval_handler(with_pop):
-    """A copied warrant header without PoP never reaches the approver."""
-    root, info, inp = _gated_inputs(with_pop)
-    # Returning None leaves the gate unsatisfied, so even the with-PoP case is
-    # denied; it only shows the handler is reachable when PoP is present.
+@pytest.mark.parametrize("pop_kind", ["missing", "invalid", "valid"])
+def test_only_valid_pop_reaches_approval_handler(pop_kind):
+    """A copied warrant with no PoP or an invalid PoP never reaches the approver."""
+    root, info, inp = _gated_inputs(pop_kind)
+    # Returning None leaves the gate unsatisfied, so even the valid-PoP case is
+    # denied; it only shows the handler is reachable after PoP authentication.
     handler = MagicMock(return_value=None)
     cfg = TenuoPluginConfig(
         key_resolver=EnvKeyResolver(),
@@ -135,7 +138,7 @@ def test_missing_pop_is_denied_before_approval_handler(with_pop):
     finally:
         loop.close()
 
-    if with_pop:
+    if pop_kind == "valid":
         handler.assert_called_once()
     else:
         handler.assert_not_called()
