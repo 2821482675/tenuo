@@ -477,3 +477,41 @@ def test_framework_args_declares_any_value_constraints():
     assert all(type(c) is type(AnyValue()) for c in declared.values())
     with pytest.raises(ValueError):
         framework_args()
+
+
+class TestSignedFormCoversWhatTheActivityReceives:
+    def test_nested_dataclass_signs_like_the_dict_the_worker_receives(self):
+        @dataclasses.dataclass
+        class Spec:
+            topic: str
+            limit: int
+
+        signed = _normalize_pop_arg_value({"spec": Spec("events", 5), "tags": [Spec("a", 1)]}, "c")
+        received = _normalize_pop_arg_value({"spec": {"topic": "events", "limit": 5},
+                                             "tags": [{"topic": "a", "limit": 1}]}, "c")
+        assert signed == received
+
+    @pytest.mark.parametrize("kind", ["excluded", "serializer", "secret"])
+    def test_models_that_could_hide_a_value_are_refused(self, kind):
+        pydantic = pytest.importorskip("pydantic")
+
+        if kind == "excluded":
+            class Ctx(pydantic.BaseModel):
+                topic: str
+                publish: bool = pydantic.Field(False, exclude=True)
+            value = Ctx(topic="t", publish=True)
+        elif kind == "serializer":
+            class Ctx(pydantic.BaseModel):
+                topic: str
+
+                @pydantic.field_serializer("topic")
+                def mask(self, v):
+                    return "***"
+            value = Ctx(topic="t")
+        else:
+            class Ctx(pydantic.BaseModel):
+                topic: str
+                token: pydantic.SecretStr
+            value = Ctx(topic="t", token="s")
+        with pytest.raises(TenuoArgNormalizationError, match="would not cover"):
+            _normalize_pop_arg_value(value, "tool_ctx")

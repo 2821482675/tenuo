@@ -216,6 +216,84 @@ def _is_pydantic_model(value: Any) -> bool:
     )
 
 
+_MODEL_UNSIGNABLE = (
+    "Its signed form would not cover what the activity receives: {why}. Pass "
+    "those fields as separate arguments, or use a model without them."
+)
+
+
+def _check_model_is_signable(model: Any, field_name: str) -> None:
+    """Refuse a model whose JSON dump can omit or mask a value the activity receives.
+
+    An excluded field, a custom serializer, or a secret type would let a payload
+    change that value without changing the signed form.
+    """
+    cls = type(model)
+    fields = getattr(cls, "model_fields", None)
+    if fields is None:  # Pydantic v1
+        fields = {name: getattr(f, "field_info", f) for name, f in getattr(cls, "__fields__", {}).items()}
+    excluded = sorted(name for name, info in fields.items() if getattr(info, "exclude", None))
+    decorators = getattr(cls, "__pydantic_decorators__", None)
+    serializers = bool(decorators and (decorators.field_serializers or decorators.model_serializers))
+    secrets = sorted(
+        name for name in fields
+        if type(getattr(model, name, None)).__name__ in ("SecretStr", "SecretBytes", "Secret")
+    )
+    why = (
+        f"excluded field(s) {', '.join(excluded)}" if excluded
+        else "a custom serializer" if serializers
+        else f"secret field(s) {', '.join(secrets)}" if secrets
+        else None
+    )
+    if why:
+        raise TenuoArgNormalizationError(
+            f"Activity argument '{field_name}' is a Pydantic model {cls.__name__}. "
+            + _MODEL_UNSIGNABLE.format(why=why)
+            + " See docs/temporal-reference.md: 'Structured activity arguments'."
+        )
+
+
+def _jsonable(value: Any, field_name: str, depth: int = 0) -> Any:
+    """Plain JSON data for a structured value, converted the same way at any depth.
+
+    The worker receives nested dataclasses and models as the dicts Temporal's
+    JSON converter produces, so the workflow must sign them as those dicts too.
+    """
+    if depth > _POP_NORMALIZE_MAX_DEPTH:
+        raise TenuoArgNormalizationError(
+            f"Activity argument '{field_name}' exceeds maximum nesting depth "
+            f"({_POP_NORMALIZE_MAX_DEPTH}) for PoP normalization. "
+            f"See docs/temporal-reference.md: 'Structured activity arguments'."
+        )
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if _is_pydantic_model(value):
+        _check_model_is_signable(value, field_name)
+        dumped = value.model_dump(mode="json") if hasattr(value, "model_dump") else json.loads(value.json())
+        return _jsonable(dumped, field_name, depth + 1)
+    if _dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {f.name: _jsonable(getattr(value, f.name), field_name, depth + 1) for f in _dataclasses.fields(value)}
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v, field_name, depth + 1) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v, field_name, depth + 1) for v in value]
+    if isinstance(value, bytes):
+        return base64.b64encode(value).decode("ascii")
+    return str(value)  # as before for leaf values such as datetime
+
+
+def _canonical_json(value: Any, field_name: str) -> str:
+    try:
+        return json.dumps(_jsonable(value, field_name), sort_keys=True, ensure_ascii=False)
+    except TenuoArgNormalizationError:
+        raise
+    except Exception as exc:
+        raise TenuoArgNormalizationError(
+            f"Activity argument '{field_name}' could not be serialized for PoP: {exc}. "
+            f"See docs/temporal-reference.md: 'Structured activity arguments'."
+        ) from exc
+
+
 def _normalize_pop_arg_value(value: Any, field_name: str, depth: int = 0) -> Any:
     """Recursively normalize a single activity arg value for PoP signing.
 
@@ -238,35 +316,10 @@ def _normalize_pop_arg_value(value: Any, field_name: str, depth: int = 0) -> Any
         # Framework context objects are often Pydantic models. Sign them like a
         # dataclass, as canonical JSON of their JSON-mode dump, so they stay
         # covered by PoP and receipts instead of being excluded from them.
-        try:
-            dumped = value.model_dump(mode="json") if hasattr(value, "model_dump") else json.loads(value.json())
-            return json.dumps(dumped, sort_keys=True, ensure_ascii=False)
-        except Exception as exc:
-            raise TenuoArgNormalizationError(
-                f"Activity argument '{field_name}' is a Pydantic model but could not be "
-                f"dumped to JSON: {exc}. "
-                f"See docs/temporal-reference.md: 'Structured activity arguments'."
-            ) from exc
+        return _canonical_json(value, field_name)
 
-    if _dataclasses.is_dataclass(value) and not isinstance(value, type):
-        try:
-            return json.dumps(_dataclasses.asdict(value), sort_keys=True, default=str, ensure_ascii=False)
-        except Exception as exc:
-            raise TenuoArgNormalizationError(
-                f"Activity argument '{field_name}' is a dataclass but could not be "
-                f"converted via dataclasses.asdict(): {exc}. "
-                f"See docs/temporal-reference.md: 'Structured activity arguments'."
-            ) from exc
-
-    if isinstance(value, dict):
-        try:
-            return json.dumps(value, sort_keys=True, default=str, ensure_ascii=False)
-        except Exception as exc:
-            raise TenuoArgNormalizationError(
-                f"Activity argument '{field_name}' is a dict but could not be "
-                f"serialized: {exc}. "
-                f"See docs/temporal-reference.md: 'Structured activity arguments'."
-            ) from exc
+    if (_dataclasses.is_dataclass(value) and not isinstance(value, type)) or isinstance(value, dict):
+        return _canonical_json(value, field_name)
 
     if isinstance(value, (list, tuple)):
         normalized = [

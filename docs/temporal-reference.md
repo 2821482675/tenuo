@@ -527,8 +527,13 @@ Primitives (`str`, `int`, `float`, `bool`, `None`) are used as they are. `dict`,
 are normalized first, on both sides: a Pydantic model becomes the canonical JSON
 of `model_dump(mode="json")`, a dataclass or dict the canonical JSON of its
 fields. The worker checks the same normalized values the workflow signed; the
-activity still receives the original objects. Anything else (a `set`, a bare
-`datetime`, an arbitrary class) is refused with `TenuoArgNormalizationError`.
+activity still receives the original objects. Nested values are converted the
+same way at every depth, so a dataclass inside a dict signs as the dict the
+worker receives. Anything else (a `set`, a bare `datetime`, an arbitrary class)
+is refused with `TenuoArgNormalizationError`, and so is a Pydantic model whose
+dump could leave out or mask a value the activity receives: one with an excluded
+field, a custom serializer or a secret field. Pass those values as their own
+arguments.
 
 Some frameworks pass every activity an argument of their own, such as a Pydantic
 context saying where to publish events. Under closed-world constraints the
