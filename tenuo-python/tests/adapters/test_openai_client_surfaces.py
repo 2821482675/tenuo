@@ -625,6 +625,29 @@ class TestStreamingChoicesAndNames:
             asyncio.run(go())
         assert [(event.decision, event.tool_name) for event in events] == [("DENY", expected_tool)]
 
+    def test_explicit_null_choice_index_cannot_alias_index_zero(self, server: FakeServer) -> None:
+        events: List[AuditEvent] = []
+        server.chat_sse_override = [
+            _chat_chunk(
+                {
+                    "index": None,
+                    "delta": {"function_call": {"name": "delete_file", "arguments": "{}"}},
+                    "finish_reason": None,
+                },
+                {
+                    "index": 0,
+                    "delta": {"function_call": {"name": "_safe"}},
+                    "finish_reason": None,
+                },
+            )
+        ]
+        # If null were normalized to zero, the guard would authorize the
+        # combined name while an SDK consumer reconstructed delete_file.
+        client = guard(server.sync_client(), allow_tools=["delete_file_safe"], audit_callback=events.append)
+        with pytest.raises(MalformedToolCall, match="stream index must be a non-negative integer"):
+            list(client.chat.completions.create(model="m", messages=MSGS, stream=True, n=2))
+        assert [(event.decision, event.tool_name) for event in events] == [("DENY", "unknown")]
+
     def test_skip_preserves_allowed_fragments_in_mixed_choice_chunk(self, server: FakeServer) -> None:
         def choice(index: int, delta: Dict[str, Any], finish: Optional[str] = None) -> Dict[str, Any]:
             return {"index": index, "delta": delta, "finish_reason": finish}

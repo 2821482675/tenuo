@@ -816,12 +816,26 @@ def _field(obj: Any, name: str) -> Any:
 
 def _stream_index(obj: Any) -> int:
     """Index of a streamed choice or tool call delta (0 when absent)."""
-    index = getattr(obj, "index", None)
+    if isinstance(obj, dict):
+        if "index" not in obj:
+            return 0
+        index = obj["index"]
+    else:
+        fields_set = getattr(obj, "model_fields_set", None)
+        if fields_set is None:
+            fields_set = getattr(obj, "__fields_set__", None)
+        if fields_set is not None and "index" not in fields_set:
+            return 0
+        missing = object()
+        index = getattr(obj, "index", missing)
+        if index is missing:
+            return 0
+
+    # An omitted index uses the backwards-compatible default above, but an
+    # explicit null is malformed. Treating it as zero would alias it with a
+    # real index-0 call in the authorization buffer.
     if index is None:
-        return 0
-    # Never normalize malformed indexes onto a valid buffer slot: doing so can
-    # authorize the concatenation of two calls while the SDK consumer rebuilds
-    # them separately using their original indexes.
+        raise MalformedToolCall("", "stream index must be a non-negative integer")
     if isinstance(index, bool) or not isinstance(index, int) or index < 0:
         raise MalformedToolCall("", "stream index must be a non-negative integer")
     return index
