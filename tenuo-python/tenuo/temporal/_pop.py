@@ -206,23 +206,47 @@ def _args_to_dict_by_fn(
 _POP_NORMALIZE_MAX_DEPTH = 32
 
 
+def _is_pydantic_model(value: Any) -> bool:
+    """A Pydantic (v1 or v2) model instance, detected without importing pydantic."""
+    if isinstance(value, type):
+        return False
+    return any(
+        cls.__module__.startswith("pydantic") and cls.__name__ == "BaseModel"
+        for cls in type(value).__mro__
+    )
+
+
 def _normalize_pop_arg_value(value: Any, field_name: str, depth: int = 0) -> Any:
     """Recursively normalize a single activity arg value for PoP signing.
 
-    Primitives pass through unchanged. Dataclasses, dicts, lists, tuples,
-    bytes, and None are normalized to representations the Rust CBOR encoder
-    can accept. Anything else raises TenuoArgNormalizationError.
+    Primitives pass through unchanged. Dataclasses, Pydantic models, dicts,
+    lists, tuples, bytes, and None are normalized to representations the Rust
+    CBOR encoder can accept. Anything else raises TenuoArgNormalizationError.
     """
     if depth > _POP_NORMALIZE_MAX_DEPTH:
         raise TenuoArgNormalizationError(
             f"Activity argument '{field_name}' exceeds maximum nesting depth "
             f"({_POP_NORMALIZE_MAX_DEPTH}) for PoP normalization. Flatten the "
             f"structure or lift individual fields to top-level primitive args. "
-            f"See docs/temporal.md: 'Structured state in activity arguments'."
+            f"See docs/temporal-reference.md: 'Structured activity arguments'."
         )
 
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
+
+    if _is_pydantic_model(value):
+        # Framework context objects are often Pydantic models. Sign them like a
+        # dataclass, as canonical JSON of their JSON-mode dump, so they stay
+        # covered by PoP and receipts instead of being excluded from them.
+        try:
+            dumped = value.model_dump(mode="json") if hasattr(value, "model_dump") else json.loads(value.json())
+            return json.dumps(dumped, sort_keys=True, ensure_ascii=False)
+        except Exception as exc:
+            raise TenuoArgNormalizationError(
+                f"Activity argument '{field_name}' is a Pydantic model but could not be "
+                f"dumped to JSON: {exc}. "
+                f"See docs/temporal-reference.md: 'Structured activity arguments'."
+            ) from exc
 
     if _dataclasses.is_dataclass(value) and not isinstance(value, type):
         try:
@@ -231,7 +255,7 @@ def _normalize_pop_arg_value(value: Any, field_name: str, depth: int = 0) -> Any
             raise TenuoArgNormalizationError(
                 f"Activity argument '{field_name}' is a dataclass but could not be "
                 f"converted via dataclasses.asdict(): {exc}. "
-                f"See docs/temporal.md: 'Structured state in activity arguments'."
+                f"See docs/temporal-reference.md: 'Structured activity arguments'."
             ) from exc
 
     if isinstance(value, dict):
@@ -241,7 +265,7 @@ def _normalize_pop_arg_value(value: Any, field_name: str, depth: int = 0) -> Any
             raise TenuoArgNormalizationError(
                 f"Activity argument '{field_name}' is a dict but could not be "
                 f"serialized: {exc}. "
-                f"See docs/temporal.md: 'Structured state in activity arguments'."
+                f"See docs/temporal-reference.md: 'Structured activity arguments'."
             ) from exc
 
     if isinstance(value, (list, tuple)):
@@ -257,7 +281,7 @@ def _normalize_pop_arg_value(value: Any, field_name: str, depth: int = 0) -> Any
             raise TenuoArgNormalizationError(
                 f"Activity argument '{field_name}' (list/tuple) could not be "
                 f"serialized: {exc}. "
-                f"See docs/temporal.md: 'Structured state in activity arguments'."
+                f"See docs/temporal-reference.md: 'Structured activity arguments'."
             ) from exc
 
     if isinstance(value, bytes):
@@ -267,10 +291,10 @@ def _normalize_pop_arg_value(value: Any, field_name: str, depth: int = 0) -> Any
     raise TenuoArgNormalizationError(
         f"Activity argument '{field_name}' has type '{type_name}' which cannot "
         f"be normalized for PoP signing. Supported types: str, int, float, bool, "
-        f"None, bytes, list, tuple, dict, and @dataclass. For {type_name}: "
+        f"None, bytes, list, tuple, dict, @dataclass and Pydantic models. For {type_name}: "
         f"convert to a @dataclass or dict, or lift the relevant fields to "
         f"top-level primitive arguments with explicit constraints. "
-        f"See docs/temporal.md: 'Structured state in activity arguments'."
+        f"See docs/temporal-reference.md: 'Structured activity arguments'."
     )
 
 
@@ -370,3 +394,24 @@ def _positional_pop_mismatch_message(
         f"reference is available. See tenuo.temporal module docstring: "
         f"'Activity registry (activity_fns) and PoP argument names'."
     )
+
+
+def framework_args(*names: str) -> Dict[str, Any]:
+    """Constraints for arguments a framework passes every activity.
+
+    Some frameworks add their own argument to each activity (a Pydantic context
+    saying where to publish events, say). Under closed-world constraints a
+    warrant has to name it. This declares each one as an ordinary any-value
+    constraint, so it stays signed by PoP and recorded in receipts, and a
+    narrower warrant can still constrain it::
+
+        warrant = (Warrant.mint_builder()
+                   .capability("search", query=Pattern("docs:*"), **framework_args("tool_ctx"))
+                   ...)
+    """
+    from tenuo import AnyValue
+
+    if not names or not all(isinstance(n, str) and n for n in names):
+        raise ValueError("framework_args needs one or more argument names")
+    return {name: AnyValue() for name in names}
+

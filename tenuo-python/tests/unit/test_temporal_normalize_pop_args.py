@@ -215,7 +215,7 @@ class TestNormalizePopArgValueUnsupported:
     def test_error_message_includes_docs_link(self):
         with pytest.raises(TenuoArgNormalizationError) as exc_info:
             _normalize_pop_arg_value({1, 2}, "s")
-        assert "docs/temporal.md" in str(exc_info.value)
+        assert "docs/temporal-reference.md" in str(exc_info.value)
 
 
 class TestNormalizePopArgValueDepthGuard:
@@ -397,3 +397,83 @@ class TestPrevalidateArgsAgainstWarrant:
         with pytest.raises(TenuoPreValidationError) as exc_info:
             _prevalidate_args_against_warrant(warrant, "tool", {"unknown": 1})
         assert isinstance(exc_info.value, TenuoContextError)
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models: signed like dataclasses, not excluded from PoP
+# ---------------------------------------------------------------------------
+
+class TestNormalizePopArgValuePydantic:
+    """Framework context objects are often Pydantic models; they're signed, not skipped."""
+
+    def test_v2_model_is_canonical_json_of_its_json_dump(self):
+        pydantic = pytest.importorskip("pydantic")
+        import datetime
+
+        class Route(pydantic.BaseModel):
+            topic: str
+            partition: int
+
+        class ToolContext(pydantic.BaseModel):
+            run_id: str
+            route: Route
+            started: datetime.datetime
+
+        ctx = ToolContext(run_id="r-1", route=Route(topic="events", partition=3),
+                          started=datetime.datetime(2026, 10, 22, 9, 30, tzinfo=datetime.timezone.utc))
+        result = _normalize_pop_arg_value(ctx, "tool_ctx")
+        assert json.loads(result) == ctx.model_dump(mode="json")
+        assert result == json.dumps(ctx.model_dump(mode="json"), sort_keys=True, ensure_ascii=False)
+
+    def test_same_model_values_sign_the_same_whatever_the_field_order(self):
+        pydantic = pytest.importorskip("pydantic")
+
+        class A(pydantic.BaseModel):
+            x: int
+            y: str
+
+        class B(pydantic.BaseModel):
+            y: str
+            x: int
+
+        assert _normalize_pop_arg_value(A(x=1, y="a"), "c") == _normalize_pop_arg_value(B(y="a", x=1), "c")
+
+    def test_a_model_and_its_wire_dict_sign_the_same(self):
+        # The workflow signs the model; a worker without a Pydantic converter
+        # sees the decoded dict. Both must produce the same PoP input.
+        pydantic = pytest.importorskip("pydantic")
+
+        class Ctx(pydantic.BaseModel):
+            topic: str
+            retries: int
+
+        ctx = Ctx(topic="events", retries=2)
+        assert _normalize_pop_arg_value(ctx, "c") == _normalize_pop_arg_value(ctx.model_dump(mode="json"), "c")
+
+    def test_v1_model(self):
+        v1 = pytest.importorskip("pydantic.v1")
+
+        class Ctx(v1.BaseModel):
+            topic: str
+
+        assert json.loads(_normalize_pop_arg_value(Ctx(topic="events"), "c")) == {"topic": "events"}
+
+    def test_model_class_is_not_a_model_value(self):
+        pydantic = pytest.importorskip("pydantic")
+
+        class Ctx(pydantic.BaseModel):
+            topic: str
+
+        with pytest.raises(TenuoArgNormalizationError):
+            _normalize_pop_arg_value(Ctx, "c")
+
+
+def test_framework_args_declares_any_value_constraints():
+    from tenuo import AnyValue
+    from tenuo.temporal import framework_args
+
+    declared = framework_args("tool_ctx", "run_meta")
+    assert set(declared) == {"tool_ctx", "run_meta"}
+    assert all(type(c) is type(AnyValue()) for c in declared.values())
+    with pytest.raises(ValueError):
+        framework_args()
