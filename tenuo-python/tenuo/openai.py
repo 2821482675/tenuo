@@ -445,7 +445,10 @@ class OpenAIConstraintViolation(TenuoOpenAIError):
             expected = _constraint_expected_type(constraint)
             self.reason = f"expected {expected}, got {type(value).__name__}"
         else:
-            self.reason = f"value does not satisfy constraint {constraint}"
+            # Constraint representations can contain policy values.  In
+            # particular, NotOneOf([value]) can echo the rejected value back
+            # into logs, model-visible denial text, and control-plane events.
+            self.reason = f"value does not satisfy {type(constraint).__name__} constraint"
 
         # The value stays on the exception for callers, but never in its text:
         # the message is logged, returned to the model, and sent as a denial
@@ -643,9 +646,18 @@ def verify_tool_call(
                 raise
             except Exception as e:
                 # Fail Closed: Internal error during validation = DENY
-                logger.error(f"Internal validation error for {tool_name}.{arg_name}: {e}")
+                logger.error(
+                    "Internal validation error for %s.%s: %s",
+                    tool_name,
+                    arg_name,
+                    type(e).__name__,
+                )
                 raise OpenAIConstraintViolation(
-                    tool_name, arg_name, value, constraint=Wildcard(), reason=f"internal validation error: {e}"
+                    tool_name,
+                    arg_name,
+                    value,
+                    constraint=Wildcard(),
+                    reason=f"internal validation error ({type(e).__name__})",
                 )
 
 
@@ -804,12 +816,19 @@ def _field(obj: Any, name: str) -> Any:
 
 def _stream_index(obj: Any) -> int:
     """Index of a streamed choice or tool call delta (0 when absent)."""
-    index = getattr(obj, "index", 0)
-    return index if isinstance(index, int) and index >= 0 else 0
+    index = getattr(obj, "index", None)
+    if index is None:
+        return 0
+    # Never normalize malformed indexes onto a valid buffer slot: doing so can
+    # authorize the concatenation of two calls while the SDK consumer rebuilds
+    # them separately using their original indexes.
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        raise MalformedToolCall("", "stream index must be a non-negative integer")
+    return index
 
 
 # Buffer key slot for a legacy ``function_call`` delta (``functions=`` API),
-# which has no tool call index. Real indexes are clamped to >= 0 above.
+# which has no tool call index. Real indexes are validated as non-negative.
 _LEGACY_FUNCTION_CALL = -1
 
 
@@ -1341,25 +1360,26 @@ class GuardedCompletions:
     ) -> Optional[Any]:
         """Filter out denied tool calls from a chunk.
 
-        Returns None if the entire chunk should be dropped.
+        The remaining deltas must be preserved exactly: dropping an entire
+        mixed chunk could remove a fragment from an allowed call, causing the
+        application to reconstruct different arguments than were authorized.
         """
         if not self._has_tool_call_delta(chunk):
             return chunk
 
-        # For simplicity, if any tool call in chunk is denied, drop the whole chunk
-        # A more sophisticated impl would surgically remove just the denied calls
         for choice in chunk.choices:
             if not hasattr(choice, "delta") or not choice.delta:
                 continue
             delta = choice.delta
             choice_index = _stream_index(choice)
             if getattr(delta, "function_call", None) and (choice_index, _LEGACY_FUNCTION_CALL) in denied_indices:
-                return None
-            if not hasattr(delta, "tool_calls") or not delta.tool_calls:
-                continue
-            for tc_delta in delta.tool_calls:
-                if (choice_index, _stream_index(tc_delta)) in denied_indices:
-                    return None
+                delta.function_call = None
+            if hasattr(delta, "tool_calls") and delta.tool_calls:
+                delta.tool_calls = [
+                    tc_delta
+                    for tc_delta in delta.tool_calls
+                    if (choice_index, _stream_index(tc_delta)) not in denied_indices
+                ] or None
 
         return chunk
 
