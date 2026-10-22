@@ -67,6 +67,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Temporal retry window and approval order match the verifier.**
+  `retry_pop_max_windows=40` covers about 10 minutes on the past side.
+  Ten immediate retries under Temporal's default backoff take about 7
+  minutes. The activity worker denies an out-of-scope call before asking
+  an approver, then still checks trust, expiry, revocation, and PoP after
+  approvals return.
 - **Temporal: a plain worker no longer breaks Tenuo-protected activities in
   the same process.** A worker without the Tenuo plugin re-imports `tenuo`
   inside its workflow sandbox, and that copy re-installed `Warrant.bind` and
