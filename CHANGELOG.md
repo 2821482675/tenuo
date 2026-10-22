@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-22
+
+### Upgrade notes
+
+This patch release tightens several checks, and some calls that used to pass
+are now denied. Check these before upgrading:
+
+- **`UrlSafe` is stricter (security erratum).** `allow_domains` now applies to
+  IP literals too, so `https://8.8.8.8/` is denied unless that IP is listed.
+  Patterns are validated and canonicalized. A malformed allow or deny entry
+  such as `"*"`, `"https://x"`, `"example.com:443"` or a bare IPv6 address
+  makes every check deny, makes an existing delegation chain that carries it
+  fail verification, and makes the Python `UrlSafe(...)` constructor raise.
+  Look for such entries in warrants you have issued before you upgrade
+  verifiers.
+- **A2A `require_audience` now defaults to `False`.** Servers built with the
+  default rejected every core warrant (they carry no `aud`). If you relied on
+  the default for audience binding, set `require_audience=True` or
+  `TENUO_A2A_REQUIRE_AUDIENCE=true`.
+- **FastAPI clients must sign typed values.** Default path and query
+  arguments are typed from the endpoint signature. A client that signs
+  `{"limit": "5"}` for `limit: int` now gets `403 invalid_pop`; sign
+  `{"limit": 5}`. Warrants with string constraints (`Exact("5")`, `Pattern`)
+  on non-string parameters stop matching.
+- **OpenAI.** `responses.create(stream=True)` under `guard()` raises
+  `CFG_004` instead of returning an unverified stream. Legacy `function_call`
+  responses are now checked. `guard_agent()` replaces `TenuoToolGuardrail` in
+  `input_guardrails`, which raises `CFG_006`, and needs `openai-agents`
+  0.3.3 or later.
+- **Temporal.**
+  - A missing or wrong-key PoP is reported as `PopVerificationError` /
+    `POP_VERIFICATION_FAILED` instead of `CONSTRAINT_VIOLATED`. Update
+    alerting that matches the error type.
+  - `_workflow_id` and `_workflow_namespace` are reserved. An activity with an
+    argument or parameter of either name now fails.
+  - An off-list signal is dropped instead of failing the run. Replaying a
+    closed 0.3.2 history whose run failed on such a signal reports
+    nondeterminism.
+  - `temporalio` 1.33.0 or later is required.
+- **MCP.** `MCPVerifier(config=...)` denies arguments no rule reads unless the
+  warrant allows unknown fields, and `SecureMCPClient` tools raise
+  `ConfigurationError` when no warrant is in scope.
+- **Denial text.** `WhyDenied.suggestion` links to the bare Explorer. Use
+  `why_denied(...).explorer_url` for the pre-filled link.
+- **TypeScript (beta).** Several inputs are stricter (see Changed). One-use
+  approvals apply only when a `nonceStore` is passed.
+
 ### Added
 
 - **`ControlPlaneClient.status`.** Reports the connection state
@@ -50,6 +97,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Session.toWireString()` (TypeScript).** The whole warrant chain as one
   string, the same CBOR stack encoding as `present().warrant`, for places
   where only a single string fits. `sessionFromWire()` imports it.
+- **Temporal: delegated warrants at workflow start.** `warrant_chain=` on
+  `tenuo_headers`, `execute_workflow_authorized`, `start_workflow_authorized`,
+  `tenuo_warrant_context` and `create_scheduled_workflow_with_warrant` sends
+  the parent chain in `x-tenuo-warrant-chain`, so a delegated warrant reaches
+  workers that trust only the root. Workers need no change.
+- **Temporal: workflow-scoped capabilities.** A capability that constrains
+  both `_workflow_namespace` and `_workflow_id` (for example with `Exact` or
+  `Pattern`) is limited to that workflow. The client fills both from
+  `workflow.info()` when signing and the worker fills them from
+  `activity.info()` before verifying. Constraining only one of the pair fails
+  closed.
+- **`WhyDenied.explorer_url`.** The pre-filled Explorer link, for local
+  debugging. It carries the warrant and arguments, so keep it out of logs.
+- **TypeScript examples.** A runnable `@tenuo/core` quickstart
+  (`example:basic`), a BullMQ job-authorization example, and a LangChain.js
+  protected-tool example. CI runs the BullMQ and LangChain.js examples
+  against the packed package.
 
 ### Changed
 
@@ -66,8 +130,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TypeScript MCP verify consumes approvals.** With a `nonceStore`,
   `mcp.verify()`, `mcp.handler()`, and `@tenuo/mcp` also record the approvals
   an allowed call carried, so a freshly signed PoP cannot reuse them.
+- **FastAPI path and query arguments are typed.** `TenuoGuard`'s default
+  extraction passed every path and query value as a string, so numeric
+  constraints such as `Range(max=100)` always denied. Declared parameters are
+  now validated against the endpoint's annotations with pydantic (lists
+  through `getlist()`). Undeclared parameters and values that fail coercion
+  stay raw strings. Custom `extract_args` is unchanged.
 
 ### Fixed
+
+- **OpenAI `guard()` checks async clients.** On `AsyncOpenAI`,
+  `chat.completions.create()` returned the raw coroutine, and the awaited
+  result was never verified, so every tool call ran unchecked. `create()` now
+  awaits and verifies on async clients, sync and streaming.
+- **AutoGen streams verify every buffered tool call.** `guard_stream` verified
+  only when `finish_reason` was `"tool_calls"`, so a stream ending in `stop`,
+  `length`, or no finish reason emitted unverified tool calls. Calls are now
+  verified on any finish reason and again at stream end, keyed by index so a
+  call split across deltas is not denied.
+- **FastAPI async `extract_args` is awaited.** An extractor that awaited
+  `request.json()` passed a coroutine to enforcement, so body fields could
+  never be authorized. A sync extractor that returns an awaitable fails
+  closed with a 500.
+- **FastAPI denial logs show argument names only.** The denial warning
+  logged the full argument dict.
+- **Denial text carries no warrant or argument values.** `why_denied()`
+  appended an Explorer link whose query held the warrant token and call
+  arguments, and that text reached exceptions, observe logs, audit events,
+  `denial_reason` and A2A errors.
+- **LangGraph `guard_node` receives LangGraph config.** It now advertises
+  the node's own parameters plus `config`, so `tenuo_key_id` is honored and
+  `runtime` and `store` still reach the node.
+- **Temporal warrant sources resolve.** `EnvWarrantSource` and
+  `CloudTriggerWarrantSource` compared `expires_at` to an int, so every
+  resolve raised `TypeError`. Both use `is_expired()`.
+- **Temporal Nexus forwards a workflow chain once.** Without an explicit
+  `warrant`, `tenuo_execute_nexus_operation` appended the workflow warrant to
+  a chain that already ended with it, so the delegated path always failed.
+- **Temporal reports PoP failures as `POP_VERIFICATION_FAILED`.** A missing
+  or wrong-key PoP was reported as `CONSTRAINT_VIOLATED`. Untrusted issuers
+  keep their existing type.
 
 - **Temporal `warrant_chain=` takes one shape everywhere.** The workflow start
   helpers took the parents only and rejected a chain that ended with the leaf,
@@ -77,11 +179,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   either the parents, root-first, or the full chain ending with the leaf, and
   both produce the same headers. The leaf anywhere but last is still rejected
   with `TenuoContextError`.
-- **Temporal activities without PoP are denied before approvals.** A task with
-  a copied warrant header and no PoP signature could reach `approval_handler`
-  before it was denied. A missing PoP is now rejected before the approval step,
-  with the same `POP_VERIFICATION_FAILED` error. Out-of-scope calls are still
-  denied before an approver is asked.
+- **Temporal activities are authenticated before approvals.** A task with a
+  copied warrant header and a missing or wrong-key PoP could reach
+  `approval_handler` before it was denied. The worker now verifies the chain
+  and PoP first and calls the approval handler only when an authenticated
+  call needs approval. PoP failures raise `POP_VERIFICATION_FAILED`.
+  Out-of-scope calls are still denied before an approver is asked.
 - **Temporal dropped-signal warning is logged once.** The warning for a signal
   outside `authorized_signals` ran in workflow code on every replay. It is now
   skipped during replay, like the dropped-signal audit event and metric.
@@ -122,7 +225,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   IPs require an explicit matching entry, and malformed patterns fail closed.
   This is a v1 security erratum: existing allowlisted warrants become more
   restrictive when evaluated by an updated verifier; their wire encoding is
-  unchanged.
+  unchanged. Attenuation checks validate both policies, so a chain carrying a
+  malformed pattern now fails verification, and the Python `UrlSafe()`
+  constructor raises on one. A child may now narrow `*.example.com` to
+  `example.com`, which the wildcard already matched.
 - **A2A audit timestamps are valid ISO 8601.** `AuditEvent.to_dict()` appended
   `Z` to an aware UTC `isoformat()`, so audit records carried
   `...+00:00Z`, which strict parsers reject. They now end in a single `Z`;
@@ -302,6 +408,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extension does not export, so every signed request failed before it was
   sent. Arguments are now passed to `Warrant.sign`, which already
   canonicalizes plain values.
+
+### Security
+
+- **Certificate crates updated for RustSec advisories.** `rustls-webpki`
+  0.103.16 and `webpki-root-certs` 1.0.10 in the Rust and Python builds.
 
 ## [0.3.2] - 2026-10-02
 

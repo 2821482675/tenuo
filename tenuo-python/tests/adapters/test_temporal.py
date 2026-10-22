@@ -3976,7 +3976,7 @@ class TestApprovalGates:
     def test_approval_retry_lifecycle(self, async_handler, outcome):
         """Pending never dispatches; invalidated credentials never re-prompt."""
         import time as _time
-        from datetime import timedelta
+        from datetime import datetime, timedelta
 
         from temporalio.exceptions import ApplicationError
 
@@ -3989,7 +3989,15 @@ class TestApprovalGates:
 
         warrant = self._mint_gated_warrant(
             control_key, agent_key, approver_key=approver_key,
-            ttl=1 if outcome == "expired" else 3600,
+            # Warrant timestamps have one-second resolution. A one-second TTL
+            # can therefore leave almost no usable time when minting happens
+            # near a clock boundary, especially on loaded CI runners.
+            ttl=5 if outcome == "expired" else 3600,
+        )
+        warrant_expires_at = (
+            datetime.fromisoformat(warrant.expires_at().replace("Z", "+00:00")).timestamp()
+            if outcome == "expired"
+            else None
         )
         pop = warrant.sign(agent_key, "deploy", {}, int(_time.time()))
         signed = self._sign_approval(warrant, approver_key, "deploy", {})
@@ -4039,8 +4047,11 @@ class TestApprovalGates:
                     authorizer.set_revocation_list(revocations)
             elif outcome == "expired":
                 # The native verifier reads the real clock. Expire the same
-                # signed warrant, rather than mocking away authorization.
-                _time.sleep(1.1)
+                # signed warrant, rather than mocking away authorization. Wait
+                # relative to its signed deadline so runner speed cannot make
+                # this assertion race the clock.
+                assert warrant_expires_at is not None
+                _time.sleep(max(0.0, warrant_expires_at - _time.time()) + 0.1)
 
             # Temporal retries retain the original headers, including PoP.
             info.attempt = 2
