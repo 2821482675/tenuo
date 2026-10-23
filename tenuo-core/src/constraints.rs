@@ -304,7 +304,10 @@ impl Serialize for Constraint {
     }
 }
 
-// Custom Deserialize: reads [type_id, value] array format
+// Custom Deserialize: reads [type_id, value] array format.
+// Every payload struct denies unknown fields: a member this version does not know
+// may restrict the constraint, so dropping it would fail open (wire-format-v1.md,
+// "Fail closed"). Unknown type IDs still decode to `Unknown` and deny at evaluation.
 impl<'de> serde::Deserialize<'de> for Constraint {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -1022,6 +1025,7 @@ impl From<Wildcard> for Constraint {
 
 /// Glob-style pattern constraint.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Pattern {
     pub pattern: String,
     #[serde(skip)]
@@ -1203,6 +1207,7 @@ impl From<Pattern> for Constraint {
 
 /// Regular expression constraint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RegexConstraint {
     pub pattern: String,
     #[serde(skip)]
@@ -1272,6 +1277,7 @@ impl From<RegexConstraint> for Constraint {
 
 /// Exact value constraint (works for any value type).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Exact {
     pub value: ConstraintValue,
 }
@@ -1302,6 +1308,7 @@ impl From<Exact> for Constraint {
 
 /// One-of constraint (value must be in allowed set).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct OneOf {
     pub values: Vec<ConstraintValue>,
 }
@@ -1386,6 +1393,7 @@ impl From<OneOf> for Constraint {
 /// Child can exclude MORE values (grow the exclusion set).
 /// This shrinks the effective allowed set, maintaining monotonicity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct NotOneOf {
     /// Values to exclude.
     pub excluded: Vec<ConstraintValue>,
@@ -1455,6 +1463,7 @@ impl From<NotOneOf> for Constraint {
 ///
 /// Wire type ID: 3
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Range {
     pub min: Option<f64>,
     pub max: Option<f64>,
@@ -2220,6 +2229,7 @@ impl From<UrlPattern> for Constraint {
 /// [17, { "root": "/data", "case_sensitive": true }]
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Subpath {
     /// Root directory path (must be absolute).
     pub root: String,
@@ -2550,6 +2560,7 @@ impl From<Subpath> for Constraint {
 /// [18, { "schemes": ["http", "https"], "block_private": true, ... }]
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct UrlSafe {
     /// Allowed URL schemes. Default: ["http", "https"]
     #[serde(default = "default_schemes")]
@@ -3380,6 +3391,7 @@ const SHELL_DANGEROUS_CHARS: &[char] = &[
 /// [128, { "allow": ["npm", "docker"] }]
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Shlex {
     /// Allowed binary names or full paths. Literal strings only (no globs).
     pub allow: Vec<String>,
@@ -3496,6 +3508,7 @@ fn urlencoding_decode(s: &str) -> String {
 
 /// Constraint that a list value must contain specified values.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Contains {
     /// Values that must be present in the list.
     pub required: Vec<ConstraintValue>,
@@ -3545,6 +3558,7 @@ impl From<Contains> for Constraint {
 
 /// Constraint that a list value must be a subset of allowed values.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Subset {
     /// Allowed values (superset).
     pub allowed: Vec<ConstraintValue>,
@@ -3594,6 +3608,7 @@ impl From<Subset> for Constraint {
 
 /// All constraints must match (AND).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct All {
     pub constraints: Vec<Constraint>,
 }
@@ -3660,6 +3675,7 @@ impl From<All> for Constraint {
 ///
 /// Prefer the [`AnyOf`] alias in new code; it matches Python and TypeScript.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Any {
     pub constraints: Vec<Constraint>,
 }
@@ -3716,6 +3732,7 @@ impl From<Any> for Constraint {
 
 /// Negation of a constraint.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Not {
     pub constraint: Box<Constraint>,
 }
@@ -3807,6 +3824,7 @@ impl From<Not> for Constraint {
 /// CelConstraint::new("'admin' in roles")
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct CelConstraint {
     /// The CEL expression as a string.
     pub expression: String,
@@ -4003,6 +4021,7 @@ fn is_false(b: &bool) -> bool {
 /// Use `Wildcard` constraint to allow any value for a specific field while
 /// still operating in closed-world mode for other fields.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct ConstraintSet {
     constraints: BTreeMap<String, Constraint>,
     /// When true, arguments not listed in constraints are allowed.
