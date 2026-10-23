@@ -30,6 +30,9 @@ Every vector is checked by the self-checking §8 verifier in this file before it
 is written. A vector whose actual verdict or step differs from its expected one
 aborts generation. `--mutation-check` then disables each check of that verifier
 in turn and fails unless some vector changes verdict (see CHECKS, UNREACHABLE).
+
+Importing this module builds the vectors in memory and writes nothing, so other
+tests can use verify_chain() as a reference Section 8 verifier.
 """
 from __future__ import annotations
 
@@ -61,7 +64,7 @@ _ap.add_argument("--mutation-check", action="store_true",
                  help="after generating, disable each verifier check in turn and require a vector to notice")
 _ap.add_argument("--fault-chains", action="store_true",
                  help="print, for every DENY vector, each check that fails once the earlier ones are disabled")
-ARGS = _ap.parse_args()
+ARGS = _ap.parse_args(None if __name__ == "__main__" else [])  # an importer's argv is not ours
 
 # ---------------------------------------------------------------------------
 # Fixed parameters
@@ -992,7 +995,8 @@ def add(vid: str, title: str, twin: str | None, desc: str, chain: list[dict], po
         "expected": {"verdict": expect, "step": expect_step},
         "_run": run,
     })
-    print(f"ok {vid}: {verdict} {step or ''}")
+    if __name__ == "__main__":
+        print(f"ok {vid}: {verdict} {step or ''}")
 
 
 # --- J.1 minimal root, single-token chain (twin of A.1) ----------------------
@@ -2655,8 +2659,6 @@ for v in VECTORS:
     md.append(tok_md("PoP JWT", v["pop"]))
     md.append("---\n")
 
-ARGS.md_out.write_text("\n".join(md))
-
 
 def tok_json(t: dict) -> dict:
     return {k: t[k] for k in ("header", "payload", "payload_json", "payload_jcs_canonical",
@@ -2698,8 +2700,10 @@ json_out = {
 }
 # `payload` is a convenience view; a Decimal in it (J.8.13's hta) is shown as the
 # nearest double, while payload_json keeps the exact text.
-ARGS.json_out.write_text(json.dumps(json_out, indent=2, default=float) + "\n")
-print(f"\nwrote {len(VECTORS)} vectors: {ARGS.json_out} and {ARGS.md_out}")
+if __name__ == "__main__":
+    ARGS.md_out.write_text("\n".join(md))
+    ARGS.json_out.write_text(json.dumps(json_out, indent=2, default=float) + "\n")
+    print(f"\nwrote {len(VECTORS)} vectors: {ARGS.json_out} and {ARGS.md_out}")
 
 
 # ---------------------------------------------------------------------------
