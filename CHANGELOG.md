@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Constraints reject unknown members when decoded.** A constraint read from
+  a warrant ignored members it did not know, so a `Range` bound written under
+  another name (`maximum` for `max`) decoded as no bound, and a member added by
+  a later version was dropped instead of enforced. Every constraint payload and
+  `ConstraintSet` now fails decoding on an unknown member, as the wire format's
+  fail-closed rule requires. Warrants written by Tenuo are unaffected.
+
 ## [0.3.3] - 2026-10-22
 
 ### Upgrade notes
