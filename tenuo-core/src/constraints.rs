@@ -1470,15 +1470,6 @@ impl From<NotOneOf> for Constraint {
 // Range Constraint
 // ============================================================================
 
-/// Numeric range constraint.
-///
-/// **Precision Warning**: Bounds are stored as `f64`. Integers larger than 2^53
-/// (9,007,199,254,740,992) will lose precision.
-///
-/// **For Snowflake IDs or 64-bit integers**: Use String comparison or Exact matching
-/// to avoid precision loss. Do NOT use `Range` for IDs > 2^53.
-///
-/// Wire type ID: 3
 fn deserialize_finite_optional_f64<'de, D>(
     deserializer: D,
 ) -> std::result::Result<Option<f64>, D::Error>
@@ -1505,6 +1496,15 @@ where
     value.serialize(serializer)
 }
 
+/// Numeric range constraint.
+///
+/// **Precision Warning**: Bounds are stored as `f64`. Integers larger than 2^53
+/// (9,007,199,254,740,992) will lose precision.
+///
+/// **For Snowflake IDs or 64-bit integers**: Use String comparison or Exact matching
+/// to avoid precision loss. Do NOT use `Range` for IDs > 2^53.
+///
+/// Wire type ID: 3
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Range {
