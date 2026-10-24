@@ -584,14 +584,16 @@ pub enum Constraint {
     /// Unknown constraint type (deserialized but not understood)
     Unknown {
         type_id: u8,
-        payload: Vec<u8>,
+        payload: Vec<u8>,  // CBOR encoding of the unknown value
     },
 }
 ```
 
 **Wire type IDs and serialization (standard 1–127):**
 
-All constraints serialize as `[type_id, value]` tuples. The `value` is the serde serialization of the constraint struct.
+All constraints serialize as exactly two-element `[type_id, value]` tuples. The
+`value` is the serde serialization of the constraint struct. Verifiers MUST reject
+missing or trailing tuple elements rather than silently ignoring them.
 
 | ID | Type | Value Shape | Notes |
 |----|------|-------------|-------|

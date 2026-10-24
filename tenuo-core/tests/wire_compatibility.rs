@@ -318,3 +318,115 @@ fn test_unknown_constraint_member_fails_warrant_deserialization() {
         .to_string();
     assert!(err.contains("unknown field `max_exclusive`"), "{err}");
 }
+
+#[test]
+fn test_constraint_rejects_trailing_tuple_members() {
+    let encoded = Value::Array(vec![
+        Value::Integer(1.into()),
+        Value::Map(vec![(
+            Value::Text("value".into()),
+            Value::Text("allowed".into()),
+        )]),
+        Value::Map(vec![(
+            Value::Text("future_restriction".into()),
+            Value::Bool(true),
+        )]),
+    ]);
+
+    let err =
+        decode::<Constraint>(&encoded).expect_err("constraint accepted a trailing tuple member");
+    assert!(err.contains("length 3"), "{err}");
+}
+
+#[test]
+fn test_unknown_constraint_preserves_arbitrary_payload_shape() {
+    let encoded = Value::Array(vec![
+        Value::Integer(200.into()),
+        Value::Map(vec![
+            (
+                Value::Text("region".into()),
+                Value::Text("us-east-1".into()),
+            ),
+            (Value::Text("strict".into()), Value::Bool(true)),
+        ]),
+    ]);
+    let expected_payload = match &encoded {
+        Value::Array(items) => items[1].clone(),
+        _ => unreachable!(),
+    };
+
+    let constraint: Constraint = decode(&encoded).expect("unknown map payload must decode");
+    let Constraint::Unknown { type_id, payload } = &constraint else {
+        panic!("expected an unknown constraint, got {constraint:?}");
+    };
+    assert_eq!(*type_id, 200);
+    let preserved: Value = ciborium::de::from_reader(payload.as_slice()).unwrap();
+    assert_eq!(preserved, expected_payload);
+    assert!(constraint
+        .matches(&tenuo::ConstraintValue::String("anything".into()))
+        .is_err());
+    assert_eq!(to_value(&constraint), encoded);
+}
+
+#[test]
+fn test_warrant_preserves_unknown_constraint_payload_shape() {
+    let signing_key = tenuo::SigningKey::generate();
+    let public_key = to_value(&signing_key.public_key());
+    let unknown_constraint = Value::Array(vec![
+        Value::Integer(200.into()),
+        Value::Map(vec![(
+            Value::Text("region".into()),
+            Value::Text("us-east-1".into()),
+        )]),
+    ]);
+    let mut set = ConstraintSet::new();
+    set.insert("region", Exact::new("placeholder"));
+    let mut set_value = to_value(&set);
+    let Value::Map(set_map) = &mut set_value else {
+        panic!("a constraint set encodes as a map");
+    };
+    let constraint = set_map
+        .iter_mut()
+        .find_map(|(key, value)| (*key == Value::Text("constraints".into())).then_some(value))
+        .and_then(|constraints| match constraints {
+            Value::Map(args) => args.first_mut().map(|(_, constraint)| constraint),
+            _ => None,
+        })
+        .expect("constraint payload");
+    *constraint = unknown_constraint;
+
+    let payload = Value::Map(vec![
+        (Value::Integer(0.into()), Value::Integer(1.into())),
+        (Value::Integer(1.into()), Value::Bytes(vec![0u8; 16])),
+        (Value::Integer(2.into()), Value::Integer(0.into())),
+        (
+            Value::Integer(3.into()),
+            Value::Map(vec![(Value::Text("deploy".into()), set_value)]),
+        ),
+        (Value::Integer(4.into()), public_key.clone()),
+        (Value::Integer(5.into()), public_key),
+        (Value::Integer(6.into()), Value::Integer(0.into())),
+        (Value::Integer(7.into()), Value::Integer(0.into())),
+        (Value::Integer(8.into()), Value::Integer(0.into())),
+    ]);
+    let payload_bytes = to_cbor(&payload);
+    let mut signature_preimage = vec![1];
+    signature_preimage.extend_from_slice(&payload_bytes);
+    let signature = signing_key.sign(&signature_preimage);
+    let envelope = Value::Array(vec![
+        Value::Integer(1.into()),
+        Value::Bytes(payload_bytes),
+        to_value(&signature),
+    ]);
+
+    let warrant: Warrant = decode(&envelope).expect("unknown constraint payload must be preserved");
+    let constraint = warrant
+        .capabilities()
+        .and_then(|capabilities| capabilities.get("deploy"))
+        .and_then(|constraints| constraints.get("region"))
+        .expect("unknown constraint in decoded warrant");
+    assert!(matches!(
+        constraint,
+        Constraint::Unknown { type_id: 200, .. }
+    ));
+}

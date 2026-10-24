@@ -207,6 +207,7 @@ pub enum Constraint {
 
     /// Unknown constraint type (deserialized but not understood).
     /// Used for forward compatibility. Always fails authorization.
+    /// `payload` contains the CBOR encoding of the unknown value.
     Unknown { type_id: u8, payload: Vec<u8> },
 }
 
@@ -295,8 +296,16 @@ impl Serialize for Constraint {
                 tup.serialize_element(v)?;
             }
             Constraint::Unknown { type_id, payload } => {
+                let mut reader = std::io::Cursor::new(payload.as_slice());
+                let value: ciborium::value::Value =
+                    ciborium::de::from_reader(&mut reader).map_err(serde::ser::Error::custom)?;
+                if reader.position() != payload.len() as u64 {
+                    return Err(serde::ser::Error::custom(
+                        "unknown constraint payload contains trailing CBOR data",
+                    ));
+                }
                 tup.serialize_element(type_id)?;
-                tup.serialize_element(&serde_bytes::Bytes::new(payload))?;
+                tup.serialize_element(&value)?;
             }
         }
 
@@ -446,14 +455,22 @@ impl<'de> serde::Deserialize<'de> for Constraint {
                     }
                     // Unknown type ID (ID 6 reserved for future IntRange with i64 bounds)
                     _ => {
-                        // Try to read value as raw bytes for preservation
-                        let payload: Vec<u8> = seq
-                            .next_element::<serde_bytes::ByteBuf>()?
-                            .map(|b| b.into_vec())
-                            .unwrap_or_default();
+                        // Preserve any future payload shape as encoded CBOR. This
+                        // lets older verifiers fail authorization without making
+                        // warrants containing new constraint types undecodable.
+                        let value: ciborium::value::Value = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        let mut payload = Vec::new();
+                        ciborium::ser::into_writer(&value, &mut payload)
+                            .map_err(A::Error::custom)?;
                         Constraint::Unknown { type_id, payload }
                     }
                 };
+
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(A::Error::invalid_length(3, &self));
+                }
 
                 Ok(constraint)
             }
@@ -5269,25 +5286,29 @@ mod tests {
     #[test]
     fn test_unknown_constraint_type_id() {
         // Manually construct CBOR for unknown type ID 200
-        // [200, <bytes>] - Unknown expects raw bytes as payload
-        let payload_bytes: Vec<u8> = vec![1, 2, 3, 4];
+        let payload_value = ciborium::value::Value::Map(vec![(
+            ciborium::value::Value::Text("future".to_string()),
+            ciborium::value::Value::Bool(true),
+        )]);
+        let mut encoded_payload = Vec::new();
+        ciborium::ser::into_writer(&payload_value, &mut encoded_payload).unwrap();
         let mut bytes = Vec::new();
-        ciborium::ser::into_writer(
-            &(200u8, serde_bytes::Bytes::new(&payload_bytes)),
-            &mut bytes,
-        )
-        .unwrap();
+        ciborium::ser::into_writer(&(200u8, &payload_value), &mut bytes).unwrap();
 
         let constraint: Constraint = ciborium::de::from_reader(&bytes[..]).unwrap();
 
-        match constraint {
+        match &constraint {
             Constraint::Unknown { type_id, payload } => {
-                assert_eq!(type_id, 200);
-                assert_eq!(payload, payload_bytes);
+                assert_eq!(*type_id, 200);
+                assert_eq!(payload, &encoded_payload);
                 // Unknown constraints always fail authorization (verified in other tests)
             }
             _ => panic!("Expected Unknown variant, got {:?}", constraint),
         }
+
+        let mut round_trip = Vec::new();
+        ciborium::ser::into_writer(&constraint, &mut round_trip).unwrap();
+        assert_eq!(round_trip, bytes);
     }
 
     #[test]
