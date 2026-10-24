@@ -1175,43 +1175,15 @@ impl Warrant {
         constraint_args: &HashMap<String, ConstraintValue>,
         signature: Option<&Signature>,
     ) -> Result<()> {
-        // Check expiration
-        if self.is_expired() {
-            return Err(Error::WarrantExpired {
-                warrant_id: self.id().to_string(),
-                expired_at: self.expires_at(),
-            });
-        }
-
-        // Only execution warrants can authorize actions
-        if self.payload.warrant_type != WarrantType::Execution {
-            return Err(Error::InvalidWarrantType {
-                message: "only execution warrants can authorize actions".to_string(),
-            });
-        }
-
-        // Check if tool is allowed
-        let constraints = if let Some(c) = self.payload.tools.get(tool) {
-            c
-        } else if let Some(c) = self.payload.tools.get("*") {
-            c
-        } else {
-            return Err(Error::ToolNotAuthorized {
-                tool: tool.to_string(),
-            });
-        };
-
-        // Check Proof-of-Possession over the wire-args view (mandatory)
-        self.verify_pop(
+        self.authorize_with_pop_args_and_config_as_of(
             tool,
             pop_args,
+            constraint_args,
             signature,
             POP_TIMESTAMP_WINDOW_SECS,
             POP_MAX_WINDOWS,
-        )?;
-
-        // Check warrant constraints against the extracted view
-        constraints.matches(constraint_args)
+            Utc::now().timestamp(),
+        )
     }
 
     /// Authorize an action with custom PoP window configuration.
@@ -1259,8 +1231,43 @@ impl Warrant {
     }
 
     /// Authorize against a committed evaluation instant (test / replay seam).
+    ///
+    /// Decoding is clock-neutral, so this standalone path rejects a warrant
+    /// issued after `as_of` by more than [`CLOCK_SKEW_TOLERANCE_SECS`].
+    /// Verifiers with their own tolerance (`Authorizer`, `DataPlane`) check
+    /// issuance themselves and call the shared core instead.
     #[allow(clippy::too_many_arguments)]
     pub fn authorize_with_pop_args_and_config_as_of(
+        &self,
+        tool: &str,
+        pop_args: &HashMap<String, ConstraintValue>,
+        constraint_args: &HashMap<String, ConstraintValue>,
+        signature: Option<&Signature>,
+        pop_window_secs: i64,
+        pop_max_windows: u32,
+        as_of: i64,
+    ) -> Result<()> {
+        if self.is_issued_in_future_as_of(
+            as_of,
+            chrono::Duration::seconds(CLOCK_SKEW_TOLERANCE_SECS as i64),
+        ) {
+            return Err(Error::IssuedInFuture);
+        }
+        self.authorize_issuance_checked_as_of(
+            tool,
+            pop_args,
+            constraint_args,
+            signature,
+            pop_window_secs,
+            pop_max_windows,
+            as_of,
+        )
+    }
+
+    /// Authorization after the caller has applied its own future-issuance
+    /// policy: expiry, warrant type, tool, proof of possession, constraints.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn authorize_issuance_checked_as_of(
         &self,
         tool: &str,
         pop_args: &HashMap<String, ConstraintValue>,
@@ -4289,6 +4296,37 @@ mod tests {
         assert_eq!(warrant.depth(), 0);
         assert!(warrant.is_root());
         assert!(!warrant.is_expired());
+    }
+
+    #[test]
+    fn test_decoded_future_warrant_cannot_authorize_standalone() {
+        // Decoding is clock-neutral, so the standalone authorize path must
+        // reject a correctly signed warrant dated beyond the default skew.
+        let keypair = create_test_keypair();
+        let args = HashMap::new();
+        for (offset, accepted) in [(3600, false), (10, true)] {
+            let mut warrant = Warrant::builder()
+                .tool("test", ConstraintSet::new())
+                .ttl(Duration::from_secs(300))
+                .holder(keypair.public_key())
+                .build(&keypair)
+                .unwrap();
+            let now = Utc::now().timestamp() as u64;
+            warrant.payload.issued_at = now + offset;
+            warrant.payload.expires_at = now + offset + 300;
+            warrant.payload_bytes = crate::wire::to_vec(&warrant.payload).unwrap();
+            warrant.signature = keypair.sign_raw(&warrant.signed_message());
+
+            let decoded = crate::wire::decode(&crate::wire::encode(&warrant).unwrap()).unwrap();
+            decoded.verify(&keypair.public_key()).unwrap();
+            let pop = decoded.sign(&keypair, "test", &args).unwrap();
+            let result = decoded.authorize("test", &args, Some(&pop));
+            if accepted {
+                assert!(result.is_ok(), "issued {offset}s ahead: {result:?}");
+            } else {
+                assert!(matches!(result, Err(Error::IssuedInFuture)), "{result:?}");
+            }
+        }
     }
 
     #[test]

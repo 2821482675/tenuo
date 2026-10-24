@@ -480,6 +480,16 @@ pub(crate) fn to_py_err(e: crate::error::Error) -> PyErr {
     })
 }
 
+/// Seconds to a chrono tolerance without panicking: chrono's range is
+/// narrower than i64 seconds, so out-of-range values saturate.
+fn clock_tolerance_from_secs(seconds: i64) -> chrono::Duration {
+    chrono::Duration::try_seconds(seconds).unwrap_or(if seconds < 0 {
+        chrono::Duration::zero()
+    } else {
+        chrono::Duration::MAX
+    })
+}
+
 fn py_validation_err(message: impl Into<String>) -> PyErr {
     to_py_err(crate::error::Error::Validation(message.into()))
 }
@@ -6193,7 +6203,7 @@ impl PyAuthorizer {
         }
 
         let mut authorizer = RustAuthorizer::new()
-            .with_clock_tolerance(chrono::Duration::seconds(clock_tolerance_secs))
+            .with_clock_tolerance(clock_tolerance_from_secs(clock_tolerance_secs))
             .with_pop_window(pop_window_secs, pop_max_windows);
 
         let mut root_bytes = Vec::new();
@@ -6266,7 +6276,7 @@ impl PyAuthorizer {
     ///     seconds: Clock tolerance in seconds
     fn set_clock_tolerance(&mut self, seconds: i64) {
         self.inner
-            .set_clock_tolerance(chrono::Duration::seconds(seconds));
+            .set_clock_tolerance(clock_tolerance_from_secs(seconds));
     }
 
     /// Set the PoP window configuration.

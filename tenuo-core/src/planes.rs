@@ -696,8 +696,10 @@ impl DataPlane {
     /// * `tolerance` - Maximum accepted positive clock skew.
     ///
     pub fn set_clock_tolerance(&mut self, tolerance: std::time::Duration) {
+        // Fallible: chrono's range is narrower than std's. Anything beyond it
+        // is effectively unbounded tolerance, and the issuance check saturates.
         self.clock_tolerance =
-            chrono::Duration::seconds(tolerance.as_secs().min(i64::MAX as u64) as i64);
+            chrono::Duration::from_std(tolerance).unwrap_or(chrono::Duration::MAX);
     }
 
     /// Set a signed revocation list.
@@ -1436,32 +1438,46 @@ impl DataPlane {
                 }
             }
 
-            let auth_result = leaf.authorize(tool, args, signature).and_then(|_| {
-                // Evaluate approval gates before running multi-sig verification.
-                // Only require approvals when a gate fires for this tool+args. Absent a
-                // gate map evaluate_approval_gates returns false, matching Authorizer's
-                // semantics: required_approvers without any gate configuration means no
-                // call is gated (the builder rejects this state; legacy warrants see it
-                // as fully ungated rather than fully gated).
-                let gate_map = crate::approval_gate::parse_approval_gate_map(
-                    leaf.extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
-                )?;
-                let needs_approval =
-                    crate::approval_gate::evaluate_approval_gates(gate_map.as_ref(), tool, args)?;
-
-                if needs_approval {
-                    verify_approvals_with_tolerance(
-                        leaf,
+            // verify_chain applied this plane's issuance tolerance already.
+            let auth_result = leaf
+                .authorize_issuance_checked_as_of(
+                    tool,
+                    args,
+                    args,
+                    signature,
+                    crate::warrant::POP_TIMESTAMP_WINDOW_SECS,
+                    crate::warrant::POP_MAX_WINDOWS,
+                    chrono::Utc::now().timestamp(),
+                )
+                .and_then(|_| {
+                    // Evaluate approval gates before running multi-sig verification.
+                    // Only require approvals when a gate fires for this tool+args. Absent a
+                    // gate map evaluate_approval_gates returns false, matching Authorizer's
+                    // semantics: required_approvers without any gate configuration means no
+                    // call is gated (the builder rejects this state; legacy warrants see it
+                    // as fully ungated rather than fully gated).
+                    let gate_map = crate::approval_gate::parse_approval_gate_map(
+                        leaf.extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
+                    )?;
+                    let needs_approval = crate::approval_gate::evaluate_approval_gates(
+                        gate_map.as_ref(),
                         tool,
                         args,
-                        approvals,
-                        chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
-                        chrono::Utc::now().timestamp() as u64,
-                    )
-                } else {
-                    Ok(Vec::new())
-                }
-            });
+                    )?;
+
+                    if needs_approval {
+                        verify_approvals_with_tolerance(
+                            leaf,
+                            tool,
+                            args,
+                            approvals,
+                            chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
+                            chrono::Utc::now().timestamp() as u64,
+                        )
+                    } else {
+                        Ok(Vec::new())
+                    }
+                });
 
             match &auth_result {
                 Ok(_) => {
@@ -2918,8 +2934,9 @@ impl Authorizer {
                 }
             }
 
-            // Capability, constraint, and PoP verification (split-view)
-            leaf.authorize_with_pop_args_and_config_as_of(
+            // Capability, constraint, and PoP verification (split-view).
+            // Issuance was checked above with this Authorizer's tolerance.
+            leaf.authorize_issuance_checked_as_of(
                 tool,
                 pop_args,
                 constraint_args,
@@ -3777,6 +3794,61 @@ mod tests {
 
         let error = authorizer.verify_chain(&[warrant]).unwrap_err();
         assert!(matches!(error, Error::WarrantExpired { .. }));
+    }
+
+    #[test]
+    fn test_verifiers_keep_configured_issuance_tolerance_over_standalone_default() {
+        // 45s ahead: beyond the standalone 30s default, within a configured 60s.
+        let control_plane = ControlPlane::generate();
+        let mut warrant = control_plane
+            .issue_warrant("test", &[], Duration::from_secs(300))
+            .unwrap();
+        let now = chrono::Utc::now().timestamp() as u64;
+        warrant.payload.issued_at = now + 45;
+        warrant.payload.expires_at = now + 300;
+        warrant.payload_bytes = crate::wire::to_vec(&warrant.payload).unwrap();
+        warrant.signature = control_plane.keypair.sign_raw(&warrant.signed_message());
+        let args = HashMap::new();
+        let pop = warrant.sign(&control_plane.keypair, "test", &args).unwrap();
+
+        assert!(matches!(
+            warrant.authorize("test", &args, Some(&pop)),
+            Err(Error::IssuedInFuture)
+        ));
+
+        let mut data_plane = DataPlane::new_with_issuers([control_plane.public_key()]);
+        data_plane.set_clock_tolerance(Duration::from_secs(60));
+        data_plane
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "test",
+                &args,
+                Some(&pop),
+                &[],
+            )
+            .unwrap();
+
+        let authorizer = Authorizer::new()
+            .with_trusted_root(control_plane.public_key())
+            .with_clock_tolerance(chrono::Duration::seconds(60));
+        authorizer
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "test",
+                &args,
+                Some(&pop),
+                &[],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn test_set_clock_tolerance_accepts_any_std_duration() {
+        let mut data_plane = DataPlane::new();
+        for secs in [i64::MAX as u64, u64::MAX] {
+            data_plane.set_clock_tolerance(Duration::from_secs(secs));
+        }
+        data_plane.set_clock_tolerance(Duration::MAX);
     }
 
     #[test]
