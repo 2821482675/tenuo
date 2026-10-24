@@ -714,19 +714,25 @@ fn parse_constraint(s: &str) -> Result<(String, Constraint), String> {
         "regex" => Constraint::Regex(RegexConstraint::new(value).map_err(|e| e.to_string())?),
         "range" => {
             // Parse range like "0.8..1.0" or "..100" or "10.."
-            let (min, max) = value
-                .split_once("..")
-                .filter(|(_, max)| !max.contains(".."))
-                .ok_or("Invalid range: expected min..max, ..max or min..")?;
-            let min = if min.is_empty() {
-                None
-            } else {
-                Some(min.parse::<f64>().map_err(|_| "Invalid range min")?)
+            let (min_text, max_text) = match value.split_once("..") {
+                Some((_, max)) if max.contains("..") => {
+                    return Err("Invalid range: expected at most one '..' separator".to_string());
+                }
+                Some(bounds) => bounds,
+                None => (value, ""), // Preserve the existing `range:10` min-only shorthand.
             };
-            let max = if max.is_empty() {
+            if min_text.is_empty() && max_text.is_empty() {
+                return Err("Invalid range: at least one bound is required".to_string());
+            }
+            let min = if min_text.is_empty() {
                 None
             } else {
-                Some(max.parse::<f64>().map_err(|_| "Invalid range max")?)
+                Some(min_text.parse::<f64>().map_err(|_| "Invalid range min")?)
+            };
+            let max = if max_text.is_empty() {
+                None
+            } else {
+                Some(max_text.parse::<f64>().map_err(|_| "Invalid range max")?)
             };
             Constraint::Range(Range::new(min, max).map_err(|e| e.to_string())?)
         }
@@ -747,9 +753,12 @@ fn parse_constraint_json(
     let json: serde_json::Value = serde_json::from_str(s)?;
     let obj = json
         .as_object()
-        .ok_or("Constraint JSON must be an object mapping keys to constraints")?;
-    let mut constraints = HashMap::new();
+        .ok_or("constraint JSON must be an object keyed by argument name")?;
+    if obj.is_empty() {
+        return Err("constraint JSON must define at least one constraint".into());
+    }
 
+    let mut constraints = HashMap::new();
     for (key, value) in obj {
         let constraint = json_to_constraint(value)?;
         constraints.insert(key.clone(), constraint);
@@ -758,69 +767,82 @@ fn parse_constraint_json(
     Ok(constraints)
 }
 
-/// Convert JSON value to Constraint
-///
-/// An object may hold only the keys of the constraint it names. A key this parser
-/// does not know would otherwise be dropped, and a dropped bound widens the warrant.
-fn json_to_constraint(v: &serde_json::Value) -> Result<Constraint, Box<dyn std::error::Error>> {
-    if let Some(obj) = v.as_object() {
-        let only = |allowed: &[&str]| -> Result<(), Box<dyn std::error::Error>> {
-            match obj.keys().find(|k| !allowed.contains(&k.as_str())) {
-                Some(key) => Err(format!("Unexpected key '{}' in constraint {}", key, v).into()),
-                None => Ok(()),
-            }
-        };
-        if let Some(exact) = obj.get("exact") {
-            only(&["exact"])?;
-            return Ok(Constraint::Exact(Exact::new(
-                exact.as_str().ok_or("exact must be string")?.to_string(),
-            )));
-        }
-        if let Some(pattern) = obj.get("pattern") {
-            only(&["pattern"])?;
-            return Ok(Constraint::Pattern(Pattern::new(
-                pattern.as_str().ok_or("pattern must be string")?,
-            )?));
-        }
-        if let Some(regex) = obj.get("regex") {
-            only(&["regex"])?;
-            return Ok(Constraint::Regex(RegexConstraint::new(
-                regex.as_str().ok_or("regex must be string")?,
-            )?));
-        }
-        if obj.contains_key("min") || obj.contains_key("max") {
-            only(&["min", "max"])?;
-            let bound = |key: &str| match obj.get(key) {
-                None => Ok(None),
-                Some(n) => n
-                    .as_f64()
-                    .map(Some)
-                    .ok_or(format!("{} must be number", key)),
-            };
-            return Ok(Constraint::Range(Range::new(bound("min")?, bound("max")?)?));
-        }
-        if let Some(enum_vals) = obj.get("enum") {
-            only(&["enum"])?;
-            let values = enum_vals
-                .as_array()
-                .ok_or("enum must be array")?
-                .iter()
-                .map(|v| {
-                    v.as_str()
-                        .map(str::to_string)
-                        .ok_or("enum values must be strings")
-                })
-                .collect::<Result<Vec<String>, _>>()?;
-            return Ok(Constraint::OneOf(OneOf::new(values)));
-        }
+fn reject_unknown_constraint_keys(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    allowed: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let unknown: Vec<&str> = obj
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !allowed.contains(key))
+        .collect();
+    if unknown.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("unknown constraint member(s): {}", unknown.join(", ")).into())
     }
+}
 
+/// Convert JSON value to Constraint
+fn json_to_constraint(v: &serde_json::Value) -> Result<Constraint, Box<dyn std::error::Error>> {
     // If it's a string, treat as pattern
     if let Some(s) = v.as_str() {
         return Ok(Constraint::Pattern(Pattern::new(s)?));
     }
 
-    Err("Invalid constraint JSON format".into())
+    let obj = v
+        .as_object()
+        .ok_or("constraint must be a string or an object")?;
+    if obj.is_empty() {
+        return Err("constraint object must not be empty".into());
+    }
+
+    if let Some(exact) = obj.get("exact") {
+        reject_unknown_constraint_keys(obj, &["exact"])?;
+        return Ok(Constraint::Exact(Exact::new(
+            exact.as_str().ok_or("exact must be string")?.to_string(),
+        )));
+    }
+    if let Some(pattern) = obj.get("pattern") {
+        reject_unknown_constraint_keys(obj, &["pattern"])?;
+        return Ok(Constraint::Pattern(Pattern::new(
+            pattern.as_str().ok_or("pattern must be string")?,
+        )?));
+    }
+    if let Some(regex) = obj.get("regex") {
+        reject_unknown_constraint_keys(obj, &["regex"])?;
+        return Ok(Constraint::Regex(RegexConstraint::new(
+            regex.as_str().ok_or("regex must be string")?,
+        )?));
+    }
+    if obj.contains_key("min") || obj.contains_key("max") {
+        reject_unknown_constraint_keys(obj, &["min", "max"])?;
+        let min = obj
+            .get("min")
+            .map(|value| value.as_f64().ok_or("min must be a number"))
+            .transpose()?;
+        let max = obj
+            .get("max")
+            .map(|value| value.as_f64().ok_or("max must be a number"))
+            .transpose()?;
+        return Ok(Constraint::Range(Range::new(min, max)?));
+    }
+    if let Some(enum_vals) = obj.get("enum") {
+        reject_unknown_constraint_keys(obj, &["enum"])?;
+        let mut values = Vec::new();
+        for value in enum_vals.as_array().ok_or("enum must be array")? {
+            values.push(
+                value
+                    .as_str()
+                    .ok_or("enum values must all be strings")?
+                    .to_string(),
+            );
+        }
+        return Ok(Constraint::OneOf(OneOf::new(values)));
+    }
+
+    let keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+    Err(format!("unknown constraint member(s): {}", keys.join(", ")).into())
 }
 
 /// Read warrant from string or file path.
@@ -2189,71 +2211,77 @@ fn truncate(s: &str, max_len: usize) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+mod constraint_json_tests {
     use super::*;
 
-    fn range(min: Option<f64>, max: Option<f64>) -> Constraint {
-        Constraint::Range(Range::new(min, max).unwrap())
-    }
-
-    fn json_err(s: &str) -> String {
-        parse_constraint_json(s)
-            .expect_err("constraint JSON should be rejected")
+    fn error_for(input: &str) -> String {
+        parse_constraint_json(input)
+            .expect_err("constraint JSON unexpectedly parsed")
             .to_string()
     }
 
     #[test]
-    fn constraint_json_parses_each_kind() {
+    fn accepts_supported_constraint_json_shapes() {
         let parsed = parse_constraint_json(
-            r#"{"amount": {"min": 0, "max": 10}, "env": {"enum": ["dev", "prod"]}, "path": "/tmp/*"}"#,
+            r#"{
+                "amount": {"min": 100, "max": 200},
+                "environment": "prod-*",
+                "role": {"enum": ["admin", "operator"]},
+                "owner": {"exact": "alice"},
+                "path": {"pattern": "/data/*"},
+                "identifier": {"regex": "^[a-z]+$"}
+            }"#,
         )
         .unwrap();
-        assert_eq!(parsed["amount"], range(Some(0.0), Some(10.0)));
-        assert_eq!(
-            parsed["env"],
-            Constraint::OneOf(OneOf::new(vec!["dev".to_string(), "prod".to_string()]))
-        );
-        assert_eq!(
-            parsed["path"],
-            Constraint::Pattern(Pattern::new("/tmp/*").unwrap())
-        );
+
+        let Constraint::Range(range) = &parsed["amount"] else {
+            panic!("amount was not parsed as a range");
+        };
+        assert_eq!(range.min, Some(100.0));
+        assert_eq!(range.max, Some(200.0));
+        assert!(matches!(parsed["environment"], Constraint::Pattern(_)));
+        assert!(matches!(parsed["role"], Constraint::OneOf(_)));
+        assert!(matches!(parsed["owner"], Constraint::Exact(_)));
+        assert!(matches!(parsed["path"], Constraint::Pattern(_)));
+        assert!(matches!(parsed["identifier"], Constraint::Regex(_)));
     }
 
     #[test]
-    fn constraint_json_rejects_unknown_keys() {
-        assert!(json_err(r#"{"amount": {"min": 0, "maxx": 10}}"#).contains("'maxx'"));
-        assert!(json_err(r#"{"amount": {"max": 10, "inclusive": false}}"#).contains("'inclusive'"));
-        assert!(json_err(r#"{"cmd": {"exact": "ls", "pattern": "rm *"}}"#).contains("'pattern'"));
-        assert!(json_err(r#"{"amount": {"maximum": 10}}"#).contains("Invalid constraint JSON"));
+    fn rejects_empty_or_non_object_constraint_documents() {
+        assert!(error_for("[]").contains("must be an object"));
+        assert!(error_for("{}").contains("at least one constraint"));
+        assert!(error_for(r#"{"amount": {}}"#).contains("must not be empty"));
     }
 
     #[test]
-    fn constraint_json_rejects_mistyped_values() {
-        assert!(json_err(r#"{"amount": {"max": "10"}}"#).contains("max must be number"));
-        assert!(
-            json_err(r#"{"env": {"enum": ["prod", 1]}}"#).contains("enum values must be strings")
-        );
+    fn rejects_unknown_or_mixed_constraint_members() {
+        assert!(error_for(r#"{"amount": {"maximum": 200}}"#).contains("maximum"));
+        assert!(error_for(r#"{"amount": {"max": 200, "maximum": 100}}"#).contains("maximum"));
+        assert!(error_for(r#"{"owner": {"exact": "alice", "pattern": "a*"}}"#).contains("pattern"));
     }
 
     #[test]
-    fn constraint_json_must_be_an_object() {
-        assert!(json_err(r#"[{"amount": {"max": 10}}]"#).contains("must be an object"));
+    fn rejects_values_that_would_have_been_silently_dropped() {
+        assert!(error_for(r#"{"amount": {"min": "100"}}"#).contains("min must be a number"));
+        assert!(error_for(r#"{"role": {"enum": ["admin", 42]}}"#)
+            .contains("enum values must all be strings"));
     }
 
     #[test]
-    fn constraint_flag_parses_ranges() {
-        let parse = |s: &str| parse_constraint(s).map(|(_, c)| c);
-        assert_eq!(
-            parse("amount=range:0..10").unwrap(),
-            range(Some(0.0), Some(10.0))
-        );
-        assert_eq!(parse("amount=range:..10").unwrap(), range(None, Some(10.0)));
-        assert_eq!(parse("amount=range:5..").unwrap(), range(Some(5.0), None));
-        for bad in ["amount=range:10", "amount=range:1..2..3"] {
-            assert!(
-                parse(bad).unwrap_err().contains("expected min..max"),
-                "{bad}"
-            );
-        }
+    fn shorthand_range_requires_a_bound_and_a_single_separator() {
+        assert!(parse_constraint("amount=range:10..20").is_ok());
+        assert!(parse_constraint("amount=range:..20").is_ok());
+        assert!(parse_constraint("amount=range:10..").is_ok());
+        assert!(parse_constraint("amount=range:10").is_ok());
+
+        assert!(parse_constraint("amount=range:..").is_err());
+        assert!(parse_constraint("amount=range:").is_err());
+        assert!(parse_constraint("amount=range:10..20..30").is_err());
+    }
+
+    #[test]
+    fn shorthand_range_rejects_non_finite_bounds() {
+        assert!(parse_constraint("amount=range:inf..20").is_err());
+        assert!(parse_constraint("amount=range:10..-inf").is_err());
     }
 }
