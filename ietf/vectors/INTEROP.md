@@ -22,7 +22,9 @@ Record each verdict by vector id, as a JSON object:
 ```
 
 A vector your implementation does not support can be `"SKIP"`, with an
-optional `"reason"`. Then compare:
+optional `"reason"`. An implementation with a different token format can
+run the suite at the property level: express each scenario it can in its
+own format, and record the rest as `"SKIP"` with a reason. Then compare:
 
 ```bash
 python3 ietf/vectors/compare_results.py results.json
@@ -48,4 +50,4 @@ Please report both; ambiguities are fixed in the draft.
 
 | Implementation | Language | Version | Suite SHA-256 | Agree | Skipped | Notes |
 |---|---|---|---|---|---|---|
-| `gen_vectors.py` self-check | Python | this repository | `ef053277e87c467c…` | 224 / 224 | 0 | Generates the suite; its Section 8 verifier shares no code with Tenuo. |
+| `gen_vectors.py` self-check | Python | this repository | `2a3e607c9821a23e…` | 227 / 227 | 0 | Generates the suite; its Section 8 verifier shares no code with Tenuo. |
