@@ -1958,6 +1958,23 @@ impl Default for WarrantBuilder {
     }
 }
 
+/// Expiry for a delegated warrant that requested `ttl_secs`.
+///
+/// A child may not outlive its parent. A request that would is rejected
+/// rather than silently shortened, so the caller learns that it asked for
+/// more than it was given. Omitting the TTL inherits the parent's expiry.
+fn child_expiry_within_parent(now_sec: u64, ttl_secs: u64, parent_expires_at: u64) -> Result<u64> {
+    let proposed = now_sec.saturating_add(ttl_secs);
+    if proposed > parent_expires_at {
+        return Err(Error::MonotonicityViolation(format!(
+            "ttl {}s would outlive the parent warrant, which expires in {}s",
+            ttl_secs,
+            parent_expires_at.saturating_sub(now_sec)
+        )));
+    }
+    Ok(proposed)
+}
+
 /// Builder for attenuating existing warrants.
 #[derive(Debug)]
 pub struct AttenuationBuilder<'a> {
@@ -2385,13 +2402,7 @@ impl<'a> AttenuationBuilder<'a> {
 
         let now_sec = Utc::now().timestamp() as u64;
         let expires_at = if let Some(ttl) = self.ttl {
-            let ttl_secs = ttl.as_secs();
-            let proposed = now_sec + ttl_secs;
-            if proposed > self.parent.payload.expires_at {
-                self.parent.payload.expires_at
-            } else {
-                proposed
-            }
+            child_expiry_within_parent(now_sec, ttl.as_secs(), self.parent.payload.expires_at)?
         } else {
             self.parent.payload.expires_at
         };
@@ -3283,12 +3294,11 @@ impl OwnedAttenuationBuilder {
         let expires_at = if let Some(ttl) = self.ttl {
             let chrono_ttl = ChronoDuration::from_std(ttl)
                 .map_err(|_| Error::InvalidTtl("TTL too large".to_string()))?;
-            let proposed = now_sec + chrono_ttl.num_seconds() as u64;
-            if proposed > self.parent.payload.expires_at {
-                self.parent.payload.expires_at
-            } else {
-                proposed
-            }
+            child_expiry_within_parent(
+                now_sec,
+                chrono_ttl.num_seconds() as u64,
+                self.parent.payload.expires_at,
+            )?
         } else {
             self.parent.payload.expires_at
         };
@@ -4394,14 +4404,33 @@ mod tests {
             .build(&parent_keypair)
             .unwrap();
 
-        // Request longer TTL - should be capped to parent
-        let child = parent
+        // Requesting a longer TTL than the parent has left is a widening attempt.
+        let result = parent
             .attenuate()
             .inherit_all() // POLA: explicitly inherit all capabilities
             .ttl(Duration::from_secs(3600))
-            .build(&parent_keypair) // parent_keypair is parent's holder
-            .unwrap();
+            .build(&parent_keypair); // parent_keypair is parent's holder
+        assert!(
+            matches!(result, Err(Error::MonotonicityViolation(ref m)) if m.contains("outlive")),
+            "expected rejection, got {:?}",
+            result.map(|w| w.expires_at())
+        );
 
+        // Omitting the TTL inherits the parent's expiry.
+        let child = parent
+            .attenuate()
+            .inherit_all()
+            .build(&parent_keypair)
+            .unwrap();
+        assert_eq!(child.expires_at(), parent.expires_at());
+
+        // A TTL within the parent's remaining lifetime is accepted as requested.
+        let child = parent
+            .attenuate()
+            .inherit_all()
+            .ttl(Duration::from_secs(30))
+            .build(&parent_keypair)
+            .unwrap();
         assert!(child.expires_at() <= parent.expires_at());
     }
 

@@ -101,7 +101,11 @@ fn verify_approvals_with_tolerance(
 
     let mut valid_count = 0u32;
     let mut seen_approvers = std::collections::HashSet::new();
-    let tolerance_secs = clock_tolerance.num_seconds() as u64;
+    // Clock tolerance covers a signer whose clock runs ahead (an approval dated
+    // slightly in the future, checked in `SignedApproval::verify`). Expiry is
+    // strict, as it is for warrants at authorization: an approval for a
+    // high-impact action must not outlive the window the approver chose.
+    let _ = clock_tolerance;
     let mut rejections: Vec<Rejection> = Vec::new();
     let mut verified: Vec<VerifiedApproval> = Vec::new();
 
@@ -124,7 +128,7 @@ fn verify_approvals_with_tolerance(
             continue;
         }
 
-        if payload.expires_at.saturating_add(tolerance_secs) < now {
+        if now >= payload.expires_at {
             rejections.push(Rejection::Expired);
             continue;
         }
@@ -156,7 +160,7 @@ fn verify_approvals_with_tolerance(
             Rejection::InvalidSignature => "invalid signature on approval",
             Rejection::NotAuthorized => "approver not in trusted set",
             Rejection::Duplicate => "duplicate approval from same approver",
-            Rejection::Expired => "approval expired (beyond clock tolerance)",
+            Rejection::Expired => "approval expired",
             Rejection::HashMismatch => {
                 "request hash mismatch (approval was signed for a different request)"
             }
@@ -6161,6 +6165,41 @@ mod tests {
 
         let result = authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[expired]);
         assert!(result.is_err(), "expired approval must be rejected");
+    }
+
+    #[test]
+    fn test_pin_approval_expiry_is_strict_despite_clock_tolerance() {
+        // Clock tolerance (30s by default) must not extend an approval past the
+        // expiry its approver chose; warrants are already strict at authorization.
+        let (warrant, authorizer, issuer, admin1, _, args) = approval_pin_test_setup();
+        let sig = warrant.sign(&issuer, "action", &args).unwrap();
+
+        use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
+        let request_hash = compute_request_hash(
+            &warrant.id().to_string(),
+            "action",
+            &args,
+            Some(warrant.authorized_holder()),
+        );
+        let approved_at = chrono::Utc::now() - chrono::Duration::seconds(20);
+        let payload = ApprovalPayload::new(
+            request_hash,
+            rand::random(),
+            "admin1".to_string(),
+            approved_at,
+            approved_at + chrono::Duration::seconds(10), // expired 10s ago, inside the tolerance
+        );
+        let just_expired = SignedApproval::create(payload, &admin1);
+
+        let result =
+            authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[just_expired]);
+        let err = result
+            .expect_err("approval past its expiry must be rejected")
+            .to_string();
+        assert!(
+            err.contains("expired"),
+            "expected expiry rejection, got: {err}"
+        );
     }
 
     #[test]

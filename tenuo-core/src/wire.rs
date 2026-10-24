@@ -53,6 +53,17 @@ pub fn to_vec<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
+/// Reject input whose bytes differ from the canonical encoding of the decoded value.
+fn ensure_canonical<T: Serialize>(value: &T, input: &[u8], what: &str) -> Result<()> {
+    if to_vec(value)? != input {
+        return Err(Error::DeserializationError(format!(
+            "non-canonical {} encoding",
+            what
+        )));
+    }
+    Ok(())
+}
+
 /// Decode a warrant from binary format.
 ///
 /// Returns `PayloadTooLarge` if the input exceeds [`MAX_WARRANT_SIZE`].
@@ -66,6 +77,13 @@ pub fn decode(data: &[u8]) -> Result<Warrant> {
     }
 
     let warrant: Warrant = ciborium::de::from_reader(data)?;
+
+    // Accept only the canonical encoding. The signature covers the payload
+    // bytes, not the envelope, so a decoder that tolerates a different array
+    // header or trailing bytes would accept several byte strings for one
+    // warrant. Anything that dedups, caches or hashes raw tokens relies on
+    // there being exactly one.
+    ensure_canonical(&warrant, data, "warrant")?;
 
     // Validate constraint depth to prevent stack overflow attacks
     warrant.validate_constraint_depth()?;
@@ -203,6 +221,7 @@ pub fn decode_stack(data: &[u8]) -> Result<WarrantStack> {
         });
     }
     let stack: WarrantStack = ciborium::de::from_reader(data)?;
+    ensure_canonical(&stack, data, "warrant stack")?;
     // Basic validation?
     if stack.0.is_empty() {
         return Err(Error::DeserializationError(
@@ -352,6 +371,70 @@ mod tests {
 
         assert_eq!(decoded.id(), warrant.id());
         assert_eq!(decoded.tools(), warrant.tools()); // Both return Option<Vec<String>>
+    }
+
+    fn canonical_test_warrant() -> Warrant {
+        let keypair = SigningKey::generate();
+        let mut constraints = ConstraintSet::new();
+        constraints.insert("arg", Pattern::new("value-*").unwrap());
+        Warrant::builder()
+            .capability("test_tool", constraints)
+            .ttl(Duration::from_secs(300))
+            .holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap()
+    }
+
+    fn encoded_bstr_header_len(len: usize) -> usize {
+        match len {
+            0..=23 => 1,
+            24..=0xff => 2,
+            0x100..=0xffff => 3,
+            _ => 5,
+        }
+    }
+
+    #[test]
+    fn test_decode_rejects_noncanonical_signature_array_header() {
+        let warrant = canonical_test_warrant();
+        let encoded = encode(&warrant).unwrap();
+        // The envelope is [version, payload bstr, [alg, sig bstr]]. The signature
+        // array header (0x82, array of 2) directly follows the payload bytes.
+        let payload_len = warrant.payload_bytes.len();
+        let header = 1 + 1 + encoded_bstr_header_len(payload_len) + payload_len;
+        assert_eq!(encoded[header], 0x82);
+        let mut mutated = encoded.clone();
+        mutated[header] = 0x83; // claims three elements but still decodes the same two
+        let err = decode(&mutated).unwrap_err();
+        assert!(err.to_string().contains("non-canonical"), "{err}");
+    }
+
+    #[test]
+    fn test_decode_rejects_trailing_bytes() {
+        let mut encoded = encode(&canonical_test_warrant()).unwrap();
+        encoded.push(0x00);
+        assert!(decode(&encoded).is_err());
+    }
+
+    #[test]
+    fn test_every_single_bit_change_is_rejected() {
+        let encoded = encode(&canonical_test_warrant()).unwrap();
+        for i in 0..encoded.len() {
+            for bit in 0..8 {
+                let mut mutated = encoded.clone();
+                mutated[i] ^= 1 << bit;
+                assert!(decode(&mutated).is_err(), "byte {i} bit {bit} accepted");
+            }
+        }
+    }
+
+    #[test]
+    fn test_decode_stack_rejects_noncanonical_encoding() {
+        let stack = WarrantStack(vec![canonical_test_warrant()]);
+        let mut encoded = encode_stack(&stack).unwrap();
+        assert!(decode_stack(&encoded).is_ok());
+        encoded.push(0x00);
+        assert!(decode_stack(&encoded).is_err());
     }
 
     #[test]

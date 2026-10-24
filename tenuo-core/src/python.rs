@@ -5564,7 +5564,8 @@ fn py_srl_commitment_digest(srl_bytes: &[u8]) -> [u8; 32] {
 ///     approvals: List of SignedApproval objects to verify
 ///     trusted_approvers: Public keys of accepted approvers
 ///     threshold: Minimum number of valid approvals required (default 1)
-///     clock_tolerance_secs: Tolerance for clock skew on expiration (default 30)
+///     clock_tolerance_secs: Tolerance for an approver whose clock runs ahead, applied to
+///         approved_at (default 30). Expiry itself is strict.
 ///
 /// Returns:
 ///     List of verified ApprovalPayload objects (one per valid approval)
@@ -5641,7 +5642,11 @@ fn py_verify_approvals(
             continue;
         }
 
-        if payload.expires_at + clock_tolerance_secs < now {
+        // Expiry is strict, as for warrants at authorization. The tolerance
+        // only covers an approval dated slightly in the future.
+        if now >= payload.expires_at
+            || payload.approved_at > now.saturating_add(clock_tolerance_secs)
+        {
             rejections.push(Rejection::Expired);
             continue;
         }
@@ -5665,7 +5670,7 @@ fn py_verify_approvals(
             Rejection::InvalidSignature => "invalid signature on approval",
             Rejection::NotTrusted => "approver not in trusted set",
             Rejection::Duplicate => "duplicate approval from same approver",
-            Rejection::Expired => "approval expired (beyond clock tolerance)",
+            Rejection::Expired => "approval expired or not yet valid",
             Rejection::HashMismatch => {
                 "request hash mismatch (approval was signed for a different request)"
             }

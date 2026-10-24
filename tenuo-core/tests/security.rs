@@ -913,9 +913,10 @@ fn test_dos_protection_too_many_approvals() {
     );
 }
 
-/// Clock tolerance: approval that expired 20s ago (within 30s tolerance) → succeeds.
+/// Clock tolerance does not extend expiry: an approval that expired 20s ago
+/// (inside the default 30s tolerance) is rejected, as an expired warrant is.
 #[test]
-fn test_clock_tolerance_allows_near_expiry() {
+fn test_clock_tolerance_does_not_extend_approval_expiry() {
     let root = SigningKey::generate();
     let approver = SigningKey::generate();
 
@@ -946,9 +947,48 @@ fn test_clock_tolerance_allows_near_expiry() {
     let sig = warrant.sign(&root, "op", &args).unwrap();
     let result = authorizer.authorize_one(&warrant, "op", &args, Some(&sig), &[approval]);
 
+    let err =
+        result.expect_err("an expired approval must be rejected even inside the clock tolerance");
+    assert!(
+        err.to_string().contains("expired"),
+        "expected expiry rejection, got: {err}"
+    );
+}
+
+/// Clock tolerance still covers an approver whose clock runs slightly ahead.
+#[test]
+fn test_clock_tolerance_allows_approval_dated_slightly_in_future() {
+    let root = SigningKey::generate();
+    let approver = SigningKey::generate();
+
+    let warrant = make_multisig_warrant(&root, "op", &[&approver], 1);
+    let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+
+    let args = HashMap::new();
+    let request_hash = compute_request_hash(
+        &warrant.id().to_string(),
+        "op",
+        &args,
+        Some(&root.public_key()),
+    );
+    let now = Utc::now();
+
+    let payload = ApprovalPayload {
+        version: 1,
+        request_hash,
+        nonce: rand::random(),
+        external_id: "approver".to_string(),
+        approved_at: (now + chrono::Duration::seconds(10)).timestamp() as u64,
+        expires_at: (now + chrono::Duration::minutes(5)).timestamp() as u64,
+        extensions: None,
+    };
+    let approval = SignedApproval::create(payload, &approver);
+
+    let sig = warrant.sign(&root, "op", &args).unwrap();
+    let result = authorizer.authorize_one(&warrant, "op", &args, Some(&sig), &[approval]);
     assert!(
         result.is_ok(),
-        "Approval within clock tolerance should succeed: {:?}",
+        "approval dated 10s ahead should succeed: {:?}",
         result.err()
     );
 }

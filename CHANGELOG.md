@@ -7,7 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+
+Two checks are stricter, and some calls that used to pass now fail:
+
+- **A delegated warrant that asks to outlive its parent is rejected.**
+  Requesting a TTL longer than the parent's remaining lifetime used to be
+  silently shortened to the parent's expiry; it now fails with
+  `MonotonicityViolation` so the caller learns it asked for more than it got.
+  Omit the TTL to inherit the parent's expiry, or request no more than
+  `parent.ttl_remaining`.
+- **Approval expiry is strict.** Clock tolerance used to extend an approval
+  past its `expires_at` (by 30s by default). Approvals now expire exactly when
+  their approver said, as warrants already do at authorization. The tolerance
+  still covers an approval dated slightly in the future. The `clock_tolerance_secs`
+  argument of `verify_approvals` now applies to `approved_at` only.
+
 ### Fixed
+
+- **Warrants have exactly one valid encoding.** The decoder accepted an
+  envelope whose signature array header claimed three elements but held two,
+  and could accept trailing bytes, so one warrant had several valid byte
+  strings. Authority was unaffected (the signature covers the payload), but
+  anything that deduplicates, caches or hashes raw tokens could be fooled.
+  `decode` and `decode_stack` now reject any input that is not the canonical
+  encoding of what it decodes to. Every single-bit change to a warrant is
+  now rejected.
 
 - **Constraints reject unknown members when decoded.** A constraint read from
   a warrant ignored members it did not know, so a `Range` bound written under
