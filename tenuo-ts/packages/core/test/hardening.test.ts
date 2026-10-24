@@ -196,16 +196,15 @@ describe("in-process approvals with a nonce store", () => {
     expect(runs).toEqual([{ amount: 5000 }]);
   });
 
-  it("consumes approvals accepted during core's clock-skew grace window", async () => {
+  it("rejects an approval after its expiry, with no clock-skew grace window", async () => {
     const { transfer, session, approve, runs } = gated(memoryNonceStore());
     const approval = approve(5000, "alice", 1);
     await new Promise((resolve) => setTimeout(resolve, 1100));
 
-    await transfer.execute({ amount: 5000 }, { session, approvals: [approval] });
     await expect(
       transfer.execute({ amount: 5000 }, { session, approvals: [approval] }),
     ).rejects.toMatchObject({ code: "TENUO_INSUFFICIENT_APPROVALS" });
-    expect(runs).toEqual([{ amount: 5000 }]);
+    expect(runs).toEqual([]);
   });
 
   it("a denied call does not consume the approval", async () => {

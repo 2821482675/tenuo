@@ -480,6 +480,16 @@ pub(crate) fn to_py_err(e: crate::error::Error) -> PyErr {
     })
 }
 
+/// Seconds to a chrono tolerance without panicking: chrono's range is
+/// narrower than i64 seconds, so out-of-range values saturate.
+fn clock_tolerance_from_secs(seconds: i64) -> chrono::Duration {
+    chrono::Duration::try_seconds(seconds).unwrap_or(if seconds < 0 {
+        chrono::Duration::zero()
+    } else {
+        chrono::Duration::MAX
+    })
+}
+
 fn py_validation_err(message: impl Into<String>) -> PyErr {
     to_py_err(crate::error::Error::Validation(message.into()))
 }
@@ -3370,6 +3380,15 @@ impl PyAttenuationBuilder {
         self.inner.set_ttl(Duration::from_secs(seconds));
     }
 
+    /// Set a TTL, atomically capped at the parent's expiry.
+    ///
+    /// High-level scoping helpers use this to avoid a wall-clock race between
+    /// inspecting the parent's remaining lifetime and building the child.
+    fn with_ttl_capped_to_parent(&mut self, seconds: u64) {
+        self.inner
+            .set_ttl_capped_to_parent(Duration::from_secs(seconds));
+    }
+
     /// Set the authorized holder for the child warrant.
     fn with_holder(&mut self, holder: &PyPublicKey) {
         self.inner.set_holder(holder.inner.clone());
@@ -5554,7 +5573,7 @@ fn py_srl_commitment_digest(srl_bytes: &[u8]) -> [u8; 32] {
 ///   - Signature validity (verify-before-deserialize pattern)
 ///   - Approver is in the required set
 ///   - Request hash matches the expected value
-///   - Expiration with configurable clock tolerance
+///   - Strict expiration and configurable tolerance for future-approved timestamps
 ///   - Duplicate detection (one approval per approver key)
 ///   - DoS protection (max 2× approver count)
 ///   - Threshold satisfaction (m-of-n)
@@ -5564,7 +5583,8 @@ fn py_srl_commitment_digest(srl_bytes: &[u8]) -> [u8; 32] {
 ///     approvals: List of SignedApproval objects to verify
 ///     trusted_approvers: Public keys of accepted approvers
 ///     threshold: Minimum number of valid approvals required (default 1)
-///     clock_tolerance_secs: Tolerance for clock skew on expiration (default 30)
+///     clock_tolerance_secs: Tolerance for an approver whose clock runs ahead, applied to
+///         approved_at (default 30). Expiry itself is strict.
 ///
 /// Returns:
 ///     List of verified ApprovalPayload objects (one per valid approval)
@@ -5610,6 +5630,7 @@ fn py_verify_approvals(
         NotTrusted,
         Duplicate,
         Expired,
+        NotYetValid,
         HashMismatch,
     }
 
@@ -5619,7 +5640,8 @@ fn py_verify_approvals(
     let mut rejections: Vec<Rejection> = Vec::new();
 
     for approval in &approvals {
-        let payload = match approval.inner.verify() {
+        // Signature and structure here; the time checks below give precise reasons.
+        let payload = match approval.inner.verify_with_skew(u64::MAX) {
             Ok(p) => p,
             Err(_) => {
                 rejections.push(Rejection::InvalidSignature);
@@ -5641,8 +5663,14 @@ fn py_verify_approvals(
             continue;
         }
 
-        if payload.expires_at + clock_tolerance_secs < now {
+        // Expiry is strict, as for warrants at authorization. The tolerance
+        // only covers an approver whose clock runs ahead.
+        if now >= payload.expires_at {
             rejections.push(Rejection::Expired);
+            continue;
+        }
+        if payload.approved_at > now.saturating_add(clock_tolerance_secs) {
+            rejections.push(Rejection::NotYetValid);
             continue;
         }
 
@@ -5665,7 +5693,8 @@ fn py_verify_approvals(
             Rejection::InvalidSignature => "invalid signature on approval",
             Rejection::NotTrusted => "approver not in trusted set",
             Rejection::Duplicate => "duplicate approval from same approver",
-            Rejection::Expired => "approval expired (beyond clock tolerance)",
+            Rejection::Expired => "approval expired",
+            Rejection::NotYetValid => "approval dated in the future beyond clock tolerance",
             Rejection::HashMismatch => {
                 "request hash mismatch (approval was signed for a different request)"
             }
@@ -5677,7 +5706,7 @@ fn py_verify_approvals(
 
     // m-of-n: include rejection summary for diagnostics
     let mut parts = Vec::new();
-    let counts: [(usize, &str); 5] = [
+    let counts: [(usize, &str); 6] = [
         (
             rejections
                 .iter()
@@ -5705,6 +5734,13 @@ fn py_verify_approvals(
                 .filter(|r| matches!(r, Rejection::Expired))
                 .count(),
             "expired",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::NotYetValid))
+                .count(),
+            "dated in the future",
         ),
         (
             rejections
@@ -6132,7 +6168,7 @@ impl PyAuthorizer {
     ///
     /// Args:
     ///     trusted_roots: List of trusted root public keys. At least one required.
-    ///     clock_tolerance_secs: Clock tolerance in seconds (default: 30)
+    ///     clock_tolerance_secs: Tolerance for future-issued timestamps in seconds (default: 30)
     ///     pop_window_secs: PoP window size in seconds (default: 30)
     ///     pop_max_windows: Number of PoP windows to accept (default: 4)
     ///
@@ -6167,7 +6203,7 @@ impl PyAuthorizer {
         }
 
         let mut authorizer = RustAuthorizer::new()
-            .with_clock_tolerance(chrono::Duration::seconds(clock_tolerance_secs))
+            .with_clock_tolerance(clock_tolerance_from_secs(clock_tolerance_secs))
             .with_pop_window(pop_window_secs, pop_max_windows);
 
         let mut root_bytes = Vec::new();
@@ -6234,13 +6270,13 @@ impl PyAuthorizer {
         Ok(())
     }
 
-    /// Set the clock tolerance for expiration checks.
+    /// Set the clock tolerance for future-issued timestamps. Expiry remains strict.
     ///
     /// Args:
     ///     seconds: Clock tolerance in seconds
     fn set_clock_tolerance(&mut self, seconds: i64) {
         self.inner
-            .set_clock_tolerance(chrono::Duration::seconds(seconds));
+            .set_clock_tolerance(clock_tolerance_from_secs(seconds));
     }
 
     /// Set the PoP window configuration.
