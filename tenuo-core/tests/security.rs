@@ -1171,3 +1171,43 @@ fn test_expired_parent_invalidates_chain() {
         err
     );
 }
+
+/// m-of-n: when every approval is dated beyond the clock tolerance, the
+/// insufficient-approvals error says so instead of reporting zero valid
+/// approvals with no reason.
+#[test]
+fn test_future_dated_approvals_named_in_m_of_n_rejection_summary() {
+    let root = SigningKey::generate();
+    let a = SigningKey::generate();
+    let b = SigningKey::generate();
+    let warrant = make_multisig_warrant(&root, "op", &[&a, &b], 2);
+    let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+    let args = HashMap::new();
+    let request_hash = compute_request_hash(
+        &warrant.id().to_string(),
+        "op",
+        &args,
+        Some(&root.public_key()),
+    );
+    let now = Utc::now();
+    let ahead = |key: &SigningKey| {
+        SignedApproval::create(
+            ApprovalPayload {
+                version: 1,
+                request_hash,
+                nonce: rand::random(),
+                external_id: "approver".to_string(),
+                approved_at: (now + chrono::Duration::minutes(10)).timestamp() as u64,
+                expires_at: (now + chrono::Duration::minutes(20)).timestamp() as u64,
+                extensions: None,
+            },
+            key,
+        )
+    };
+    let sig = warrant.sign(&root, "op", &args).unwrap();
+    let err = authorizer
+        .authorize_one(&warrant, "op", &args, Some(&sig), &[ahead(&a), ahead(&b)])
+        .expect_err("approvals dated 10 minutes ahead must not satisfy 2-of-2")
+        .to_string();
+    assert!(err.contains("dated in the future"), "got: {err}");
+}

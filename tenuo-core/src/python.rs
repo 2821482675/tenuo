@@ -5687,7 +5687,7 @@ fn py_verify_approvals(
 
     // m-of-n: include rejection summary for diagnostics
     let mut parts = Vec::new();
-    let counts: [(usize, &str); 5] = [
+    let counts: [(usize, &str); 6] = [
         (
             rejections
                 .iter()
@@ -5715,6 +5715,13 @@ fn py_verify_approvals(
                 .filter(|r| matches!(r, Rejection::Expired))
                 .count(),
             "expired",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::NotYetValid))
+                .count(),
+            "dated in the future",
         ),
         (
             rejections

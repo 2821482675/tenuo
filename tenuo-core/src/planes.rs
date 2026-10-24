@@ -178,7 +178,7 @@ fn verify_approvals_with_tolerance(
 
     // m-of-n: build rejection summary
     let mut parts = Vec::new();
-    let counts: [(usize, &str); 5] = [
+    let counts: [(usize, &str); 6] = [
         (
             rejections
                 .iter()
@@ -206,6 +206,13 @@ fn verify_approvals_with_tolerance(
                 .filter(|r| matches!(r, Rejection::Expired))
                 .count(),
             "expired",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::NotYetValid))
+                .count(),
+            "dated in the future",
         ),
         (
             rejections
