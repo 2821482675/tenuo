@@ -49,7 +49,7 @@ fn signed_approval_rejects_unknown_members() {
     let now = Utc::now();
     let payload = ApprovalPayload::new(
         [7; 32],
-        [9; 16],
+        rand::random(),
         "user:alice".into(),
         now,
         now + Duration::minutes(5),
