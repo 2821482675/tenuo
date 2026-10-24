@@ -262,6 +262,20 @@ fn test_misspelled_range_bound_fails_deserialization() {
 }
 
 #[test]
+fn test_non_finite_range_bound_fails_deserialization() {
+    let mut encoded = to_value(&Constraint::Range(Range::new(None, Some(10.0)).unwrap()));
+    let map = payload_map(&mut encoded).unwrap();
+    let (_, max) = map
+        .iter_mut()
+        .find(|(key, _)| *key == Value::Text("max".into()))
+        .expect("serialized range max");
+    *max = Value::Float(f64::INFINITY);
+
+    let err = decode::<Constraint>(&encoded).expect_err("infinite range bound was accepted");
+    assert!(err.contains("range bound must be finite"), "{err}");
+}
+
+#[test]
 fn test_unknown_constraint_member_fails_warrant_deserialization() {
     let mut set = ConstraintSet::new();
     set.insert("amount", Range::new(None, Some(10.0)).unwrap());
@@ -418,15 +432,29 @@ fn test_warrant_preserves_unknown_constraint_payload_shape() {
         Value::Bytes(payload_bytes),
         to_value(&signature),
     ]);
+    let envelope_bytes = to_cbor(&envelope);
 
     let warrant: Warrant = decode(&envelope).expect("unknown constraint payload must be preserved");
-    let constraint = warrant
+    assert_eq!(tenuo::wire::encode(&warrant).unwrap(), envelope_bytes);
+
+    let constraints = warrant
         .capabilities()
         .and_then(|capabilities| capabilities.get("deploy"))
-        .and_then(|constraints| constraints.get("region"))
+        .expect("decoded deploy constraints");
+    let constraint = constraints
+        .get("region")
         .expect("unknown constraint in decoded warrant");
     assert!(matches!(
         constraint,
         Constraint::Unknown { type_id: 200, .. }
     ));
+
+    let args = std::collections::HashMap::from([(
+        "region".to_string(),
+        tenuo::ConstraintValue::String("us-east-1".into()),
+    )]);
+    assert!(
+        constraints.matches(&args).is_err(),
+        "a constraint set containing an unknown constraint must fail closed"
+    );
 }

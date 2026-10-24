@@ -630,7 +630,7 @@ mod tests {
         // Manual construction of Unknown constraint
         let unknown = Constraint::Unknown {
             type_id: 99,
-            payload: vec![1, 2, 3],
+            payload: vec![0xa0], // A valid single CBOR item: {}.
         };
 
         let value = ConstraintValue::String("anything".to_string());

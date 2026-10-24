@@ -1479,10 +1479,46 @@ impl From<NotOneOf> for Constraint {
 /// to avoid precision loss. Do NOT use `Range` for IDs > 2^53.
 ///
 /// Wire type ID: 3
+fn deserialize_finite_optional_f64<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<f64>::deserialize(deserializer)?;
+    if value.is_some_and(|bound| !bound.is_finite()) {
+        return Err(serde::de::Error::custom("range bound must be finite"));
+    }
+    Ok(value)
+}
+
+fn serialize_finite_optional_f64<S>(
+    value: &Option<f64>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    if value.is_some_and(|bound| !bound.is_finite()) {
+        return Err(serde::ser::Error::custom("range bound must be finite"));
+    }
+    value.serialize(serializer)
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Range {
+    #[serde(
+        default,
+        deserialize_with = "deserialize_finite_optional_f64",
+        serialize_with = "serialize_finite_optional_f64"
+    )]
     pub min: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_finite_optional_f64",
+        serialize_with = "serialize_finite_optional_f64"
+    )]
     pub max: Option<f64>,
     pub min_inclusive: bool,
     pub max_inclusive: bool,
@@ -1492,17 +1528,16 @@ impl Range {
     /// Create a new range constraint with inclusive bounds.
     ///
     /// # Errors
-    /// Returns `InvalidRange` if min or max is NaN (NaN causes non-deterministic serialization).
+    /// Returns `InvalidRange` if min or max is not finite.
     pub fn new(min: Option<f64>, max: Option<f64>) -> Result<Self> {
-        // NaN values cause non-deterministic serialization and comparison issues
         if let Some(m) = min {
-            if m.is_nan() {
-                return Err(Error::InvalidRange("min cannot be NaN".to_string()));
+            if !m.is_finite() {
+                return Err(Error::InvalidRange("min must be finite".to_string()));
             }
         }
         if let Some(m) = max {
-            if m.is_nan() {
-                return Err(Error::InvalidRange("max cannot be NaN".to_string()));
+            if !m.is_finite() {
+                return Err(Error::InvalidRange("max must be finite".to_string()));
             }
         }
         Ok(Self {
@@ -1516,7 +1551,7 @@ impl Range {
     /// Create a range with only a maximum value.
     ///
     /// # Errors
-    /// Returns `InvalidRange` if max is NaN.
+    /// Returns `InvalidRange` if max is not finite.
     pub fn max(max: f64) -> Result<Self> {
         Self::new(None, Some(max))
     }
@@ -1524,7 +1559,7 @@ impl Range {
     /// Create a range with only a minimum value.
     ///
     /// # Errors
-    /// Returns `InvalidRange` if min is NaN.
+    /// Returns `InvalidRange` if min is not finite.
     pub fn min(min: f64) -> Result<Self> {
         Self::new(Some(min), None)
     }
@@ -1532,7 +1567,7 @@ impl Range {
     /// Create a range between min and max.
     ///
     /// # Errors
-    /// Returns `InvalidRange` if min or max is NaN.
+    /// Returns `InvalidRange` if min or max is not finite.
     pub fn between(min: f64, max: f64) -> Result<Self> {
         Self::new(Some(min), Some(max))
     }
@@ -4389,16 +4424,16 @@ mod tests {
     }
 
     #[test]
-    fn test_range_rejects_nan() {
+    fn test_range_rejects_non_finite_bounds() {
         // NaN in min
         let result = Range::min(f64::NAN);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("NaN"));
+        assert!(result.unwrap_err().to_string().contains("finite"));
 
         // NaN in max
         let result = Range::max(f64::NAN);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("NaN"));
+        assert!(result.unwrap_err().to_string().contains("finite"));
 
         // NaN in between
         let result = Range::between(f64::NAN, 100.0);
@@ -4412,9 +4447,17 @@ mod tests {
         assert!(Range::min(0.0).is_ok());
         assert!(Range::between(0.0, 100.0).is_ok());
 
-        // Infinity is allowed (it's a valid f64)
-        assert!(Range::max(f64::INFINITY).is_ok());
-        assert!(Range::min(f64::NEG_INFINITY).is_ok());
+        assert!(Range::max(f64::INFINITY).is_err());
+        assert!(Range::min(f64::NEG_INFINITY).is_err());
+
+        // Public fields cannot bypass the invariant during serialization.
+        let invalid = Range {
+            min: Some(f64::INFINITY),
+            max: None,
+            min_inclusive: true,
+            max_inclusive: true,
+        };
+        assert!(serde_json::to_string(&invalid).is_err());
     }
 
     #[test]
@@ -5611,7 +5654,7 @@ mod tests {
         // We do not validate against it because... what were we talking about?
         let unknown = Constraint::Unknown {
             type_id: 55,
-            payload: vec![0, 1, 2, 3],
+            payload: vec![0xa0], // A valid single CBOR item: {}.
         };
 
         // Unknown constraints always fail matching

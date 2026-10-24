@@ -714,16 +714,25 @@ fn parse_constraint(s: &str) -> Result<(String, Constraint), String> {
         "regex" => Constraint::Regex(RegexConstraint::new(value).map_err(|e| e.to_string())?),
         "range" => {
             // Parse range like "0.8..1.0" or "..100" or "10.."
-            let parts: Vec<&str> = value.split("..").collect();
-            let min = if parts[0].is_empty() {
-                None
-            } else {
-                Some(parts[0].parse::<f64>().map_err(|_| "Invalid range min")?)
+            let (min_text, max_text) = match value.split_once("..") {
+                Some((_, max)) if max.contains("..") => {
+                    return Err("Invalid range: expected at most one '..' separator".to_string());
+                }
+                Some(bounds) => bounds,
+                None => (value, ""), // Preserve the existing `range:10` min-only shorthand.
             };
-            let max = if parts.len() > 1 && !parts[1].is_empty() {
-                Some(parts[1].parse::<f64>().map_err(|_| "Invalid range max")?)
-            } else {
+            if min_text.is_empty() && max_text.is_empty() {
+                return Err("Invalid range: at least one bound is required".to_string());
+            }
+            let min = if min_text.is_empty() {
                 None
+            } else {
+                Some(min_text.parse::<f64>().map_err(|_| "Invalid range min")?)
+            };
+            let max = if max_text.is_empty() {
+                None
+            } else {
+                Some(max_text.parse::<f64>().map_err(|_| "Invalid range max")?)
             };
             Constraint::Range(Range::new(min, max).map_err(|e| e.to_string())?)
         }
@@ -2256,5 +2265,23 @@ mod constraint_json_tests {
         assert!(error_for(r#"{"amount": {"min": "100"}}"#).contains("min must be a number"));
         assert!(error_for(r#"{"role": {"enum": ["admin", 42]}}"#)
             .contains("enum values must all be strings"));
+    }
+
+    #[test]
+    fn shorthand_range_requires_a_bound_and_a_single_separator() {
+        assert!(parse_constraint("amount=range:10..20").is_ok());
+        assert!(parse_constraint("amount=range:..20").is_ok());
+        assert!(parse_constraint("amount=range:10..").is_ok());
+        assert!(parse_constraint("amount=range:10").is_ok());
+
+        assert!(parse_constraint("amount=range:..").is_err());
+        assert!(parse_constraint("amount=range:").is_err());
+        assert!(parse_constraint("amount=range:10..20..30").is_err());
+    }
+
+    #[test]
+    fn shorthand_range_rejects_non_finite_bounds() {
+        assert!(parse_constraint("amount=range:inf..20").is_err());
+        assert!(parse_constraint("amount=range:10..-inf").is_err());
     }
 }
