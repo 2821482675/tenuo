@@ -260,52 +260,36 @@ fn mcp_config_rejects_unknown_keys() {
 
 #[test]
 fn shipped_configs_parse() {
-    for (path, yaml) in [
-        (
-            "demo/config/gateway.yaml",
-            include_str!("../../demo/config/gateway.yaml"),
-        ),
-        (
-            "docs/quickstart/envoy/gateway.yaml",
-            include_str!("../../docs/quickstart/envoy/gateway.yaml"),
-        ),
-        (
-            "examples/gateway-config.yaml",
-            include_str!("../../examples/gateway-config.yaml"),
-        ),
-        (
-            "templates/gateway/database-query.yaml",
-            include_str!("../../templates/gateway/database-query.yaml"),
-        ),
-        (
-            "templates/gateway/file-operations.yaml",
-            include_str!("../../templates/gateway/file-operations.yaml"),
-        ),
-        (
-            "templates/gateway/http-request.yaml",
-            include_str!("../../templates/gateway/http-request.yaml"),
-        ),
-        (
-            "templates/gateway/kubernetes-ops.yaml",
-            include_str!("../../templates/gateway/kubernetes-ops.yaml"),
-        ),
+    // The shipped configs live outside this crate, so the published package
+    // does not carry them: read them from the repository, and skip elsewhere.
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    if !repo.join(".git").exists() {
+        eprintln!("shipped_configs_parse: not a repository checkout, skipping");
+        return;
+    }
+    let read = |path: &str| {
+        std::fs::read_to_string(repo.join(path)).unwrap_or_else(|err| panic!("{path}: {err}"))
+    };
+
+    for path in [
+        "demo/config/gateway.yaml",
+        "docs/quickstart/envoy/gateway.yaml",
+        "examples/gateway-config.yaml",
+        "templates/gateway/database-query.yaml",
+        "templates/gateway/file-operations.yaml",
+        "templates/gateway/http-request.yaml",
+        "templates/gateway/kubernetes-ops.yaml",
     ] {
-        if let Err(err) = GatewayConfig::from_yaml(yaml) {
+        if let Err(err) = GatewayConfig::from_yaml(&read(path)) {
             panic!("{path}: {err}");
         }
     }
 
-    for (path, yaml) in [
-        (
-            "examples/mcp-config.yaml",
-            include_str!("../../examples/mcp-config.yaml"),
-        ),
-        (
-            "tenuo-python/examples/mcp-config.yaml",
-            include_str!("../../tenuo-python/examples/mcp-config.yaml"),
-        ),
+    for path in [
+        "examples/mcp-config.yaml",
+        "tenuo-python/examples/mcp-config.yaml",
     ] {
-        if let Err(err) = serde_yaml::from_str::<McpConfig>(yaml) {
+        if let Err(err) = serde_yaml::from_str::<McpConfig>(&read(path)) {
             panic!("{path}: {err}");
         }
     }
