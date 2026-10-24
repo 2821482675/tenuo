@@ -5611,6 +5611,7 @@ fn py_verify_approvals(
         NotTrusted,
         Duplicate,
         Expired,
+        NotYetValid,
         HashMismatch,
     }
 
@@ -5620,7 +5621,8 @@ fn py_verify_approvals(
     let mut rejections: Vec<Rejection> = Vec::new();
 
     for approval in &approvals {
-        let payload = match approval.inner.verify() {
+        // Signature and structure here; the time checks below give precise reasons.
+        let payload = match approval.inner.verify_with_skew(u64::MAX) {
             Ok(p) => p,
             Err(_) => {
                 rejections.push(Rejection::InvalidSignature);
@@ -5643,11 +5645,13 @@ fn py_verify_approvals(
         }
 
         // Expiry is strict, as for warrants at authorization. The tolerance
-        // only covers an approval dated slightly in the future.
-        if now >= payload.expires_at
-            || payload.approved_at > now.saturating_add(clock_tolerance_secs)
-        {
+        // only covers an approver whose clock runs ahead.
+        if now >= payload.expires_at {
             rejections.push(Rejection::Expired);
+            continue;
+        }
+        if payload.approved_at > now.saturating_add(clock_tolerance_secs) {
+            rejections.push(Rejection::NotYetValid);
             continue;
         }
 
@@ -5670,7 +5674,8 @@ fn py_verify_approvals(
             Rejection::InvalidSignature => "invalid signature on approval",
             Rejection::NotTrusted => "approver not in trusted set",
             Rejection::Duplicate => "duplicate approval from same approver",
-            Rejection::Expired => "approval expired or not yet valid",
+            Rejection::Expired => "approval expired",
+            Rejection::NotYetValid => "approval dated in the future beyond clock tolerance",
             Rejection::HashMismatch => {
                 "request hash mismatch (approval was signed for a different request)"
             }

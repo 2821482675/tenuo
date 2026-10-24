@@ -275,6 +275,13 @@ impl SignedApproval {
     ///
     /// The verified and deserialized ApprovalPayload
     pub fn verify(&self) -> Result<ApprovalPayload> {
+        self.verify_with_skew(crate::warrant::CLOCK_SKEW_TOLERANCE_SECS)
+    }
+
+    /// [`SignedApproval::verify`] with a caller-chosen tolerance for an
+    /// approver whose clock runs ahead: an approval dated more than
+    /// `skew_tolerance_secs` in the future is rejected.
+    pub fn verify_with_skew(&self, skew_tolerance_secs: u64) -> Result<ApprovalPayload> {
         // 1. Check envelope version
         if self.approval_version != 1 {
             return Err(Error::UnsupportedVersion(self.approval_version));
@@ -299,11 +306,10 @@ impl SignedApproval {
         // Check A: Approved in future (Clock Skew)
         // Prevent "time travel" attacks where an attacker creates an approval valid in the future
         // to bypass current valid-time checks or replay protections.
-        use crate::warrant::CLOCK_SKEW_TOLERANCE_SECS;
-        if payload.approved_at > now.saturating_add(CLOCK_SKEW_TOLERANCE_SECS) {
+        if payload.approved_at > now.saturating_add(skew_tolerance_secs) {
             return Err(Error::InvalidApproval(format!(
                 "approval timestamp is in the future (skew > {}s)",
-                CLOCK_SKEW_TOLERANCE_SECS
+                skew_tolerance_secs
             )));
         }
 

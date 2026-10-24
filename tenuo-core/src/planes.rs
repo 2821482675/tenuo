@@ -96,21 +96,23 @@ fn verify_approvals_with_tolerance(
         NotAuthorized,
         Duplicate,
         Expired,
+        NotYetValid,
         HashMismatch,
     }
 
     let mut valid_count = 0u32;
     let mut seen_approvers = std::collections::HashSet::new();
-    // Clock tolerance covers a signer whose clock runs ahead (an approval dated
-    // slightly in the future, checked in `SignedApproval::verify`). Expiry is
-    // strict, as it is for warrants at authorization: an approval for a
-    // high-impact action must not outlive the window the approver chose.
-    let _ = clock_tolerance;
+    // Clock tolerance covers an approver whose clock runs ahead (an approval
+    // dated slightly in the future). Expiry is strict, as it is for warrants at
+    // authorization: an approval for a high-impact action must not outlive the
+    // window the approver chose.
+    let skew_tolerance_secs = clock_tolerance.num_seconds().max(0) as u64;
     let mut rejections: Vec<Rejection> = Vec::new();
     let mut verified: Vec<VerifiedApproval> = Vec::new();
 
     for approval in approvals {
-        let payload = match approval.verify() {
+        // Signature and structure here; the time checks below give precise reasons.
+        let payload = match approval.verify_with_skew(u64::MAX) {
             Ok(p) => p,
             Err(_) => {
                 rejections.push(Rejection::InvalidSignature);
@@ -130,6 +132,11 @@ fn verify_approvals_with_tolerance(
 
         if now >= payload.expires_at {
             rejections.push(Rejection::Expired);
+            continue;
+        }
+
+        if payload.approved_at > now.saturating_add(skew_tolerance_secs) {
+            rejections.push(Rejection::NotYetValid);
             continue;
         }
 
@@ -161,6 +168,7 @@ fn verify_approvals_with_tolerance(
             Rejection::NotAuthorized => "approver not in trusted set",
             Rejection::Duplicate => "duplicate approval from same approver",
             Rejection::Expired => "approval expired",
+            Rejection::NotYetValid => "approval dated in the future beyond clock tolerance",
             Rejection::HashMismatch => {
                 "request hash mismatch (approval was signed for a different request)"
             }

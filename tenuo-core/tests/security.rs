@@ -993,6 +993,54 @@ fn test_clock_tolerance_allows_approval_dated_slightly_in_future() {
     );
 }
 
+/// The configured clock tolerance, not a fixed 30s, decides how far ahead an
+/// approval may be dated.
+#[test]
+fn test_configured_clock_tolerance_governs_future_dated_approvals() {
+    let root = SigningKey::generate();
+    let approver = SigningKey::generate();
+    let warrant = make_multisig_warrant(&root, "op", &[&approver], 1);
+    let args = HashMap::new();
+    let request_hash = compute_request_hash(
+        &warrant.id().to_string(),
+        "op",
+        &args,
+        Some(&root.public_key()),
+    );
+    let now = Utc::now();
+    let ahead_45s = || {
+        SignedApproval::create(
+            ApprovalPayload {
+                version: 1,
+                request_hash,
+                nonce: rand::random(),
+                external_id: "approver".to_string(),
+                approved_at: (now + chrono::Duration::seconds(45)).timestamp() as u64,
+                expires_at: (now + chrono::Duration::minutes(5)).timestamp() as u64,
+                extensions: None,
+            },
+            &approver,
+        )
+    };
+    let sig = warrant.sign(&root, "op", &args).unwrap();
+
+    let default = Authorizer::new().with_trusted_root(root.public_key());
+    let err = default
+        .authorize_one(&warrant, "op", &args, Some(&sig), &[ahead_45s()])
+        .expect_err("45s ahead exceeds the default 30s tolerance");
+    assert!(err.to_string().contains("future"), "got: {err}");
+
+    let lenient = Authorizer::new()
+        .with_trusted_root(root.public_key())
+        .with_clock_tolerance(chrono::Duration::seconds(60));
+    let result = lenient.authorize_one(&warrant, "op", &args, Some(&sig), &[ahead_45s()]);
+    assert!(
+        result.is_ok(),
+        "45s ahead is within a 60s tolerance: {:?}",
+        result.err()
+    );
+}
+
 // ============================================================================
 // Pattern Attenuation Security
 // ============================================================================
