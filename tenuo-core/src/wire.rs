@@ -393,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_rejects_noncanonical_signature_array_header() {
+    fn test_decode_rejects_overlong_signature_tuple() {
         let warrant = canonical_test_warrant();
         let encoded = encode(&warrant).unwrap();
         // The envelope is [version, payload bstr, [alg, sig bstr]]. The signature
@@ -402,7 +402,8 @@ mod tests {
         let header = 1 + 1 + encoded_bstr_header_len(payload_len) + payload_len;
         assert_eq!(encoded[header], 0x82);
         let mut mutated = encoded.clone();
-        mutated[header] = 0x83; // claims three elements but still decodes the same two
+        mutated[header] = 0x83;
+        mutated.push(0x00); // actual third signature-tuple element
         assert!(decode(&mutated).is_err());
     }
 

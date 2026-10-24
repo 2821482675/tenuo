@@ -1471,7 +1471,7 @@ impl DataPlane {
                             tool,
                             args,
                             approvals,
-                            chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
+                            self.clock_tolerance,
                             chrono::Utc::now().timestamp() as u64,
                         )
                     } else {
@@ -4226,6 +4226,72 @@ mod tests {
             &[approval],
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn data_plane_check_chain_uses_configured_approval_clock_tolerance() {
+        use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
+
+        let issuer = SigningKey::generate();
+        let approver = SigningKey::generate();
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert("sensitive_action".into(), ToolApprovalGate::whole_tool());
+        let warrant = Warrant::builder()
+            .capability("sensitive_action", ConstraintSet::new())
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![approver.public_key()])
+            .min_approvals(1)
+            .holder(issuer.public_key())
+            .extension(
+                crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY,
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
+            .build(&issuer)
+            .unwrap();
+        let args = HashMap::new();
+        let pop = warrant.sign(&issuer, "sensitive_action", &args).unwrap();
+        let request_hash = compute_request_hash(
+            &warrant.id().to_string(),
+            "sensitive_action",
+            &args,
+            Some(warrant.authorized_holder()),
+        );
+        let now = chrono::Utc::now();
+        let approval = SignedApproval::create(
+            ApprovalPayload::new(
+                request_hash,
+                rand::random(),
+                "approver@example.com".into(),
+                now + chrono::Duration::seconds(45),
+                now + chrono::Duration::seconds(120),
+            ),
+            &approver,
+        );
+
+        let mut accepts = DataPlane::new_with_issuers([issuer.public_key()]);
+        accepts.set_clock_tolerance(Duration::from_secs(60));
+        assert!(accepts
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "sensitive_action",
+                &args,
+                Some(&pop),
+                std::slice::from_ref(&approval),
+            )
+            .is_ok());
+
+        let mut rejects = DataPlane::new_with_issuers([issuer.public_key()]);
+        rejects.set_clock_tolerance(Duration::ZERO);
+        assert!(rejects
+            .check_chain(
+                &[warrant],
+                "sensitive_action",
+                &args,
+                Some(&pop),
+                &[approval],
+            )
+            .is_err());
     }
 
     #[test]
