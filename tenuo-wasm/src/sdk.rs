@@ -523,7 +523,7 @@ impl SdkContext {
             if ttl == 0 {
                 return Err(JsError::new("narrow options: ttlSeconds must be positive"));
             }
-            builder = builder.ttl(Duration::from_secs(u64::from(ttl)));
+            builder = builder.ttl_capped_to_parent(Duration::from_secs(u64::from(ttl)));
         }
         let next_holder = match &options.holder {
             Some(hex) => Some(parse_public_key_hex(hex)?),

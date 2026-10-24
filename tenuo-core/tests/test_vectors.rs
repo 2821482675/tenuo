@@ -1341,6 +1341,7 @@ fn test_vector_a10_invalid_depth_monotonicity() {
 
     // Verify that the verifier REJECTS this chain
     let mut data_plane = DataPlane::new();
+    data_plane.set_clock_tolerance(std::time::Duration::from_secs(u32::MAX as u64));
     data_plane.trust_issuer("root", control_plane.public_key());
 
     let result = data_plane.verify_chain(&[warrant_parent, warrant_child]);
@@ -1436,6 +1437,7 @@ fn test_vector_a11_invalid_capability_monotonicity() {
 
     // Verify that the verifier REJECTS this chain
     let mut data_plane = DataPlane::new();
+    data_plane.set_clock_tolerance(std::time::Duration::from_secs(u32::MAX as u64));
     data_plane.trust_issuer("root", control_plane.public_key());
 
     let result = data_plane.verify_chain(&[warrant_parent, warrant_child]);
@@ -1671,6 +1673,7 @@ ab00010150019471f80000700080000000000000a1020003a169726561645f66\
 
     // Verify that the verifier REJECTS this chain
     let mut data_plane = DataPlane::new();
+    data_plane.set_clock_tolerance(std::time::Duration::from_secs(u32::MAX as u64));
     data_plane.trust_issuer("root", control_plane.public_key());
 
     let result = data_plane.verify_chain(&[warrant_verify_parent, warrant_verify_child]);
@@ -1893,6 +1896,7 @@ ba5d72ca6709bf1d94121bf3748801b40f6f5c061a65920080071a65920e9008\
 
     // Verify that the verifier REJECTS this chain
     let mut data_plane = DataPlane::new();
+    data_plane.set_clock_tolerance(std::time::Duration::from_secs(u32::MAX as u64));
     data_plane.trust_issuer("root", control_plane.public_key());
 
     let result = data_plane.verify_chain(&[warrant_verify_parent, warrant_verify_child]);
@@ -2049,6 +2053,7 @@ eede73926d6d4d2796a2fdf69b28501aaa75439ebcbbd2adb9efd0f04bd84c0e";
 
     // Verify that the verifier REJECTS the forged warrant
     let mut data_plane = DataPlane::new();
+    data_plane.set_clock_tolerance(std::time::Duration::from_secs(u32::MAX as u64));
     data_plane.trust_issuer("root", control_plane.public_key());
 
     let result_forged = data_plane.verify_chain(&[warrant_verify_forged]);
@@ -2150,6 +2155,7 @@ fn test_vector_a15_issuer_constraint_violation() {
 
     // Verify that the verifier REJECTS this chain
     let mut data_plane = DataPlane::new();
+    data_plane.set_clock_tolerance(std::time::Duration::from_secs(u32::MAX as u64));
     data_plane.trust_issuer("root", control_plane.public_key());
 
     let result = data_plane.verify_chain(&[warrant_issuer, warrant_child]);
@@ -2312,6 +2318,7 @@ fn test_vector_a17_clearance_violation() {
 
     // Verify that the verifier REJECTS this chain
     let mut data_plane = DataPlane::new();
+    data_plane.set_clock_tolerance(std::time::Duration::from_secs(u32::MAX as u64));
     data_plane.trust_issuer("root", control_plane.public_key());
 
     let result = data_plane.verify_chain(&[warrant_parent, warrant_child]);
@@ -2398,6 +2405,7 @@ fn test_vector_a18_multisig_configuration() {
 
     // Verify the warrant passes chain verification (the multi-sig is valid config)
     let mut data_plane = DataPlane::new();
+    data_plane.set_clock_tolerance(std::time::Duration::from_secs(u32::MAX as u64));
     data_plane.trust_issuer("root", control_plane.public_key());
 
     let result = data_plane.verify_chain(&[warrant]);

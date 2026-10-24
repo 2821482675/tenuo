@@ -616,13 +616,10 @@ class GrantScope:
 
             builder.capability(tool, merged_constraints)
 
-        # Apply TTL. The core rejects a child that would outlive its parent, so a
-        # request at or beyond the parent's remaining lifetime inherits the
-        # parent's expiry instead, matching preview().
+        # Apply TTL with atomic core-side clamping. Computing parent remaining
+        # here would race the clock read used to build the child.
         if self.ttl:
-            parent_remaining = int(parent.ttl_remaining.total_seconds()) if hasattr(parent, "ttl_remaining") else None
-            if parent_remaining is None or self.ttl < parent_remaining:
-                builder.ttl(self.ttl)
+            builder._ttl_capped_to_parent(self.ttl)
 
         # Build child warrant
         try:

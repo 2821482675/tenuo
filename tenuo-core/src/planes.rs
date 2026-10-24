@@ -639,6 +639,9 @@ pub struct DataPlane {
     /// Tool clearance requirements: minimum clearance required per tool.
     /// Supports exact matches and glob patterns (e.g., "admin_*").
     tool_clearance_requirements: HashMap<String, Clearance>,
+    /// Allowed positive skew for warrants issued by a clock ahead of ours.
+    /// Expiry remains strict and is never extended by this tolerance.
+    clock_tolerance: chrono::Duration,
 }
 
 impl DataPlane {
@@ -652,6 +655,7 @@ impl DataPlane {
             revocation_list: None,
             local_revocation_cache: RwLock::new(HashSet::new()),
             tool_clearance_requirements: HashMap::new(),
+            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
         }
     }
 
@@ -666,6 +670,7 @@ impl DataPlane {
             revocation_list: None,
             local_revocation_cache: RwLock::new(HashSet::new()),
             tool_clearance_requirements: HashMap::new(),
+            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
         }
     }
 
@@ -677,20 +682,23 @@ impl DataPlane {
             revocation_list: None,
             local_revocation_cache: RwLock::new(HashSet::new()),
             tool_clearance_requirements: HashMap::new(),
+            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
         }
     }
 
-    /// Legacy clock-tolerance setter.
+    /// Set tolerance for warrants issued by a clock ahead of this verifier.
     ///
     /// In distributed systems, clocks on different machines can drift apart.
-    /// Warrant expiry is strict, so this legacy setter is retained only for
-    /// source compatibility and has no effect. Use [`Authorizer`] when
-    /// tolerance for future-issued timestamps is required.
+    /// Warrant expiry remains strict; this only affects the not-yet-valid
+    /// check on `issued_at`.
     ///
     /// # Arguments
-    /// * `tolerance` - Ignored; retained for source compatibility.
+    /// * `tolerance` - Maximum accepted positive clock skew.
     ///
-    pub fn set_clock_tolerance(&mut self, _tolerance: std::time::Duration) {}
+    pub fn set_clock_tolerance(&mut self, tolerance: std::time::Duration) {
+        self.clock_tolerance =
+            chrono::Duration::seconds(tolerance.as_secs().min(i64::MAX as u64) as i64);
+    }
 
     /// Set a signed revocation list.
     ///
@@ -1104,6 +1112,9 @@ impl DataPlane {
                     warrant_id: warrant.id().to_string(),
                     expired_at: warrant.expires_at(),
                 });
+            }
+            if warrant.is_issued_in_future_as_of(as_of, self.clock_tolerance) {
+                return Err(Error::IssuedInFuture);
             }
             warrant.validate_structural().map_err(|e| {
                 Error::ChainVerificationFailed(format!(
@@ -3766,6 +3777,30 @@ mod tests {
 
         let error = authorizer.verify_chain(&[warrant]).unwrap_err();
         assert!(matches!(error, Error::WarrantExpired { .. }));
+    }
+
+    #[test]
+    fn test_data_plane_applies_clock_tolerance_to_future_issuance_only() {
+        let control_plane = ControlPlane::generate();
+        let mut warrant = control_plane
+            .issue_warrant("test", &[], Duration::from_secs(300))
+            .unwrap();
+        let now = chrono::Utc::now().timestamp() as u64;
+        warrant.payload.issued_at = now + 45;
+        warrant.payload.expires_at = now + 300;
+        warrant.payload_bytes = crate::wire::to_vec(&warrant.payload).unwrap();
+        warrant.signature = control_plane.keypair.sign_raw(&warrant.signed_message());
+
+        let mut accepts = DataPlane::new_with_issuers([control_plane.public_key()]);
+        accepts.set_clock_tolerance(Duration::from_secs(60));
+        assert!(accepts.verify_chain(std::slice::from_ref(&warrant)).is_ok());
+
+        let mut rejects = DataPlane::new_with_issuers([control_plane.public_key()]);
+        rejects.set_clock_tolerance(Duration::from_secs(30));
+        assert!(matches!(
+            rejects.verify_chain(&[warrant]),
+            Err(Error::IssuedInFuture)
+        ));
     }
 
     #[test]

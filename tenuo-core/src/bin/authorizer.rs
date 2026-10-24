@@ -2262,8 +2262,7 @@ fn decode_warrant_or_chain(b64: &str) -> Result<Vec<tenuo::Warrant>, tenuo::Erro
     }
 
     // Fall back to single warrant decode
-    let warrant: tenuo::Warrant = ciborium::de::from_reader(&bytes[..])
-        .map_err(|e| tenuo::Error::DeserializationError(format!("CBOR decode failed: {}", e)))?;
+    let warrant = wire::decode(&bytes)?;
 
     Ok(vec![warrant])
 }
@@ -2385,6 +2384,25 @@ routes:
     method: ["POST"]
     tool: "deploy"
 "#;
+
+    #[test]
+    fn single_warrant_fallback_uses_strict_wire_decode() {
+        let key = tenuo::SigningKey::generate();
+        let warrant = tenuo::Warrant::builder()
+            .capability("test", ConstraintSet::new())
+            .ttl(Duration::from_secs(60))
+            .holder(key.public_key())
+            .build(&key)
+            .unwrap();
+        let valid = wire::encode(&warrant).unwrap();
+        let valid_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&valid);
+        assert_eq!(decode_warrant_or_chain(&valid_b64).unwrap().len(), 1);
+
+        let mut trailing = valid;
+        trailing.push(0x00);
+        let trailing_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(trailing);
+        assert!(decode_warrant_or_chain(&trailing_b64).is_err());
+    }
 
     #[test]
     fn parse_deny_reason_distinguishes_tool_scope_from_argument_constraint() {

@@ -623,14 +623,6 @@ class TenuoClient implements Tenuo {
         );
       }
     }
-    if (native?.ttlSeconds !== undefined) {
-      // The core rejects a child that would outlive its parent. narrow() keeps its
-      // documented behavior of limiting a longer request to the parent's expiry.
-      const parentRemaining = session.inspect().expiresAt - Math.floor(Date.now() / 1000);
-      if (native.ttlSeconds >= parentRemaining) {
-        delete native.ttlSeconds;
-      }
-    }
     try {
       const child = new Session(this.context.narrow(nativeSession(session), allow, native));
       inheritSessionCollector(session, child);

@@ -3370,6 +3370,15 @@ impl PyAttenuationBuilder {
         self.inner.set_ttl(Duration::from_secs(seconds));
     }
 
+    /// Set a TTL, atomically capped at the parent's expiry.
+    ///
+    /// High-level scoping helpers use this to avoid a wall-clock race between
+    /// inspecting the parent's remaining lifetime and building the child.
+    fn with_ttl_capped_to_parent(&mut self, seconds: u64) {
+        self.inner
+            .set_ttl_capped_to_parent(Duration::from_secs(seconds));
+    }
+
     /// Set the authorized holder for the child warrant.
     fn with_holder(&mut self, holder: &PyPublicKey) {
         self.inner.set_holder(holder.inner.clone());

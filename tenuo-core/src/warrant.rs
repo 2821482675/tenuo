@@ -504,6 +504,10 @@ impl<'de> Deserialize<'de> for Warrant {
                     .next_element()?
                     .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
 
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(4, &self));
+                }
+
                 // Deserialize payload
                 let payload: WarrantPayload = ciborium::de::from_reader(&payload_bytes[..])
                     .map_err(|e| {
@@ -1975,6 +1979,14 @@ fn child_expiry_within_parent(now_sec: u64, ttl_secs: u64, parent_expires_at: u6
     Ok(proposed)
 }
 
+/// Expiry for a high-level delegation API that promises to cap a requested
+/// lifetime at the parent's expiry. This calculation is deliberately done in
+/// the core, using the same clock read as warrant construction, so language
+/// bindings cannot race a wall-clock second boundary.
+fn child_expiry_capped_to_parent(now_sec: u64, ttl_secs: u64, parent_expires_at: u64) -> u64 {
+    now_sec.saturating_add(ttl_secs).min(parent_expires_at)
+}
+
 /// Builder for attenuating existing warrants.
 #[derive(Debug)]
 pub struct AttenuationBuilder<'a> {
@@ -1988,6 +2000,7 @@ pub struct AttenuationBuilder<'a> {
     // Common fields
     clearance: Option<Clearance>,
     ttl: Option<Duration>,
+    cap_ttl_to_parent: bool,
     max_depth: Option<u32>,
     session_id: Option<String>,
     agent_id: Option<String>,
@@ -2047,6 +2060,7 @@ impl<'a> AttenuationBuilder<'a> {
             constraint_bounds,
             clearance: parent.payload.clearance,
             ttl: None,
+            cap_ttl_to_parent: false,
             max_depth: None, // Will inherit from parent if not set
             session_id: parent.payload.session_id.clone(),
             agent_id: parent.payload.agent_id.clone(),
@@ -2105,6 +2119,18 @@ impl<'a> AttenuationBuilder<'a> {
     /// Set a shorter TTL.
     pub fn ttl(mut self, ttl: Duration) -> Self {
         self.ttl = Some(ttl);
+        self.cap_ttl_to_parent = false;
+        self
+    }
+
+    /// Set a TTL, shortening it atomically to the parent's expiry if needed.
+    ///
+    /// This is intended for high-level SDKs whose documented behavior is to
+    /// clamp a requested lifetime. Low-level callers should use [`Self::ttl`]
+    /// when an overlong request must be reported as an error.
+    pub fn ttl_capped_to_parent(mut self, ttl: Duration) -> Self {
+        self.ttl = Some(ttl);
+        self.cap_ttl_to_parent = true;
         self
     }
 
@@ -2402,7 +2428,15 @@ impl<'a> AttenuationBuilder<'a> {
 
         let now_sec = Utc::now().timestamp() as u64;
         let expires_at = if let Some(ttl) = self.ttl {
-            child_expiry_within_parent(now_sec, ttl.as_secs(), self.parent.payload.expires_at)?
+            if self.cap_ttl_to_parent {
+                child_expiry_capped_to_parent(
+                    now_sec,
+                    ttl.as_secs(),
+                    self.parent.payload.expires_at,
+                )
+            } else {
+                child_expiry_within_parent(now_sec, ttl.as_secs(), self.parent.payload.expires_at)?
+            }
         } else {
             self.parent.payload.expires_at
         };
@@ -2570,6 +2604,7 @@ pub struct OwnedAttenuationBuilder {
     // Common fields
     clearance: Option<Clearance>,
     ttl: Option<Duration>,
+    cap_ttl_to_parent: bool,
     max_depth: Option<u32>,
     session_id: Option<String>,
     agent_id: Option<String>,
@@ -2639,6 +2674,7 @@ impl OwnedAttenuationBuilder {
             max_issue_depth,
             constraint_bounds,
             ttl: None,
+            cap_ttl_to_parent: false,
             max_depth: None,
             intent: None,
             extensions,
@@ -2814,12 +2850,27 @@ impl OwnedAttenuationBuilder {
     /// Set a shorter TTL.
     pub fn ttl(mut self, ttl: Duration) -> Self {
         self.ttl = Some(ttl);
+        self.cap_ttl_to_parent = false;
         self
     }
 
     /// Set TTL (mutable version for FFI).
     pub fn set_ttl(&mut self, ttl: Duration) {
         self.ttl = Some(ttl);
+        self.cap_ttl_to_parent = false;
+    }
+
+    /// Set a TTL, shortening it atomically to the parent's expiry if needed.
+    pub fn ttl_capped_to_parent(mut self, ttl: Duration) -> Self {
+        self.ttl = Some(ttl);
+        self.cap_ttl_to_parent = true;
+        self
+    }
+
+    /// Mutable variant of [`Self::ttl_capped_to_parent`] for FFI bindings.
+    pub fn set_ttl_capped_to_parent(&mut self, ttl: Duration) {
+        self.ttl = Some(ttl);
+        self.cap_ttl_to_parent = true;
     }
 
     /// Set a lower maximum delegation depth.
@@ -3294,11 +3345,19 @@ impl OwnedAttenuationBuilder {
         let expires_at = if let Some(ttl) = self.ttl {
             let chrono_ttl = ChronoDuration::from_std(ttl)
                 .map_err(|_| Error::InvalidTtl("TTL too large".to_string()))?;
-            child_expiry_within_parent(
-                now_sec,
-                chrono_ttl.num_seconds() as u64,
-                self.parent.payload.expires_at,
-            )?
+            if self.cap_ttl_to_parent {
+                child_expiry_capped_to_parent(
+                    now_sec,
+                    chrono_ttl.num_seconds() as u64,
+                    self.parent.payload.expires_at,
+                )
+            } else {
+                child_expiry_within_parent(
+                    now_sec,
+                    chrono_ttl.num_seconds() as u64,
+                    self.parent.payload.expires_at,
+                )?
+            }
         } else {
             self.parent.payload.expires_at
         };
@@ -3834,7 +3893,11 @@ impl<'a> IssuanceBuilder<'a> {
         let chrono_ttl = ChronoDuration::from_std(ttl)
             .map_err(|_| Error::InvalidTtl("TTL too large".to_string()))?;
         let now_sec = Utc::now().timestamp() as u64;
-        let expires_at = now_sec + chrono_ttl.num_seconds() as u64;
+        let expires_at = child_expiry_within_parent(
+            now_sec,
+            chrono_ttl.num_seconds() as u64,
+            self.issuer.payload.expires_at,
+        )?;
 
         // Effective max depth: logic needs to align with requirement for concrete u8
         // If max_depth not set, inherit or default?
@@ -4432,6 +4495,16 @@ mod tests {
             .build(&parent_keypair)
             .unwrap();
         assert!(child.expires_at() <= parent.expires_at());
+
+        // High-level SDKs can explicitly request atomic clamping without a
+        // separate, racy wall-clock calculation in the language binding.
+        let child = parent
+            .attenuate()
+            .inherit_all()
+            .ttl_capped_to_parent(Duration::from_secs(3600))
+            .build(&parent_keypair)
+            .unwrap();
+        assert_eq!(child.expires_at(), parent.expires_at());
     }
 
     #[test]
@@ -5072,6 +5145,32 @@ mod tests {
         hasher.update(issuer_warrant.payload_bytes());
         let parent_hash: [u8; 32] = hasher.finalize().into();
         assert_eq!(execution_warrant.parent_hash(), Some(&parent_hash));
+    }
+
+    #[test]
+    fn test_issuance_ttl_cannot_exceed_issuer() {
+        let issuer_kp = create_test_keypair();
+        let holder_kp = create_test_keypair();
+        let issuer_warrant = Warrant::builder()
+            .r#type(WarrantType::Issuer)
+            .issuable_tools(vec!["read_file".to_string()])
+            .ttl(Duration::from_secs(60))
+            .holder(issuer_kp.public_key())
+            .build(&issuer_kp)
+            .unwrap();
+
+        let result = issuer_warrant
+            .issue_execution_warrant()
+            .unwrap()
+            .tool("read_file", ConstraintSet::new())
+            .ttl(Duration::from_secs(3600))
+            .holder(holder_kp.public_key())
+            .build(&issuer_kp);
+
+        assert!(
+            matches!(result, Err(Error::MonotonicityViolation(ref message)) if message.contains("outlive")),
+            "expected overlong issuance TTL to be rejected"
+        );
     }
 
     #[test]

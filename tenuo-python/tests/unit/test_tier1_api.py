@@ -755,8 +755,8 @@ def test_scoped_task_enforces_containment(setup_config):
 def test_scoped_task_ttl_beyond_parent_inherits_parent_expiry(setup_config):
     """grant(ttl=...) longer than the parent has left inherits the parent's expiry, as preview() reports.
 
-    The core rejects a child that would outlive its parent; the scoped API keeps its
-    documented behavior of limiting the request instead of raising.
+    Low-level builders reject a child that would outlive its parent; the scoped API
+    asks the core to atomically cap the request instead of raising.
     """
     from tenuo_core import Pattern
 

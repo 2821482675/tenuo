@@ -85,16 +85,11 @@ pub fn decode(data: &[u8]) -> Result<Warrant> {
     // there being exactly one.
     ensure_canonical(&warrant, data, "warrant")?;
 
-    // Validate constraint depth to prevent stack overflow attacks
-    warrant.validate_constraint_depth()?;
-
-    // Validate semantic rules (including temporal checks)
-    warrant.validate()?;
-
-    // Validate payload version early (reject unknown versions)
-    if warrant.payload.version != crate::warrant::WARRANT_VERSION as u8 {
-        return Err(Error::UnsupportedVersion(warrant.payload.version));
-    }
+    // Decoding is deliberately clock-neutral. Callers such as Authorizer may
+    // configure their own tolerance for future-issued timestamps; applying the
+    // library default here would reject a token before that policy is reached.
+    // Structural validation still rejects malformed or unsupported warrants.
+    warrant.validate_structural()?;
 
     Ok(warrant)
 }
@@ -227,6 +222,9 @@ pub fn decode_stack(data: &[u8]) -> Result<WarrantStack> {
         return Err(Error::DeserializationError(
             "Warrant stack cannot be empty".to_string(),
         ));
+    }
+    for warrant in &stack.0 {
+        warrant.validate_structural()?;
     }
     Ok(stack)
 }
@@ -405,8 +403,41 @@ mod tests {
         assert_eq!(encoded[header], 0x82);
         let mut mutated = encoded.clone();
         mutated[header] = 0x83; // claims three elements but still decodes the same two
-        let err = decode(&mutated).unwrap_err();
-        assert!(err.to_string().contains("non-canonical"), "{err}");
+        assert!(decode(&mutated).is_err());
+    }
+
+    #[test]
+    fn decoding_defers_future_skew_policy_to_the_authorizer() {
+        let keypair = SigningKey::generate();
+        let mut warrant = Warrant::builder()
+            .capability("test", ConstraintSet::new())
+            .ttl(Duration::from_secs(300))
+            .holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap();
+        let now = chrono::Utc::now().timestamp() as u64;
+        warrant.payload.issued_at = now + 45;
+        warrant.payload.expires_at = now + 300;
+        warrant.payload_bytes = to_vec(&warrant.payload).unwrap();
+        warrant.signature = keypair.sign_raw(&warrant.signed_message());
+
+        let encoded = encode(&warrant).unwrap();
+        let decoded = decode(&encoded).expect("wire decoding must be clock-neutral");
+        let stack = WarrantStack::new(vec![warrant]);
+        assert!(decode_stack(&encode_stack(&stack).unwrap()).is_ok());
+
+        let accepts = crate::planes::Authorizer::new()
+            .with_trusted_root(keypair.public_key())
+            .with_clock_tolerance(chrono::Duration::seconds(60));
+        assert!(accepts.verify_chain(std::slice::from_ref(&decoded)).is_ok());
+
+        let rejects = crate::planes::Authorizer::new()
+            .with_trusted_root(keypair.public_key())
+            .with_clock_tolerance(chrono::Duration::seconds(30));
+        assert!(matches!(
+            rejects.verify_chain(&[decoded]),
+            Err(Error::IssuedInFuture)
+        ));
     }
 
     #[test]
