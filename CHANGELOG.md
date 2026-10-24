@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a later version was dropped instead of enforced. Every constraint payload and
   `ConstraintSet` now fails decoding on an unknown member, as the wire format's
   fail-closed rule requires. Warrants written by Tenuo are unaffected.
+- **Constraint decoding and CLI JSON authoring are hardened.**
+  Constraint arrays reject trailing elements, unknown constraint types preserve
+  arbitrary CBOR payload shapes while denying authorization, range bounds must be
+  finite, and the CLI rejects malformed shorthand ranges as well as
+  unknown, mixed, empty, or incorrectly typed constraint JSON instead of silently
+  minting a weaker warrant.
 
 ## [0.3.3] - 2026-10-22
 
