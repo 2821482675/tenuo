@@ -91,7 +91,7 @@ configure(
 | `issuer_key` | `SigningKey` | None | SigningKey for signing warrants (required for `mint`) |
 | `trusted_roots` | `List[PublicKey]` | None | Public keys to trust as warrant issuers (**required in production**) |
 | `default_ttl` | `int` | 300 | Default warrant TTL in seconds |
-| `clock_tolerance` | `int` | 30 | Clock tolerance for expiration checks |
+| `clock_tolerance` | `int` | 30 | Tolerance for future-issued timestamps; expiry is strict |
 | `pop_window_secs` | `int` | 30 | PoP window size in seconds |
 | `pop_max_windows` | `int` | 4 | Number of PoP windows to accept (~2 min total) |
 | `dev_mode` | `bool` | False | Enable development mode (relaxed security) |

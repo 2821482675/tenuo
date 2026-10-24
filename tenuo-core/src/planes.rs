@@ -632,8 +632,6 @@ pub struct DataPlane {
     trusted_issuers: HashMap<String, PublicKey>,
     /// Optional: own keypair for attenuating warrants.
     own_keypair: Option<SigningKey>,
-    /// Clock skew tolerance for expiration checks.
-    clock_tolerance: chrono::Duration,
     /// Signed revocation list.
     revocation_list: Option<crate::revocation::SignedRevocationList>,
     /// Local cache of directly revoked warrants (Parental Revocation)
@@ -651,7 +649,6 @@ impl DataPlane {
         Self {
             trusted_issuers: HashMap::new(),
             own_keypair: None,
-            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
             revocation_list: None,
             local_revocation_cache: RwLock::new(HashSet::new()),
             tool_clearance_requirements: HashMap::new(),
@@ -666,7 +663,6 @@ impl DataPlane {
                 .map(|pk| (hex::encode(pk.to_bytes()), pk))
                 .collect(),
             own_keypair: None,
-            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
             revocation_list: None,
             local_revocation_cache: RwLock::new(HashSet::new()),
             tool_clearance_requirements: HashMap::new(),
@@ -678,30 +674,23 @@ impl DataPlane {
         Self {
             trusted_issuers: HashMap::new(),
             own_keypair: Some(keypair),
-            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
             revocation_list: None,
             local_revocation_cache: RwLock::new(HashSet::new()),
             tool_clearance_requirements: HashMap::new(),
         }
     }
 
-    /// Set the clock skew tolerance.
+    /// Legacy clock-tolerance setter.
     ///
     /// In distributed systems, clocks on different machines can drift apart.
-    /// This tolerance allows a grace period when checking warrant expiration.
+    /// Warrant expiry is strict, so this legacy setter is retained only for
+    /// source compatibility and has no effect. Use [`Authorizer`] when
+    /// tolerance for future-issued timestamps is required.
     ///
     /// # Arguments
-    /// * `tolerance` - Grace period (e.g., 30 seconds). Use 0 for strict checking.
+    /// * `tolerance` - Ignored; retained for source compatibility.
     ///
-    /// # Example
-    /// ```rust,ignore
-    /// let mut data_plane = DataPlane::new();
-    /// data_plane.set_clock_tolerance(Duration::from_secs(60)); // 1 minute tolerance
-    /// ```
-    pub fn set_clock_tolerance(&mut self, tolerance: std::time::Duration) {
-        self.clock_tolerance = chrono::Duration::from_std(tolerance)
-            .unwrap_or(chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS));
-    }
+    pub fn set_clock_tolerance(&mut self, _tolerance: std::time::Duration) {}
 
     /// Set a signed revocation list.
     ///
@@ -1105,11 +1094,12 @@ impl DataPlane {
             .collect();
         verify_batch_raw(&batch_items)?;
 
-        // Authenticity first, then semantics. Expiry/structural checks cover
+        // Authenticity first, then semantics. Time/structural checks cover
         // every warrant, including a singleton root — they used to run only
         // while walking child links.
+        let as_of = chrono::Utc::now().timestamp();
         for warrant in chain {
-            if warrant.is_expired_with_tolerance(self.clock_tolerance) {
+            if warrant.is_expired_as_of(as_of) {
                 return Err(Error::WarrantExpired {
                     warrant_id: warrant.id().to_string(),
                     expired_at: warrant.expires_at(),
@@ -1280,15 +1270,8 @@ impl DataPlane {
             )));
         }
 
-        // 4. Check child is not expired (with clock tolerance)
-        if child.is_expired_with_tolerance(self.clock_tolerance) {
-            return Err(Error::WarrantExpired {
-                warrant_id: child.id().to_string(),
-                expired_at: child.expires_at(),
-            });
-        }
-
-        // 5. Validate constraint attenuation (monotonicity)
+        // 4. Validate constraint attenuation (monotonicity). Expiry was checked
+        // for every warrant at the single evaluation instant above.
         match (parent.r#type(), child.r#type()) {
             (WarrantType::Execution, WarrantType::Execution) => {
                 // For execution warrants, validate capability attenuation
@@ -1648,10 +1631,11 @@ impl AuthorizerBuilder {
         self
     }
 
-    /// Set the clock tolerance for expiration checks.
+    /// Set the clock tolerance for future-issued timestamps.
     ///
-    /// In distributed systems, clocks can drift. This tolerance allows a grace
-    /// period when checking warrant expiration.
+    /// In distributed systems, clocks can drift. This tolerance accepts a
+    /// warrant or approval whose issuer's clock is slightly ahead. Expiry is
+    /// always strict.
     ///
     /// Default: 30 seconds.
     pub fn clock_tolerance(mut self, tolerance: chrono::Duration) -> Self {
@@ -1872,7 +1856,7 @@ impl Authorizer {
         self
     }
 
-    /// Set the clock tolerance for expiration checks (chainable).
+    /// Set the clock tolerance for future-issued timestamps (chainable).
     ///
     /// Default: 30 seconds.
     pub fn with_clock_tolerance(mut self, tolerance: chrono::Duration) -> Self {
@@ -2479,7 +2463,7 @@ impl Authorizer {
                     )));
                 }
             }
-            if warrant.is_expired_with_tolerance_as_of(self.clock_tolerance, as_of) {
+            if warrant.is_expired_as_of(as_of) {
                 return Err(Error::WarrantExpired {
                     warrant_id: warrant.id().to_string(),
                     expired_at: warrant.expires_at(),
@@ -3763,16 +3747,22 @@ mod tests {
     }
 
     #[test]
-    fn test_authorizer_rejects_expired_single_root_chain() {
+    fn test_warrant_expiry_is_strict_despite_clock_tolerance() {
         let control_plane = ControlPlane::generate();
         let warrant = control_plane
             .issue_warrant("test", &[], Duration::from_secs(0))
             .unwrap();
-        std::thread::sleep(Duration::from_millis(1100));
+
+        let mut data_plane = DataPlane::new_with_issuers([control_plane.public_key()]);
+        data_plane.set_clock_tolerance(Duration::from_secs(60));
+        let error = data_plane
+            .verify_chain(std::slice::from_ref(&warrant))
+            .unwrap_err();
+        assert!(matches!(error, Error::WarrantExpired { .. }));
 
         let authorizer = Authorizer::new()
             .with_trusted_root(control_plane.public_key())
-            .with_clock_tolerance(chrono::Duration::zero());
+            .with_clock_tolerance(chrono::Duration::seconds(60));
 
         let error = authorizer.verify_chain(&[warrant]).unwrap_err();
         assert!(matches!(error, Error::WarrantExpired { .. }));

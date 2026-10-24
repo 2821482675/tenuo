@@ -5554,7 +5554,7 @@ fn py_srl_commitment_digest(srl_bytes: &[u8]) -> [u8; 32] {
 ///   - Signature validity (verify-before-deserialize pattern)
 ///   - Approver is in the required set
 ///   - Request hash matches the expected value
-///   - Expiration with configurable clock tolerance
+///   - Strict expiration and configurable tolerance for future-approved timestamps
 ///   - Duplicate detection (one approval per approver key)
 ///   - DoS protection (max 2× approver count)
 ///   - Threshold satisfaction (m-of-n)
@@ -6149,7 +6149,7 @@ impl PyAuthorizer {
     ///
     /// Args:
     ///     trusted_roots: List of trusted root public keys. At least one required.
-    ///     clock_tolerance_secs: Clock tolerance in seconds (default: 30)
+    ///     clock_tolerance_secs: Tolerance for future-issued timestamps in seconds (default: 30)
     ///     pop_window_secs: PoP window size in seconds (default: 30)
     ///     pop_max_windows: Number of PoP windows to accept (default: 4)
     ///
@@ -6251,7 +6251,7 @@ impl PyAuthorizer {
         Ok(())
     }
 
-    /// Set the clock tolerance for expiration checks.
+    /// Set the clock tolerance for future-issued timestamps. Expiry remains strict.
     ///
     /// Args:
     ///     seconds: Clock tolerance in seconds

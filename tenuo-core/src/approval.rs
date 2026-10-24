@@ -320,7 +320,7 @@ impl SignedApproval {
             ));
         }
 
-        // Note: Actual expiration checking (is now > expires_at) is done by the caller
+        // Note: Actual expiration checking (is now >= expires_at) is done by the caller
         // (e.g., authorizer) because an expired approval is cryptographically valid
         // but semantically stale.
         // verify() checks inherent structure and cryptographic integrity.
@@ -391,7 +391,11 @@ impl ApprovalPayload {
     /// Check if the approval is expired.
     pub fn is_expired(&self) -> bool {
         let now = Utc::now().timestamp() as u64;
-        now > self.expires_at
+        self.is_expired_at(now)
+    }
+
+    fn is_expired_at(&self, now: u64) -> bool {
+        now >= self.expires_at
     }
 }
 
@@ -1586,6 +1590,22 @@ mod tests {
     use super::*;
     use crate::crypto::SigningKey;
     use std::collections::HashMap;
+
+    #[test]
+    fn approval_is_expired_at_exact_expiry_second() {
+        let payload = ApprovalPayload {
+            version: 1,
+            request_hash: [0; 32],
+            nonce: [0; 16],
+            external_id: "approver".to_string(),
+            approved_at: 99,
+            expires_at: 100,
+            extensions: None,
+        };
+
+        assert!(!payload.is_expired_at(99));
+        assert!(payload.is_expired_at(100));
+    }
 
     #[test]
     fn test_request_hash_deterministic() {

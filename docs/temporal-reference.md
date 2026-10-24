@@ -662,7 +662,8 @@ namespace. Capabilities that name neither field behave exactly as before.
 Verification checks PoP using multiple aligned time windows around the verifier's clock:
 
 - `pop_window_secs=30`, `pop_max_windows=5`: ~±60 seconds effective skew tolerance.
-- `clock_tolerance_secs=30`: applied to warrant lifetime/expiry, separate from PoP bucketing.
+- `clock_tolerance_secs=30`: accepts slightly future-issued warrants and approvals;
+  warrant and approval expiry remain strict. This is separate from PoP bucketing.
 
 Workflow-side signing uses deterministic timestamps for Temporal replay; workers verify against their wall clock.
 

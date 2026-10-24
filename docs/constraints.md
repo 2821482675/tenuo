@@ -1858,7 +1858,7 @@ routes:
 |-------|------|---------|-------------|
 | `warrant_header` | string | `X-Tenuo-Warrant` | HTTP header containing base64-encoded warrant or WarrantStack |
 | `pop_header` | string | `X-Tenuo-PoP` | HTTP header containing base64-encoded PoP signature |
-| `clock_tolerance_secs` | int | `30` | Seconds of tolerance for expiration checks |
+| `clock_tolerance_secs` | int | `30` | Future-issued timestamp tolerance; expiry is strict |
 | `trusted_roots` | list | `[]` | Hex-encoded public keys of trusted control planes |
 | `debug_mode` | bool | `false` | Enable detailed deny reasons in response headers |
 
