@@ -791,7 +791,7 @@ Verifiers receiving an SRL MUST:
 ### 12.4 Common Misconfigurations
 
 > [!CAUTION]
-> The following configurations create security vulnerabilities:
+> The following configurations create security or availability failures:
 
 | Misconfiguration | Risk | Mitigation |
 |------------------|------|------------|
