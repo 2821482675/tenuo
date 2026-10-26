@@ -41,6 +41,8 @@ informative:
   I-D.ietf-oauth-transaction-tokens:
   I-D.ietf-oauth-identity-chaining:
   I-D.ietf-wimse-arch:
+  I-D.li-oauth-delegated-authorization:
+  I-D.mcguinness-oauth-mission:
   RFC2693:   # SPKI Certificate Theory
   RFC7942:   # Improving Awareness of Running Code: The Implementation Status Section
   RFC8949:   # Concise Binary Object Representation (CBOR)
@@ -74,6 +76,16 @@ informative:
       - name: Daniel Holmgren
       - name: Philipp Krüger
     target: https://github.com/ucan-wg/spec
+  MISSION-ATTENUATION:
+    title: "Mission Offline Attenuation for OAuth 2.0"
+    author:
+      - name: Karl McGuinness
+    target: https://mcguinness.github.io/mission-bound-authorization/draft-mcguinness-oauth-mission-attenuation.html
+  MISSION-RA:
+    title: "Mission-Bound Authorization reference architecture"
+    author:
+      - name: Karl McGuinness
+    target: https://github.com/mcguinness/mission-bound-authorization
   CEDAR:
     title: "Cedar Policy Language Reference Guide"
     target: https://docs.cedarpolicy.com/
@@ -393,6 +405,28 @@ identity, actor, transaction, and authorization context across services
 and trust domains. AATs add holder-derivable attenuation of tool and
 argument authority within a delegation chain, verified offline by the
 enforcement point, and can be used alongside them.
+
+Delegated Authorization Tokens {{I-D.li-oauth-delegated-authorization}}
+are key-bound tokens that let an OAuth client delegate part of its
+authorization to another client without contacting the authorization
+server. The resource server checks the ordered chain, the restrictions
+at each step, and a DPoP proof {{RFC9449}} signed with the leaf token's
+key. Permissions are carried in `scope` and `authorization_details`,
+and an authorization details type can appear in client-issued tokens
+only if a specification defines when one value of that type contains
+another. AATs define such a type for tools and their arguments, with
+the subsumption relation of Section 4.5.
+
+Mission-Bound Authorization {{I-D.mcguinness-oauth-mission}} records an
+approved task and its authority at the authorization server as a
+Mission. Every access token issued under a Mission carries a subset of
+that authority, each issuance is gated on the Mission's state, and each
+narrowing is a new issuance. A companion profile, Mission Offline
+Attenuation {{MISSION-ATTENUATION}}, lets holders narrow offline with
+AATs: the authorization server issues an AAT root token from the
+Mission's approved authority, holders derive narrower tokens without
+contacting it, and enforcement re-checks the Mission's state at each
+presentation.
 
 Recent work argues that safe agent delegation needs an explicit,
 bounded transfer of authority at each step {{DEEPMIND26}}, and that
@@ -2616,6 +2650,9 @@ a companion document.
 This appendix describes the implementation status of this specification
 at the time of submission, per the practice described in {{RFC7942}}.
 
+RFC Editor Note: This section will be updated or removed before
+publication.
+
 ## Reference Implementation
 
 Tenuo implements the attenuation model of this document (the Section 4
@@ -2641,8 +2678,14 @@ Tenuo. The suite encodes the -02 verifier changes (Appendix F); test harnesses
 compare verdicts, since the failing step a vector names can differ
 where Section 8 permits reordering.
 
-RFC Editor Note: This section will be updated or removed before
-publication.
+## Other Implementations
+
+The Mission-Bound Authorization reference architecture {{MISSION-RA}},
+written in TypeScript, implements AATs as profiled by Mission Offline
+Attenuation {{MISSION-ATTENUATION}}. It mints root tokens from an
+approved Mission's authority and child tokens offline, and its verifier
+checks capability narrowing, `par_hash` linkage, delegation depth, and
+audience and expiry nesting. Proof of possession uses DPoP {{RFC9449}}.
 
 # Changes from draft-niyikiza-oauth-attenuating-agent-tokens-01
 
