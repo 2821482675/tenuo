@@ -508,6 +508,22 @@ mod tests {
     }
 
     #[test]
+    fn test_interpreter_rejects_non_iterable_without_panicking() {
+        for expression in [
+            "value.all(item, item == 'admin')",
+            "value.exists(item, item == 'admin')",
+        ] {
+            let program = Program::compile(expression).unwrap();
+            let mut context = create_context();
+            context.add_variable("value", "sensitive-value").unwrap();
+            assert!(matches!(
+                program.execute(&context),
+                Err(cel_interpreter::ExecutionError::NoSuchOverload)
+            ));
+        }
+    }
+
+    #[test]
     fn test_list_macros_still_accept_lists() {
         let value = ConstraintValue::List(vec![
             ConstraintValue::String("admin".to_string()),
@@ -521,7 +537,7 @@ mod tests {
     }
 
     #[test]
-    fn test_evaluation_recovers_after_macro_panic() {
+    fn test_evaluation_recovers_after_macro_error() {
         let scalar = ConstraintValue::String("admin".to_string());
         let list = ConstraintValue::List(vec![scalar.clone()]);
         let vars = HashMap::new();
