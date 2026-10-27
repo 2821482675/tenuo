@@ -90,6 +90,12 @@ informative:
     author:
       - name: Karl McGuinness
     target: https://github.com/mcguinness/mission-bound-authorization
+  WARDEN:
+    title: "Warden"
+    author:
+      - name: Igor Kammer Grahl
+    date: 2026
+    target: https://github.com/IgorKammerGrahl/Warden
   CEDAR:
     title: "Cedar Policy Language Reference Guide"
     target: https://docs.cedarpolicy.com/
@@ -432,13 +438,15 @@ the subsumption relation of Section 4.5.
 
 The Agent Delegation Chain {{I-D.asor-wimse-agent-delegation-chain}}
 profiles JWT access tokens {{RFC9068}} for offline delegation between
-agents. It uses this document's chain claims (`par_hash`, `del_depth`,
-and `del_max_depth`), proves possession with DPoP {{RFC9449}}, and
-checks revocation against a token status list
-{{I-D.ietf-oauth-status-list}}. Each token also names the accountable
-principal in `sub`, which every token in a chain must share, and the
-acting agent at that hop in `client_id`. AATs bind tokens to holder
-keys and leave subject identifiers to profiles (Section 3.2).
+agents. It reuses this document's chain claim names: `par_hash` and
+`del_depth` mean the same, but its `del_max_depth`, carried only in the
+root, bounds depth exclusively where this document's bound is
+inclusive. It proves possession with DPoP {{RFC9449}} and checks
+revocation against a token status list {{I-D.ietf-oauth-status-list}}.
+Each token also names the accountable principal in `sub`, which every
+token in a chain must share, and the acting agent at that hop in
+`client_id`. AATs bind tokens to holder keys and leave subject
+identifiers to profiles (Section 3.2).
 
 Mission-Bound Authorization {{I-D.mcguinness-oauth-mission}} records an
 approved task and its authority at the authorization server as a
@@ -2677,11 +2685,21 @@ a companion document.
 
 # Implementation Status (Non-Normative)
 
-This appendix describes the implementation status of this specification
-at the time of submission, per the practice described in {{RFC7942}}.
+RFC Editor Note: Please remove this section and the reference to
+{{RFC7942}} before publication.
 
-RFC Editor Note: This section will be updated or removed before
-publication.
+This section records the status of known implementations of the
+protocol defined by this specification at the time of posting of this
+Internet-Draft, and is based on a proposal described in {{RFC7942}}.
+The description of implementations in this section is intended to
+assist the IETF in its decision processes in progressing drafts to
+RFCs. Please note that the listing of any individual implementation
+here does not imply endorsement by the IETF. Furthermore, no effort
+has been spent to verify the information presented here that was
+supplied by IETF contributors. This is not intended as, and must not
+be construed to be, a catalog of available implementations or their
+features. Readers are advised to note that other implementations may
+exist.
 
 ## Reference Implementation
 
@@ -2693,7 +2711,7 @@ implementation experience supports the format independence of the core
 model, but does not define an interoperable CWT profile; the CWT profile
 is deferred as described in Appendix D. A JWS implementation of -02 is
 in progress; its results against the published vectors will be reported
-here.
+here. This entry was last updated in October 2026.
 
 Randomized property-based tests of the reference implementation check
 monotonicity of the attenuation invariants over generated constraint
@@ -2710,12 +2728,21 @@ where Section 8 permits reordering.
 
 ## Other Implementations
 
+Warden {{WARDEN}}, by Igor Kammer Grahl, is an independent Go
+implementation of -01 under the Apache-2.0 license: a library for the
+token format, derivation, and chain verification, and an enforcement
+point for MCP tool calls. It shares no code with Tenuo. This entry was
+last updated in October 2026.
+
 The Mission-Bound Authorization reference architecture {{MISSION-RA}},
 written in TypeScript, implements AATs as profiled by Mission Offline
 Attenuation {{MISSION-ATTENUATION}}. It mints root tokens from an
 approved Mission's authority and child tokens offline, and its verifier
 checks capability narrowing, `par_hash` linkage, delegation depth, and
-audience and expiry nesting. Proof of possession uses DPoP {{RFC9449}}.
+audience and expiry nesting. It binds holder keys by thumbprint
+(`cnf.jkt`) and proves possession with DPoP {{RFC9449}}, where this
+document requires `cnf.jwk` and its own PoP JWT. It does not pin a
+revision of this document; this entry was last updated in October 2026.
 
 # Changes from draft-niyikiza-oauth-attenuating-agent-tokens-01
 
