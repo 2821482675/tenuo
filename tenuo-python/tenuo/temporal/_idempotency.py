@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextvars
 import hashlib
+import os
 from contextlib import contextmanager
 from typing import Iterator, Optional
 
@@ -14,6 +15,15 @@ _DOMAIN = b"tenuo.temporal.idempotency.v1\x00"
 _current_key: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "tenuo_temporal_idempotency_key", default=None
 )
+
+
+def _clear_idempotency_key_after_fork() -> None:
+    """Prevent a forked worker from retaining its parent's Activity key."""
+    _current_key.set(None)
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_clear_idempotency_key_after_fork)
 
 
 def _derive_idempotency_key(

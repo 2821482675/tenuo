@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
 
 import pytest
 
@@ -11,6 +13,13 @@ from tenuo.temporal._idempotency import (
     _activity_idempotency_context,
     _derive_idempotency_key,
 )
+
+
+def _read_key_in_process() -> str:
+    try:
+        return current_idempotency_key()
+    except TenuoContextError:
+        return "<no-context>"
 
 
 def test_key_is_retry_stable_and_opaque() -> None:
@@ -69,3 +78,16 @@ def test_concurrent_activities_are_context_isolated() -> None:
 
     first, second = asyncio.run(gather())
     assert first != second
+
+
+@pytest.mark.skipif(
+    "fork" not in multiprocessing.get_all_start_methods(),
+    reason="requires the fork start method",
+)
+def test_forked_process_pool_never_reuses_parent_activity_key() -> None:
+    fork_context = multiprocessing.get_context("fork")
+    with ProcessPoolExecutor(max_workers=1, mp_context=fork_context) as pool:
+        with _activity_idempotency_context("warrant-1", "run-1", "activity-1"):
+            assert pool.submit(_read_key_in_process).result() == "<no-context>"
+        with _activity_idempotency_context("warrant-2", "run-2", "activity-2"):
+            assert pool.submit(_read_key_in_process).result() == "<no-context>"
