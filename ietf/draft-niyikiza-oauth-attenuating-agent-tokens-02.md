@@ -90,6 +90,12 @@ informative:
     author:
       - name: Karl McGuinness
     target: https://github.com/mcguinness/mission-bound-authorization
+  TENUO:
+    title: "Tenuo"
+    author:
+      - org: Tenuo
+    date: 2026
+    target: https://github.com/tenuo-ai/tenuo
   WARDEN:
     title: "Warden"
     author:
@@ -345,10 +351,10 @@ claims (Section 3.3) and define how a holder derives narrower
 authorization details and how an enforcement point verifies a chain of
 such derivations.
 
-Work on explicit agent consent in the authorization code flow
-establishes who the agent is and that the user approved the
-delegation. AATs carry the authority that follows: the tools the agent
-may invoke and the argument values it may use.
+Explicit agent consent in the authorization code flow establishes who
+the agent is and that the user approved the delegation. AATs carry the
+authority that follows: the tools the agent may invoke and the argument
+values it may use.
 
 ## Design Goals
 
@@ -430,23 +436,18 @@ are key-bound tokens that let an OAuth client delegate part of its
 authorization to another client without contacting the authorization
 server. The resource server checks the ordered chain, the restrictions
 at each step, and a DPoP proof {{RFC9449}} signed with the leaf token's
-key. Permissions are carried in `scope` and `authorization_details`,
-and an authorization details type can appear in client-issued tokens
-only if a specification defines when one value of that type contains
-another. AATs define such a type for tools and their arguments, with
-the subsumption relation of Section 4.5.
+key. Permissions are carried in `scope` and `authorization_details`;
+an authorization details type can be narrowed along a chain only if
+its specification defines containment rules for it. AATs define such a
+type for tools and their arguments (Section 4.5).
 
 The Agent Delegation Chain {{I-D.asor-wimse-agent-delegation-chain}}
 profiles JWT access tokens {{RFC9068}} for offline delegation between
-agents. It reuses this document's chain claim names: `par_hash` and
-`del_depth` mean the same, but its `del_max_depth`, carried only in the
-root, bounds depth exclusively where this document's bound is
-inclusive. It proves possession with DPoP {{RFC9449}} and checks
-revocation against a token status list {{I-D.ietf-oauth-status-list}}.
-Each token also names the accountable principal in `sub`, which every
-token in a chain must share, and the acting agent at that hop in
-`client_id`. AATs bind tokens to holder keys and leave subject
-identifiers to profiles (Section 3.2).
+agents, with DPoP {{RFC9449}} for proof of possession and a token
+status list {{I-D.ietf-oauth-status-list}} for revocation. Each token
+names the accountable principal in `sub` and the acting agent in
+`client_id`. It reuses this document's chain claim names, with
+different semantics for `del_max_depth`.
 
 Mission-Bound Authorization {{I-D.mcguinness-oauth-mission}} records an
 approved task and its authority at the authorization server as a
@@ -2701,48 +2702,45 @@ be construed to be, a catalog of available implementations or their
 features. Readers are advised to note that other implementations may
 exist.
 
-## Reference Implementation
+The information below was last updated in October 2026.
 
-Tenuo implements the attenuation model of this document (the Section 4
-invariants and Section 4.5 subsumption, chain verification, and
-holder-bound proof of possession) in its production authorization
-engine, which encodes tokens in CBOR with its own signed envelope. That
-implementation experience supports the format independence of the core
-model, but does not define an interoperable CWT profile; the CWT profile
-is deferred as described in Appendix D. A JWS implementation of -02 is
-in progress; its results against the published vectors will be reported
-here. This entry was last updated in October 2026.
+## Tenuo
 
-Randomized property-based tests of the reference implementation check
-monotonicity of the attenuation invariants over generated constraint
-pairs and derivation sequences, normalization idempotence across encode/decode round-trips,
-and agreement between in-memory and deserialized constraint evaluation.
+Tenuo {{TENUO}} (Rust, Apache-2.0) implements the attenuation model of
+this document in its production authorization engine: the Section 4
+invariants, the Section 4.5 subsumption relation, chain verification,
+and holder-bound proof of possession. The engine encodes tokens in CBOR
+with its own signed envelope (Appendix D); a JWS implementation of -02
+is in progress. Property-based tests check monotonicity over generated
+constraint pairs and derivation sequences, and that normalization and
+constraint evaluation are stable across encode/decode round trips.
+
+## Warden
+
+Warden {{WARDEN}} (Go, Apache-2.0), by Igor Kammer Grahl, is an
+independent implementation of -01: a library for the token format,
+derivation, and chain verification, and an enforcement point for MCP
+tool calls.
+
+## Mission-Bound Authorization Reference Architecture
+
+The Mission-Bound Authorization reference architecture {{MISSION-RA}}
+(TypeScript) implements AATs as profiled by Mission Offline Attenuation
+{{MISSION-ATTENUATION}}. It mints root tokens from an approved Mission's
+authority and derives child tokens offline; its verifier checks
+capability narrowing, `par_hash` linkage, delegation depth, and audience
+and expiry nesting. It binds holder keys with `cnf.jkt` and proves
+possession with DPoP {{RFC9449}}, rather than with this document's
+`cnf.jwk` and PoP JWT.
+
+## Test Vectors
 
 Byte-exact JWS test vectors for Section 8 are published as a
-machine-readable suite {{AAT-VECTORS}} and a readable companion with
-its generator {{AAT-VECTOR-GEN}}. Expected verdicts are computed by the
+machine-readable suite {{AAT-VECTORS}} and a readable companion with its
+generator {{AAT-VECTOR-GEN}}. Expected verdicts come from the
 generator's own implementation of Section 8, which shares no code with
-Tenuo. The suite encodes the -02 verifier changes (Appendix F); test harnesses
-compare verdicts, since the failing step a vector names can differ
-where Section 8 permits reordering.
-
-## Other Implementations
-
-Warden {{WARDEN}}, by Igor Kammer Grahl, is an independent Go
-implementation of -01 under the Apache-2.0 license: a library for the
-token format, derivation, and chain verification, and an enforcement
-point for MCP tool calls. It shares no code with Tenuo. This entry was
-last updated in October 2026.
-
-The Mission-Bound Authorization reference architecture {{MISSION-RA}},
-written in TypeScript, implements AATs as profiled by Mission Offline
-Attenuation {{MISSION-ATTENUATION}}. It mints root tokens from an
-approved Mission's authority and child tokens offline, and its verifier
-checks capability narrowing, `par_hash` linkage, delegation depth, and
-audience and expiry nesting. It binds holder keys by thumbprint
-(`cnf.jkt`) and proves possession with DPoP {{RFC9449}}, where this
-document requires `cnf.jwk` and its own PoP JWT. It does not pin a
-revision of this document; this entry was last updated in October 2026.
+the implementations above. Because Section 8 permits some steps to be
+reordered, harnesses compare verdicts rather than failing steps.
 
 # Changes from draft-niyikiza-oauth-attenuating-agent-tokens-01
 
