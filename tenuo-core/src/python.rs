@@ -35,7 +35,7 @@ use crate::warrant::{
 use crate::wire;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PySequence, PyTuple};
+use pyo3::types::{PyDict, PyList, PySequence, PyTuple};
 use pyo3::IntoPyObjectExt;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -4243,6 +4243,45 @@ impl PyWarrant {
             }
             Err(e) => Ok(Some(("_error".to_string(), format!("{}", e)))),
         }
+    }
+
+    /// Diagnose all constraint failures (DIAGNOSTIC USE ONLY).
+    ///
+    /// Returns a dictionary containing ``closed_world`` and a deterministic
+    /// ``violations`` list. Each violation has stable ``kind`` and ``field``
+    /// values plus a human-readable ``reason``. Argument values are never
+    /// included. This does not perform authorization or any cryptographic,
+    /// temporal, revocation, approval, or PoP check.
+    fn diagnose_constraints<'py>(
+        &self,
+        py: Python<'py>,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        let diagnostics = self
+            .inner
+            .diagnose_constraints(tool, &rust_args)
+            .map_err(to_py_err)?;
+        let result = PyDict::new(py);
+        result.set_item("closed_world", diagnostics.closed_world)?;
+
+        let violations = PyList::empty(py);
+        for violation in diagnostics.violations {
+            let item = PyDict::new(py);
+            item.set_item("field", violation.field)?;
+            item.set_item("kind", violation.kind.as_str())?;
+            item.set_item("reason", violation.reason)?;
+            violations.append(item)?;
+        }
+        result.set_item("violations", violations)?;
+        Ok(result)
     }
 
     // ========================================================================
