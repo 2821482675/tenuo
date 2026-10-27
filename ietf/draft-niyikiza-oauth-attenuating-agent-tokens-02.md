@@ -83,6 +83,7 @@ informative:
     title: "Mission Offline Attenuation for OAuth 2.0"
     author:
       - name: Karl McGuinness
+    date: 2026
     target: https://mcguinness.github.io/mission-bound-authorization/draft-mcguinness-oauth-mission-attenuation.html
   MISSION-RA:
     title: "Mission-Bound Authorization reference architecture"
@@ -442,13 +443,13 @@ keys and leave subject identifiers to profiles (Section 3.2).
 Mission-Bound Authorization {{I-D.mcguinness-oauth-mission}} records an
 approved task and its authority at the authorization server as a
 Mission. Every access token issued under a Mission carries a subset of
-that authority, each issuance is gated on the Mission's state, and each
-narrowing is a new issuance. A companion profile, Mission Offline
-Attenuation {{MISSION-ATTENUATION}}, lets holders narrow offline with
-AATs: the authorization server issues an AAT root token from the
+that authority and is issued by the authorization server, gated on the
+Mission's state. A companion profile, Mission Offline Attenuation
+{{MISSION-ATTENUATION}}, profiles AATs so that holders can also narrow
+offline: the authorization server issues an AAT root token from the
 Mission's approved authority, holders derive narrower tokens without
 contacting it, and enforcement re-checks the Mission's state at each
-presentation.
+presentation, so revoking the Mission stops the whole chain.
 
 Recent work argues that safe agent delegation needs an explicit,
 bounded transfer of authority at each step {{DEEPMIND26}}, and that
@@ -1263,11 +1264,12 @@ The rules for `range`, `all`, and `any` need more detail:
   Formally: for each `clause_d` in
   `derived.any.constraints`, there MUST exist a `clause_p` in
   `parent.any.constraints` such that `clause_d ⊑ clause_p`.
-  Removing clauses is valid (it narrows the accepted set).
-  Adding a clause that no parent clause subsumes is invalid (it
-  widens it). An `any` constraint
-  whose `constraints` array is empty is invalid in both the parent
-  and the derived position and MUST be rejected. Cross-type subsumption
+  Dropping, narrowing, or splitting clauses is valid. A derived
+  clause that no single parent clause subsumes is invalid, even when
+  the parent's clauses together accept every value it accepts. An
+  `any` constraint whose `constraints` array is empty is invalid in
+  both the parent and the derived position and MUST be rejected.
+  Cross-type subsumption
   between clauses is permitted: for example, a derived clause
   of `exact("pdf")` is subsumed by a parent clause of
   `one_of(["pdf", "csv"])` under the cross-type rules in this section.
