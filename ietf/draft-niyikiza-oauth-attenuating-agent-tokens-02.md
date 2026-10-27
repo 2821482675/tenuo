@@ -102,6 +102,12 @@ informative:
       - name: Igor Kammer Grahl
     date: 2026
     target: https://github.com/IgorKammerGrahl/Warden
+  ARCP:
+    title: "Agent Runtime Controls Profile (ARCP)"
+    author:
+      - name: Udaykishore Resu
+    date: 2026
+    target: https://github.com/udaykishore-resu/arcp
   CEDAR:
     title: "Cedar Policy Language Reference Guide"
     target: https://docs.cedarpolicy.com/
@@ -2734,6 +2740,19 @@ capability narrowing, `par_hash` linkage, delegation depth, and audience
 and expiry nesting. It binds holder keys with `cnf.jkt` and proves
 possession with DPoP {{RFC9449}}, rather than with this document's
 `cnf.jwk` and PoP JWT.
+
+## Agent Runtime Controls Profile (ARCP)
+
+The Agent Runtime Controls Profile (ARCP) {{ARCP}}, by Udaykishore
+Resu, is a profile of AATs with a Go reference implementation (MIT).
+It leaves capability narrowing to the invariants of Section 4 and adds
+runtime controls that accumulate down a chain: budgets that cap a
+parent and all of its sub-agents combined, gating on instruction
+provenance, single-use step-up approval bound to one leaf token, tool,
+and argument set, and push revocation through OpenID Shared Signals.
+Its AAT core implements -01, including chain verification, proof of
+possession, and the scalar constraint types, and fails closed on
+composite constraints, which it does not yet support.
 
 ## Test Vectors
 
