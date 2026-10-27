@@ -4081,6 +4081,16 @@ impl PyWarrant {
         }
     }
 
+    /// Return whether a tool capability permits undeclared argument fields.
+    ///
+    /// Returns None for issuer warrants and tools not present in the warrant.
+    fn allows_unknown_fields(&self, tool: &str) -> Option<bool> {
+        self.inner
+            .capabilities()
+            .and_then(|capabilities| capabilities.get(tool))
+            .map(|constraints| constraints.allow_unknown())
+    }
+
     /// Get constraint bounds as a Python dict (Issuer warrants only).
     fn constraint_bounds_dict<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
         if let Some(bounds) = self.inner.constraint_bounds() {
