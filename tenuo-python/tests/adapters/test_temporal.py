@@ -979,6 +979,7 @@ class TestTemporalAuditEvent:
         assert d["tool"] == "read_file"
         assert d["arguments"] == {"path": "/data/file.txt"}
         assert d["warrant_id"] == "w-abc"
+        assert d["warrant_expires_at"] == "2030-01-01T00:00:00+00:00"
         assert "timestamp" in d
 
     def test_denial_event(self):
@@ -1003,6 +1004,7 @@ class TestTemporalAuditEvent:
         d = event.to_dict()
 
         assert d["decision"] == "DENY"
+        assert d["warrant_expires_at"] is None
         assert d["denial_reason"] == "Path outside allowed scope"
         assert d["constraint_violated"] == "path_constraint"
 

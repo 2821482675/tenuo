@@ -16,6 +16,7 @@ Test Coverage:
 """
 
 from datetime import datetime, timedelta, timezone
+import json
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock
 
@@ -330,6 +331,7 @@ class TestAuditEventStructure:
 
     def test_audit_event_to_dict(self):
         """TemporalAuditEvent.to_dict() should return serializable dict."""
+        expires_dt = datetime.now(timezone.utc) + timedelta(hours=1)
         event = TemporalAuditEvent(
             workflow_id="wf-123",
             workflow_type="TestWorkflow",
@@ -341,7 +343,7 @@ class TestAuditEventStructure:
             tool="test_tool",
             arguments={"path": "/file.txt"},
             warrant_id="w-123",
-            warrant_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            warrant_expires_at=expires_dt,
             warrant_capabilities=["test_tool"],
         )
 
@@ -349,6 +351,7 @@ class TestAuditEventStructure:
         assert isinstance(result, dict)
         assert result["workflow_id"] == "wf-123"
         assert result["tool"] == "test_tool"
+        assert result["warrant_expires_at"] == expires_dt.isoformat()
 
     def test_audit_event_to_dict_accepts_real_warrant_expiry(self):
         """Real warrants expose RFC3339 expiry strings, not datetimes."""
@@ -378,7 +381,9 @@ class TestAuditEventStructure:
             warrant_capabilities=list(warrant.tools),
         )
 
-        assert event.to_dict()["warrant_expires_at"] == expires_at
+        result = event.to_dict()
+        assert result["warrant_expires_at"] == expires_at
+        assert json.loads(json.dumps(result))["warrant_expires_at"] == expires_at
 
 
 # =============================================================================
