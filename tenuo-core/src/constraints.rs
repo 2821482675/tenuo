@@ -4250,12 +4250,20 @@ impl ConstraintSet {
                 continue;
             };
 
-            if !constraint.matches(value)? {
-                violations.push(ConstraintViolation {
-                    field: field.clone(),
-                    kind: ConstraintViolationKind::ConstraintMismatch,
-                    reason: "value does not match constraint".to_string(),
-                });
+            match constraint.matches(value) {
+                Ok(true) => {}
+                Ok(false) | Err(Error::InvalidIpAddress { .. }) | Err(Error::InvalidUrl { .. }) => {
+                    // Invalid runtime IP/URL strings are ordinary mismatches,
+                    // not diagnostic-system failures. Normalize them here so
+                    // diagnostics can collect every violation without leaking
+                    // argument values carried by the parsing error.
+                    violations.push(ConstraintViolation {
+                        field: field.clone(),
+                        kind: ConstraintViolationKind::ConstraintMismatch,
+                        reason: "value does not match constraint".to_string(),
+                    });
+                }
+                Err(error) => return Err(error),
             }
         }
 
@@ -5954,6 +5962,45 @@ mod tests {
             }
             other => panic!("unexpected error: {other}"),
         }
+    }
+
+    #[test]
+    fn test_constraint_diagnostics_redacts_and_collects_invalid_network_values() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("ip", Cidr::new("10.0.0.0/8").unwrap());
+        cs.insert("url", UrlPattern::new("https://*.example.com/*").unwrap());
+        cs.insert("required", Exact::new("present"));
+
+        let invalid_ip = "secret-invalid-ip";
+        let invalid_url = "secret invalid url";
+        let mut args = HashMap::new();
+        args.insert(
+            "ip".to_string(),
+            ConstraintValue::String(invalid_ip.to_string()),
+        );
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String(invalid_url.to_string()),
+        );
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        assert_eq!(diagnostics.violations.len(), 3);
+        assert_eq!(
+            diagnostics
+                .violations
+                .iter()
+                .map(|violation| (violation.field.as_str(), violation.kind.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("ip", "constraint_mismatch"),
+                ("required", "missing_required"),
+                ("url", "constraint_mismatch"),
+            ]
+        );
+        let rendered = format!("{diagnostics:?}");
+        assert!(!rendered.contains(invalid_ip));
+        assert!(!rendered.contains(invalid_url));
+        assert!(cs.matches(&args).is_err());
     }
 
     #[test]
