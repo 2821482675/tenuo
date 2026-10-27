@@ -1183,10 +1183,11 @@ with both constraint maps normalized so that an empty map is
 - An argument the parent requires MUST remain required in the derived
   map. Making an optional argument required narrows; the reverse would
   admit invocations that omit an argument the parent requires.
-- The derived map MAY omit a key the parent names only if the parent
-  marks it optional and the derived map does not contain `"*"`. The
-  omitted argument then becomes forbidden, which narrows; if the parent
-  requires it, every derived invocation would lack it.
+- The derived map MAY omit a key other than `"*"` that the parent
+  names only if the parent marks it optional and the derived map does
+  not contain `"*"`. The omitted argument then becomes forbidden, which
+  narrows; if the parent requires it, every derived invocation would
+  lack it.
 - The derived map MAY contain `"*"` only if the parent's map does.
   Dropping `"*"` narrows; adding it would admit arguments the parent
   forbids.
@@ -1862,10 +1863,11 @@ Algorithm:
           child_aat.tools, normalize both constraint maps (Section
           3.3) and verify the key rules of Section 4.5: every key
           the child names is named by the parent unless the parent
-          contains `"*"`; every key the parent names and the child
-          omits is optional in the parent, and the child then does
-          not contain `"*"`; and the child contains `"*"` only if the
-          parent does. If any rule fails, DENY.
+          contains `"*"`; every key other than `"*"` that the parent
+          names and the child omits is optional in the parent, and
+          the child then does not contain `"*"`; and the child
+          contains `"*"` only if the parent does. If any rule fails,
+          DENY.
       p3. For each argument key named in both maps, verify that
           the child's constraint is required if the parent's is.
           If not, DENY.
