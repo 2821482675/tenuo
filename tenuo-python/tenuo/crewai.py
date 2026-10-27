@@ -1628,7 +1628,7 @@ class WarrantDelegator:
         # Empty parent_tools means the parent doesn't restrict tools.
         # Constraint narrowing is checked by the core when grant() builds the child.
         for tool_name in attenuations:
-            if parent_tools and tool_name not in parent_tools:
+            if parent_tools and "*" not in parent_tools and tool_name not in parent_tools:
                 raise EscalationAttempt(
                     f"Cannot grant '{tool_name}': parent warrant doesn't authorize it. Parent tools: {sorted(parent_tools)}"
                 )

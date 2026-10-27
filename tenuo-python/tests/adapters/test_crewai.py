@@ -1019,6 +1019,23 @@ class TestWarrantDelegator:
                 },
             )
 
+    def test_delegation_narrows_wildcard_tool_to_concrete_tool(self):
+        """A parent wildcard tool can delegate one concrete tool."""
+        from tenuo import SigningKey, Warrant
+        from tenuo.crewai import WarrantDelegator
+
+        root, manager, worker = SigningKey.generate(), SigningKey.generate(), SigningKey.generate()
+        parent = Warrant.mint_builder().capability("*").holder(manager.public_key).ttl(60).mint(root)
+
+        child = WarrantDelegator().delegate(
+            parent_warrant=parent,
+            parent_key=manager,
+            child_holder=worker.public_key,
+            attenuations={"read": {}},
+        )
+
+        assert child.tools == ["read"]
+
     def test_delegation_narrows_and_rejects_widening(self):
         """Narrowing yields a child warrant; widening is rejected by the core in grant()."""
         from tenuo import Range, SigningKey, Warrant
