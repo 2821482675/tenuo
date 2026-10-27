@@ -43,6 +43,9 @@ informative:
   I-D.ietf-wimse-arch:
   I-D.li-oauth-delegated-authorization:
   I-D.mcguinness-oauth-mission:
+  I-D.ietf-wimse-aims:
+  I-D.asor-wimse-agent-delegation-chain:
+  I-D.chen-oauth-agent-authz-use-cases:
   RFC2693:   # SPKI Certificate Theory
   RFC7942:   # Improving Awareness of Running Code: The Implementation Status Section
   RFC8949:   # Concise Binary Object Representation (CBOR)
@@ -51,6 +54,7 @@ informative:
   RFC9052:   # CBOR Object Signing and Encryption (COSE)
   RFC9334:   # Remote ATtestation procedureS (RATS) Architecture
   RFC9449:   # DPoP
+  RFC9068:   # JWT Profile for OAuth 2.0 Access Tokens
   RFC8707:   # Resource Indicators for OAuth 2.0
   OIDC.Core:
     title: "OpenID Connect Core 1.0 incorporating errata set 2"
@@ -218,6 +222,13 @@ authority than an intermediate agent needs for its current step. Prompt
 injection, model hallucination, or compromise can then exercise that
 excess authority. Attenuation limits this exposure by letting each
 delegation step pass onward only the authority needed for the next step.
+
+A gap analysis of agent authorization use cases
+{{I-D.chen-oauth-agent-authz-use-cases}} describes a related gap: when
+a task passes through several agents, a resource server has no standard
+way to verify that the delegation chain is legitimate and authorized by
+the user, which also complicates enforcing progressively narrower
+permissions along it.
 
 AATs let a token holder derive, without contacting the authorization
 server, a token that constrains a receiving agent to specific tools and
@@ -402,7 +413,10 @@ are issued by an OAuth authorization server, and AATs profile RAR.
 Transaction tokens {{I-D.ietf-oauth-transaction-tokens}} and identity
 and authorization chaining {{I-D.ietf-oauth-identity-chaining}} carry
 identity, actor, transaction, and authorization context across services
-and trust domains. AATs add holder-derivable attenuation of tool and
+and trust domains. Guidance on AI agent authentication and
+authorization {{I-D.ietf-wimse-aims}} builds agent authorization on
+OAuth 2.0 access tokens, token exchange {{RFC8693}}, and these two
+specifications. AATs add holder-derivable attenuation of tool and
 argument authority within a delegation chain, verified offline by the
 enforcement point, and can be used alongside them.
 
@@ -416,6 +430,16 @@ and an authorization details type can appear in client-issued tokens
 only if a specification defines when one value of that type contains
 another. AATs define such a type for tools and their arguments, with
 the subsumption relation of Section 4.5.
+
+The Agent Delegation Chain {{I-D.asor-wimse-agent-delegation-chain}}
+profiles JWT access tokens {{RFC9068}} for offline delegation between
+agents. It uses this document's chain claims (`par_hash`, `del_depth`,
+and `del_max_depth`), proves possession with DPoP {{RFC9449}}, and
+checks revocation against a token status list
+{{I-D.ietf-oauth-status-list}}. Each token also names the accountable
+principal in `sub`, which every token in a chain must share, and the
+acting agent at that hop in `client_id`. AATs bind tokens to holder
+keys and leave subject identifiers to profiles (Section 3.2).
 
 Mission-Bound Authorization {{I-D.mcguinness-oauth-mission}} records an
 approved task and its authority at the authorization server as a
