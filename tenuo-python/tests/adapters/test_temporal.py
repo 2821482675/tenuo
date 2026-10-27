@@ -573,11 +573,11 @@ class TestTenuoPluginConfig:
         assert cfg.key_resolver is not None
         assert cfg.key_resolver.resolve_sync("any-id") is sk
 
-    def test_neither_resolver_nor_signing_key_raises(self):
-        from tenuo.exceptions import ConfigurationError
+    def test_neither_resolver_nor_signing_key_allows_verification_only(self):
+        cfg = TenuoPluginConfig(trusted_roots=_TEMPORAL_TRUST_ROOTS)
 
-        with pytest.raises(ConfigurationError, match="key_resolver|signing_key"):
-            TenuoPluginConfig(trusted_roots=_TEMPORAL_TRUST_ROOTS)
+        assert cfg.key_resolver is None
+        assert cfg.signing_key is None
 
     def test_approval_handler_widens_retry_pop_when_unset(self):
         resolver = MagicMock(spec=KeyResolver)

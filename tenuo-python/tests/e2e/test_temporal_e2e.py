@@ -1695,14 +1695,36 @@ class TestOutboundFailClosed:
                 assert "fail-closed" in str(exc.value).lower()
 
     def test_missing_key_resolver_raises_context_error(self, warrant, headers_dict):
-        """If no key_resolver configured, config construction raises ConfigurationError."""
-        from tenuo.exceptions import ConfigurationError
+        """A verification-only config still fails closed if asked to sign."""
+        from tenuo.temporal._interceptors import _TenuoWorkflowOutboundInterceptor
 
-        with pytest.raises(ConfigurationError, match="key_resolver"):
-            TenuoPluginConfig(
-                key_resolver=None,
-                trusted_roots=[SigningKey.generate().public_key],
-            )
+        wf_id = "wf-missing-resolver"
+        _populate_store(wf_id, headers_dict)
+        config = TenuoPluginConfig(
+            key_resolver=None,
+            trusted_roots=[SigningKey.generate().public_key],
+        )
+
+        class FakeNext:
+            def start_activity(self, input):
+                return MagicMock()
+
+        outbound = _TenuoWorkflowOutboundInterceptor(FakeNext(), config=config)
+
+        @dataclass
+        class FakeInput:
+            activity: str = "read_file"
+            fn: Any = lambda path: path
+            args: tuple = ("/tmp/demo/f.txt",)
+            headers: Optional[Dict[str, Any]] = None
+
+        with patch("temporalio.workflow.info") as mock_info:
+            mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
+            with pytest.raises(ApplicationError) as exc:
+                outbound.start_activity(FakeInput())
+
+        assert exc.value.non_retryable is True
+        assert "key_resolver is required for outbound PoP signing" in str(exc.value)
 
     def test_no_headers_passes_through_silently(self):
         """If no warrant in store, activity passes through without error (unprotected)."""

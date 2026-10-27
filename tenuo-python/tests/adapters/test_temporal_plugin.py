@@ -385,22 +385,22 @@ def test_workflow_failure_exception_types_registered() -> None:
 # Item 2.4 — Data-plane-only (read-only) workers
 # ---------------------------------------------------------------------------
 
-def test_none_key_resolver_raises() -> None:
-    """TenuoPluginConfig rejects key_resolver=None (signing material required)."""
-    from tenuo.exceptions import ConfigurationError
-
+def test_none_key_resolver_allows_verification_only_worker() -> None:
+    """Workers that only verify inbound calls do not need private key material."""
     sk = SigningKey.generate()
-    with pytest.raises(ConfigurationError, match="key_resolver|signing_key"):
-        TenuoPluginConfig(key_resolver=None, trusted_roots=[sk.public_key])
+    config = TenuoPluginConfig(key_resolver=None, trusted_roots=[sk.public_key])
+
+    assert config.key_resolver is None
+    assert isinstance(TenuoWorkerInterceptor(config), TenuoWorkerInterceptor)
 
 
-def test_no_signing_material_raises() -> None:
-    """TenuoPluginConfig rejects construction without any signing material."""
-    from tenuo.exceptions import ConfigurationError
-
+def test_omitted_signing_material_allows_verification_only_plugin() -> None:
+    """The plugin can configure activity-only workers from trusted roots alone."""
     sk = SigningKey.generate()
-    with pytest.raises(ConfigurationError, match="key_resolver|signing_key"):
-        TenuoPluginConfig(trusted_roots=[sk.public_key])
+    config = TenuoPluginConfig(trusted_roots=[sk.public_key])
+
+    assert config.key_resolver is None
+    assert isinstance(TenuoTemporalPlugin(config), TenuoTemporalPlugin)
 
 
 def test_signing_key_synthesizes_resolver() -> None:

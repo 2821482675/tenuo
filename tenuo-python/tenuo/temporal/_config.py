@@ -643,13 +643,6 @@ class TenuoPluginConfig:
 
             self.key_resolver = _StaticSigningKeyResolver(self.signing_key)
 
-        if self.key_resolver is None:
-            from tenuo.exceptions import ConfigurationError
-
-            raise ConfigurationError(
-                "TenuoPluginConfig requires key_resolver= or signing_key= (worker signing material)."
-            )
-
         if self.approval_handler is not None:
             # Only bump for values at-or-below the field default (currently 40).
             # Users who explicitly set a larger value are respected. The bound
