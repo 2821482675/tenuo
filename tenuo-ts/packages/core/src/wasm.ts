@@ -23,6 +23,25 @@ export type WasmInspect = {
   id: string;
 };
 
+export type ConstraintViolationKind =
+  | "tool_not_authorized"
+  | "unknown_field"
+  | "missing_required"
+  | "constraint_mismatch";
+
+export type ConstraintDiagnostics = {
+  closedWorld: boolean;
+  violations: Array<{
+    field: string;
+    kind: ConstraintViolationKind;
+    reason: string;
+  }>;
+};
+
+type WasmConstraintDiagnostics = Omit<ConstraintDiagnostics, "closedWorld"> & {
+  closed_world: boolean;
+};
+
 export type WasmReceipt = {
   authentic: true;
   /** Hex key the receipt is signed under — resolve against your authorizer set. */
@@ -208,6 +227,7 @@ export type WasmAttestation = {
 export type WasmApprovalInfo = {
   approver_public_key: string;
   request_hash: string;
+  nonce: string;
   external_id: string;
   approved_at: number;
   expires_at: number;
@@ -306,6 +326,7 @@ type Generated = {
     fromChain(parts: unknown, holder: Uint8Array): WasmSession;
   };
   sdkInspectWarrant(wire: string): WasmInspect;
+  sdkDiagnoseConstraints(wire: string, tool: string, args: unknown): WasmConstraintDiagnostics;
   sdkInspectParts(payloadHex: string, signatureHex: string): WasmInspect;
   sdkProtocolLimits(): WasmProtocolLimits;
   sdkPublicKeyFromHolderKey(holderSecret: Uint8Array): string;
@@ -324,7 +345,7 @@ type Generated = {
     ttlSeconds?: number,
     warrantExpiresAt?: number,
   ): string;
-  sdkInspectApproval(envelope: string): WasmApprovalInfo;
+  sdkInspectApproval(envelope: string | Uint8Array): WasmApprovalInfo;
   sdkSignRevocationList(ids: string[], issuerSecret: Uint8Array): string;
   sdkSignRevocationListVersioned(ids: string[], version: number | undefined, issuerSecret: Uint8Array): string;
   sdkSignPublishedRevocationList(ids: string[], version: number, issuerSecret: Uint8Array): string;
@@ -444,6 +465,20 @@ export function importSessionFromChain(parts: unknown, holderKey: Uint8Array): W
 
 export function inspectWarrant(wire: string): WasmInspect {
   return loadWasm().sdkInspectWarrant(wire);
+}
+
+/**
+ * List every capability-constraint failure in deterministic order.
+ * Diagnostic only: this does not verify signatures, expiry, revocation,
+ * approvals, or proof-of-possession, and must not be used to authorize.
+ */
+export function diagnoseConstraints(
+  wire: string,
+  tool: string,
+  args: unknown,
+): ConstraintDiagnostics {
+  const result = loadWasm().sdkDiagnoseConstraints(wire, tool, args);
+  return { closedWorld: result.closed_world, violations: result.violations };
 }
 
 export function inspectParts(payloadHex: string, signatureHex: string): WasmInspect {

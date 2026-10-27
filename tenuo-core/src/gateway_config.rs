@@ -83,7 +83,7 @@ pub struct GatewaySettings {
     /// Header containing signed approvals (base64 CBOR array of SignedApproval)
     #[serde(default = "default_approval_header")]
     pub approval_header: String,
-    /// Clock tolerance for expiration checks (seconds)
+    /// Clock tolerance for future-issued timestamps (seconds); expiry is strict
     #[serde(default = "default_clock_tolerance")]
     pub clock_tolerance_secs: u64,
     /// Trusted root public keys (hex)
