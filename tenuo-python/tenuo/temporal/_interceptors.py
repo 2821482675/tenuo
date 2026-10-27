@@ -44,6 +44,7 @@ from tenuo.temporal._headers import (
     _extract_warrant_from_headers,
     _validate_chain_ends_with_warrant,
 )
+from tenuo.temporal._idempotency import _activity_idempotency_context
 from tenuo.temporal._observability import (
     TemporalAuditEvent,
     _install_dropped_signal_audit_dispatcher,
@@ -1674,7 +1675,12 @@ class TenuoActivityInboundInterceptor:
             pop_auth_args=args,
         )
 
-        return await self._next.execute_activity(input)
+        with _activity_idempotency_context(
+            str(warrant.id),
+            str(info.workflow_run_id),
+            str(info.activity_id),
+        ):
+            return await self._next.execute_activity(input)
 
     async def _resolve_approval_gate_approvals(
         self,

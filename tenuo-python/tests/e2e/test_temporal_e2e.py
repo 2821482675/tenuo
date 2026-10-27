@@ -36,6 +36,7 @@ from tenuo.temporal import (  # noqa: E402
     TenuoClientInterceptor,
     TenuoWorkerInterceptor,
     TenuoPluginConfig,
+    current_idempotency_key,
     tenuo_headers,
 )
 from tenuo.temporal._constants import (  # noqa: E402
@@ -738,9 +739,14 @@ class TestActivityRetries:
         """Each attempt gets fresh PoP in its headers."""
         ti = self._make(control_key)
         wf = "wf-retry"
+        observed_keys = []
+
+        async def execute_with_key(_input):
+            observed_keys.append(current_idempotency_key())
+            return "ok"
 
         nxt = MagicMock()
-        nxt.execute_activity = AsyncMock(return_value="ok")
+        nxt.execute_activity = AsyncMock(side_effect=execute_with_key)
         nxt.init = MagicMock()
         ai = ti.intercept_activity(nxt)
 
@@ -769,6 +775,8 @@ class TestActivityRetries:
             m.return_value = retry_info
             r = _run(ai.execute_activity(inp2))
         assert r == "ok"
+        assert len(observed_keys) == 2
+        assert observed_keys[0] == observed_keys[1]
 
 
 # -- Concurrent workflows (thread safety) ------------------------------------
