@@ -2744,15 +2744,15 @@ possession with DPoP {{RFC9449}}, rather than with this document's
 ## Agent Runtime Controls Profile (ARCP)
 
 The Agent Runtime Controls Profile (ARCP) {{ARCP}}, by Udaykishore
-Resu, is a profile of AATs with a Go reference implementation (MIT).
-It leaves capability narrowing to the invariants of Section 4 and adds
-runtime controls that accumulate down a chain: budgets that cap a
-parent and all of its sub-agents combined, gating on instruction
-provenance, single-use step-up approval bound to one leaf token, tool,
-and argument set, and push revocation through OpenID Shared Signals.
-Its AAT core implements -01, including chain verification, proof of
-possession, and the scalar constraint types, and fails closed on
-composite constraints, which it does not yet support.
+Resu, is an experimental profile of AAT with an MIT-licensed Go
+implementation. The profile leaves capability narrowing to the
+invariants of Section 4 and defines cumulative runtime controls for
+chain-wide budgets, instruction-provenance gating, single-use approval
+bound to a leaf token, tool, and argument set, and revocation through
+OpenID Shared Signals. The implementation includes an AAT core based on
+-01, runtime-control enforcement, and MCP middleware. Its AAT core
+supports chain verification, proof of possession, and the `exact`,
+`one_of`, `not_one_of`, `range`, and `wildcard` constraint types.
 
 ## Test Vectors
 
