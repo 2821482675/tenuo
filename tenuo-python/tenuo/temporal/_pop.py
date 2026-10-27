@@ -315,6 +315,9 @@ def _prevalidate_args_against_warrant(
     capability is in allow-unknown mode, this function is a no-op.
     """
     try:
+        allows_unknown_fields = getattr(warrant, "allows_unknown_fields", None)
+        if callable(allows_unknown_fields) and allows_unknown_fields(tool_name):
+            return
         caps = getattr(warrant, "capabilities", None)
         if not isinstance(caps, dict):
             return
@@ -345,11 +348,23 @@ def _prevalidate_args_against_warrant(
         fields_str = ", ".join(missing)
         parts.append(f"missing required fields: {fields_str}")
 
+    guidance: List[str] = []
+    if unknown:
+        guidance.append(
+            "Declare each expected argument in the warrant capability; prefer "
+            "Wildcard() for known fields that do not need a value constraint. "
+            "If the capability intentionally accepts every extra field, set "
+            "_allow_unknown=True (a broad opt-out from closed-world checking)."
+        )
+    if missing:
+        guidance.append("Provide every argument declared by the warrant capability.")
+
     raise TenuoPreValidationError(
         f"Warrant pre-validation failed for activity '{tool_name}'. "
         + "; ".join(parts)
-        + ". Declare all argument names in the warrant capability or use "
-        "Wildcard() for fields that don't need structural constraints. "
+        + ". "
+        + " ".join(guidance)
+        + " "
         "See docs/temporal.md: 'Zero-trust closed-world rule'."
     )
 

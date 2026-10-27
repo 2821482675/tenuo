@@ -311,6 +311,9 @@ class TestPrevalidateArgsAgainstWarrant:
         # Must preserve the core error phrase for substring-match compatibility.
         assert "unknown field not allowed (zero-trust mode)" in msg
         assert "extra_field" in msg
+        assert "prefer Wildcard()" in msg
+        assert "_allow_unknown=True" in msg
+        assert "broad opt-out from closed-world checking" in msg
 
     def test_multiple_unknown_fields_all_listed(self):
         warrant = _make_mock_warrant({"score_risk": {"application_id": None}})
@@ -347,6 +350,8 @@ class TestPrevalidateArgsAgainstWarrant:
         assert "credit_json" in msg
         assert "kyc_json" in msg
         assert "missing" in msg.lower()
+        assert "Provide every argument declared by the warrant capability" in msg
+        assert "_allow_unknown=True" not in msg
 
     def test_mixed_unknown_and_missing_both_reported(self):
         warrant = _make_mock_warrant({
@@ -374,6 +379,15 @@ class TestPrevalidateArgsAgainstWarrant:
     def test_empty_capability_is_noop(self):
         """Empty capability dict means no named constraints — allow_unknown effectively."""
         warrant = _make_mock_warrant({"score_risk": {}})
+        _prevalidate_args_against_warrant(
+            warrant, "score_risk", {"application_id": "X", "extra": "fine"}
+        )
+
+    def test_allow_unknown_capability_is_noop(self):
+        """The pre-validator honors core's per-capability allow-unknown bit."""
+        warrant = _make_mock_warrant({"score_risk": {"application_id": None}})
+        warrant.allows_unknown_fields = lambda tool: tool == "score_risk"
+
         _prevalidate_args_against_warrant(
             warrant, "score_risk", {"application_id": "X", "extra": "fine"}
         )
