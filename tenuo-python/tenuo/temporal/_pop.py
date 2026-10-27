@@ -312,12 +312,15 @@ def _prevalidate_args_against_warrant(
 
     Raises TenuoPreValidationError listing ALL unknown and missing fields in
     one shot if any are found. If the tool is not in the warrant, or the
-    capability is in allow-unknown mode, this function is a no-op.
+    capability has no declared fields, this function is a no-op. Allow-unknown
+    mode permits extra fields but still requires every declared field.
     """
+    allow_unknown = False
     try:
         allows_unknown_fields = getattr(warrant, "allows_unknown_fields", None)
-        if callable(allows_unknown_fields) and allows_unknown_fields(tool_name):
-            return
+        allow_unknown = bool(
+            callable(allows_unknown_fields) and allows_unknown_fields(tool_name)
+        )
         caps = getattr(warrant, "capabilities", None)
         if not isinstance(caps, dict):
             return
@@ -332,7 +335,7 @@ def _prevalidate_args_against_warrant(
     declared_fields = set(tool_cap.keys())
     actual_fields = set(args_dict.keys())
 
-    unknown = sorted(actual_fields - declared_fields)
+    unknown = [] if allow_unknown else sorted(actual_fields - declared_fields)
     missing = sorted(declared_fields - actual_fields)
 
     if not unknown and not missing:

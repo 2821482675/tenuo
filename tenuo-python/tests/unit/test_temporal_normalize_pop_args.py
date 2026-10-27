@@ -383,7 +383,7 @@ class TestPrevalidateArgsAgainstWarrant:
             warrant, "score_risk", {"application_id": "X", "extra": "fine"}
         )
 
-    def test_allow_unknown_capability_is_noop(self):
+    def test_allow_unknown_capability_permits_extra_fields(self):
         """The pre-validator honors core's per-capability allow-unknown bit."""
         warrant = _make_mock_warrant({"score_risk": {"application_id": None}})
         warrant.allows_unknown_fields = lambda tool: tool == "score_risk"
@@ -391,6 +391,15 @@ class TestPrevalidateArgsAgainstWarrant:
         _prevalidate_args_against_warrant(
             warrant, "score_risk", {"application_id": "X", "extra": "fine"}
         )
+
+    def test_allow_unknown_capability_still_requires_declared_fields(self):
+        warrant = _make_mock_warrant({"score_risk": {"application_id": None}})
+        warrant.allows_unknown_fields = lambda tool: tool == "score_risk"
+
+        with pytest.raises(TenuoPreValidationError, match="application_id"):
+            _prevalidate_args_against_warrant(
+                warrant, "score_risk", {"extra": "fine"}
+            )
 
     def test_no_capabilities_attr_is_noop(self):
         """Warrant with no .capabilities attribute — fall through gracefully."""
