@@ -355,7 +355,7 @@ researcher_warrant = orchestrator_warrant.attenuate(
     holder=orchestrator_key.public_key,
     capabilities={
         "web_search": {"domain": Pattern("*.org"), "query": Pattern("*")},
-        "read_file": {"path": Subpath("/tmp/research/sources")},
+        "read_file": {"path": Subpath("/sources")},
     },
     ttl_seconds=1800,
 )
@@ -368,7 +368,7 @@ def crew_member(warrant):
 
 async with SecureMCPClient(...) as client:
     with crew_member(researcher_warrant):
-        await client.tools["read_file"](path="/tmp/research/sources/notes.txt")
+        await client.tools["read_file"](path="/sources/notes.txt")
 ```
 
 The scope lives in Python context variables. CrewAI runs some work on worker threads that do not inherit them, for example tasks with `async_execution=True` and agents with `max_execution_time`. Calls made there have no warrant in scope and are refused. Enter the scope inside the code that makes the MCP call, as [`crewai_mcp_demo.py`](crewai_mcp_demo.py) does, rather than around `crew.kickoff()`.

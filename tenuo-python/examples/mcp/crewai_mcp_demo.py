@@ -55,6 +55,7 @@ from tenuo import (
     key_scope,
     warrant_scope,
 )
+from tenuo.exceptions import ConstraintViolation, ToolNotAuthorized
 from tenuo.mcp import MCP_AVAILABLE, SecureMCPClient
 
 
@@ -129,13 +130,14 @@ async def run_demo():
 
     # Setup test environment
     log("\n📁 Setting up test environment...")
-    test_dir = Path("/tmp/crewai_mcp_test")
+    test_dir = Path("/tmp/research")
     sources_dir = test_dir / "sources"
     output_dir = test_dir / "output"
     sources_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    (sources_dir / "reference.txt").write_text("AI agent security: Best practices include...")
+    reference_content = "AI agent security: Best practices include..."
+    (sources_dir / "reference.txt").write_text(reference_content)
     log(f"   ✓ Created test directories in {test_dir}")
 
     # Find MCP research server
@@ -149,7 +151,7 @@ async def run_demo():
 
     # Create MCP client
     mcp_client = SecureMCPClient(
-        command="python",
+        command=sys.executable,
         args=[str(mcp_server_script)],
         register_config=True,
     )
@@ -167,8 +169,8 @@ async def run_demo():
         log("\n📜 Control Plane issues warrant to Crew Orchestrator...")
         orchestrator_warrant = (Warrant.mint_builder()
             .capability("web_search", domain=Wildcard(), query=Pattern("*"))
-            .capability("read_file", path=Subpath("/tmp/research"))
-            .capability("write_file", path=Subpath("/tmp/research"), content=Pattern("*"))
+            .capability("read_file", path=Subpath("/"))
+            .capability("write_file", path=Subpath("/"), content=Pattern("*"))
             .holder(crew_orchestrator_key.public_key)
             .ttl(3600)
             .mint(control_key))
@@ -185,7 +187,7 @@ async def run_demo():
             holder=crew_orchestrator_key.public_key,  # Same holder for demo
             capabilities={
                 "web_search": {"domain": Pattern("*.org"), "query": Pattern("*")},
-                "read_file": {"path": Subpath("/tmp/research/sources")},
+                "read_file": {"path": Subpath("/sources")},
             },
             ttl_seconds=1800,
         )
@@ -196,8 +198,8 @@ async def run_demo():
             signing_key=crew_orchestrator_key,
             holder=crew_orchestrator_key.public_key,
             capabilities={
-                "write_file": {"path": Subpath("/tmp/research/output"), "content": Pattern("*")},
-                "read_file": {"path": Subpath("/tmp/research/sources")},  # For reference
+                "write_file": {"path": Subpath("/output"), "content": Pattern("*")},
+                "read_file": {"path": Subpath("/sources")},  # For reference
             },
             ttl_seconds=1800,
         )
@@ -208,7 +210,7 @@ async def run_demo():
             signing_key=crew_orchestrator_key,
             holder=crew_orchestrator_key.public_key,
             capabilities={
-                "read_file": {"path": Subpath("/tmp/research/output")},
+                "read_file": {"path": Subpath("/output")},
             },
             ttl_seconds=1800,
         )
@@ -239,9 +241,9 @@ async def run_demo():
             log("   Found research on AI security", C.BLUE)
 
             # Read reference
-            read_result = await mcp_client.tools["read_file"](  # noqa: F841
-                path="/tmp/research/sources/reference.txt"
-            )
+            read_result = await mcp_client.tools["read_file"](path="/sources/reference.txt")
+        if not read_result or read_result[0].text != reference_content:
+            raise RuntimeError("MCP server returned unexpected reference content")
         log("   ✓ Read reference file", C.GREEN)
 
         # Phase 2: Writer
@@ -273,7 +275,7 @@ Security must be built into agent architectures from the ground up.
 
         with crew_member(writer_warrant):
             write_result = await mcp_client.tools["write_file"](
-                path="/tmp/research/output/article.md", content=article_content
+                path="/output/article.md", content=article_content
             )
         log("   ✓ Article written to output/article.md", C.GREEN)
         log(f"   {write_result[0].text}", C.BLUE)
@@ -283,8 +285,10 @@ Security must be built into agent architectures from the ground up.
         log("   Using warrant: read_file (output only)")
 
         with crew_member(editor_warrant):
-            editor_read = await mcp_client.tools["read_file"](path="/tmp/research/output/article.md")
+            editor_read = await mcp_client.tools["read_file"](path="/output/article.md")
         content = editor_read[0].text
+        if content != article_content:
+            raise RuntimeError("MCP server returned unexpected article content")
         log(f"   ✓ Retrieved article ({len(content)} bytes)", C.GREEN)
         log(f"   Preview: {content[:80]}...", C.BLUE)
         log("   ✅ Content approved for publication", C.GREEN)
@@ -299,27 +303,27 @@ Security must be built into agent architectures from the ground up.
         try:
             # Researcher only has read access, tries write
             with crew_member(researcher_warrant):
-                await mcp_client.tools["write_file"](path="/tmp/research/output/malicious.txt", content="pwned")
+                await mcp_client.tools["write_file"](path="/output/malicious.txt", content="pwned")
             log("   ❌ Should have been blocked!", C.YELLOW)
-        except Exception as e:
+        except ToolNotAuthorized as e:
             log(f"   ✅ BLOCKED: {str(e)[:60]}...", C.GREEN)
             log("   Researcher warrant doesn't include write_file")
 
-        log("\n🔒 Attack 2: Writer tries path traversal")
+        log("\n🔒 Attack 2: Writer tries to write outside its output subtree")
         try:
             with crew_member(writer_warrant):
                 await mcp_client.tools["write_file"](path="/etc/passwd", content="malicious")
             log("   ❌ Should have been blocked!", C.YELLOW)
-        except Exception as e:
+        except ConstraintViolation as e:
             log(f"   ✅ BLOCKED: {str(e)[:60]}...", C.GREEN)
-            log("   Subpath constraint restricts to /tmp/research/output")
+            log("   Subpath constraint restricts to /output")
 
         log("\n🔒 Attack 3: Editor tries to read sources (out of scope)")
         try:
             with crew_member(editor_warrant):
-                await mcp_client.tools["read_file"](path="/tmp/research/sources/reference.txt")
+                await mcp_client.tools["read_file"](path="/sources/reference.txt")
             log("   ❌ Should have been blocked!", C.YELLOW)
-        except Exception as e:
+        except ConstraintViolation as e:
             log(f"   ✅ BLOCKED: {str(e)[:60]}...", C.GREEN)
             log("   Editor warrant only allows output directory")
 
@@ -328,7 +332,7 @@ Security must be built into agent architectures from the ground up.
             with crew_member(researcher_warrant):
                 await mcp_client.tools["web_search"](query="hacking tools", domain="evil.com")
             log("   ❌ Should have been blocked!", C.YELLOW)
-        except Exception as e:
+        except ConstraintViolation as e:
             log(f"   ✅ BLOCKED: {str(e)[:60]}...", C.GREEN)
             log("   Pattern constraint only allows *.org domains")
 
