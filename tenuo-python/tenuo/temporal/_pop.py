@@ -312,31 +312,35 @@ def _prevalidate_args_against_warrant(
 
     Raises TenuoPreValidationError listing ALL unknown and missing fields in
     one shot if any are found. If the tool is not in the warrant, or the
-    capability has no declared fields, this function is a no-op. Allow-unknown
-    mode permits extra fields but still requires every declared field.
+    capability is in allow-unknown mode, this function is a no-op.
     """
-    allow_unknown = False
     try:
-        allows_unknown_fields = getattr(warrant, "allows_unknown_fields", None)
-        allow_unknown = bool(
-            callable(allows_unknown_fields) and allows_unknown_fields(tool_name)
-        )
-        caps = getattr(warrant, "capabilities", None)
-        if not isinstance(caps, dict):
+        diagnose_constraints = getattr(warrant, "diagnose_constraints", None)
+        if not callable(diagnose_constraints):
             return
-        tool_cap = caps.get(tool_name)
-        if not isinstance(tool_cap, dict):
+        diagnostics = diagnose_constraints(tool_name, args_dict)
+        if not isinstance(diagnostics, dict):
             return
-        if not tool_cap:
+        violations = diagnostics.get("violations")
+        if not isinstance(violations, list):
             return
     except Exception:
         return
 
-    declared_fields = set(tool_cap.keys())
-    actual_fields = set(args_dict.keys())
-
-    unknown = [] if allow_unknown else sorted(actual_fields - declared_fields)
-    missing = sorted(declared_fields - actual_fields)
+    unknown = [
+        item["field"]
+        for item in violations
+        if isinstance(item, dict)
+        and item.get("kind") == "unknown_field"
+        and isinstance(item.get("field"), str)
+    ]
+    missing = [
+        item["field"]
+        for item in violations
+        if isinstance(item, dict)
+        and item.get("kind") == "missing_required"
+        and isinstance(item.get("field"), str)
+    ]
 
     if not unknown and not missing:
         return
