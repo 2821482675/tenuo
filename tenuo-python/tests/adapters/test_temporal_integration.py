@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from tenuo import SigningKey as _TI_SigningKey
+from tenuo import Warrant
 from tenuo.temporal._config import TenuoPluginConfig
 from tenuo.temporal._decorators import get_tool_name, is_unprotected, tool, unprotected
 from tenuo.temporal._observability import TemporalAuditEvent
@@ -348,6 +349,36 @@ class TestAuditEventStructure:
         assert isinstance(result, dict)
         assert result["workflow_id"] == "wf-123"
         assert result["tool"] == "test_tool"
+
+    def test_audit_event_to_dict_accepts_real_warrant_expiry(self):
+        """Real warrants expose RFC3339 expiry strings, not datetimes."""
+        signing_key = _TI_SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(signing_key.public_key)
+            .capability("test_tool")
+            .ttl(3600)
+            .mint(signing_key)
+        )
+        expires_at = warrant.expires_at()
+        assert isinstance(expires_at, str)
+
+        event = TemporalAuditEvent(
+            workflow_id="wf-123",
+            workflow_type="TestWorkflow",
+            workflow_run_id="run-abc",
+            activity_name="test_activity",
+            activity_id="act-1",
+            task_queue="test-queue",
+            decision="ALLOW",
+            tool="test_tool",
+            arguments={},
+            warrant_id=warrant.id,
+            warrant_expires_at=expires_at,
+            warrant_capabilities=list(warrant.tools),
+        )
+
+        assert event.to_dict()["warrant_expires_at"] == expires_at
 
 
 # =============================================================================
