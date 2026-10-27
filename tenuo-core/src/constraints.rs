@@ -4051,6 +4051,73 @@ impl From<CelConstraint> for Constraint {
 // Constraint Set
 // ============================================================================
 
+/// Stable category for a constraint diagnostic.
+///
+/// Diagnostics are non-authoritative explanations. Authorization continues to
+/// use [`ConstraintSet::matches`], which consumes the same diagnostic result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConstraintViolationKind {
+    /// The warrant does not authorize the requested tool.
+    ToolNotAuthorized,
+    /// Closed-world checking rejected an undeclared argument field.
+    UnknownField,
+    /// A field declared by the capability was absent.
+    MissingRequired,
+    /// A supplied value did not satisfy its declared constraint.
+    ConstraintMismatch,
+}
+
+impl ConstraintViolationKind {
+    /// Stable machine-readable name used by SDK bindings.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ToolNotAuthorized => "tool_not_authorized",
+            Self::UnknownField => "unknown_field",
+            Self::MissingRequired => "missing_required",
+            Self::ConstraintMismatch => "constraint_mismatch",
+        }
+    }
+}
+
+/// One field-level constraint diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConstraintViolation {
+    /// Argument field, or `"tool"` for a tool-level denial.
+    pub field: String,
+    /// Stable machine-readable category.
+    pub kind: ConstraintViolationKind,
+    /// Human-readable explanation. Callers should branch on [`Self::kind`].
+    pub reason: String,
+}
+
+/// Structured, deterministic result of non-authoritative constraint preflight.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConstraintDiagnostics {
+    /// Whether the evaluated constraint set rejects undeclared fields.
+    pub closed_world: bool,
+    /// All violations, ordered deterministically by category and field name.
+    pub violations: Vec<ConstraintViolation>,
+}
+
+impl ConstraintDiagnostics {
+    /// True when no constraint violations were found.
+    pub fn is_satisfied(&self) -> bool {
+        self.violations.is_empty()
+    }
+
+    pub(crate) fn tool_not_authorized(tool: &str) -> Self {
+        Self {
+            closed_world: false,
+            violations: vec![ConstraintViolation {
+                field: "tool".to_string(),
+                kind: ConstraintViolationKind::ToolNotAuthorized,
+                reason: format!("warrant does not authorize tool '{tool}'"),
+            }],
+        }
+    }
+}
+
 /// Helper for serde skip_serializing_if
 fn is_false(b: &bool) -> bool {
     !*b
@@ -4133,36 +4200,69 @@ impl ConstraintSet {
     /// - If any constraint exists and `allow_unknown=false`: unknown arguments rejected
     /// - If any constraint exists and `allow_unknown=true`: unknown arguments allowed
     pub fn matches(&self, args: &HashMap<String, ConstraintValue>) -> Result<()> {
-        // Zero-trust: if constraints exist and allow_unknown is false,
-        // reject any arguments not explicitly constrained
-        if !self.constraints.is_empty() && !self.allow_unknown {
-            for key in args.keys() {
-                if !self.constraints.contains_key(key) {
-                    return Err(Error::ConstraintNotSatisfied {
-                        field: key.clone(),
-                        reason: "unknown field not allowed (zero-trust mode)".to_string(),
-                    });
-                }
-            }
+        let diagnostics = self.diagnose(args)?;
+        if let Some(violation) = diagnostics.violations.into_iter().next() {
+            return Err(Error::ConstraintNotSatisfied {
+                field: violation.field,
+                reason: violation.reason,
+            });
+        }
+        Ok(())
+    }
+
+    /// Diagnose all constraint failures without performing authorization.
+    ///
+    /// This is intended for developer-facing preflight and error rendering.
+    /// It does not verify signatures, expiry, revocation, approvals, or PoP and
+    /// must never be treated as an authorization verdict.
+    ///
+    /// Results contain field names but never argument values. Unknown fields
+    /// are reported first in lexical order, followed by declared fields in the
+    /// constraint set's canonical order.
+    pub fn diagnose(
+        &self,
+        args: &HashMap<String, ConstraintValue>,
+    ) -> Result<ConstraintDiagnostics> {
+        let closed_world = !self.constraints.is_empty() && !self.allow_unknown;
+        let mut violations = Vec::new();
+
+        if closed_world {
+            let mut unknown_fields: Vec<_> = args
+                .keys()
+                .filter(|field| !self.constraints.contains_key(*field))
+                .cloned()
+                .collect();
+            unknown_fields.sort();
+            violations.extend(unknown_fields.into_iter().map(|field| ConstraintViolation {
+                field,
+                kind: ConstraintViolationKind::UnknownField,
+                reason: "unknown field not allowed (zero-trust mode)".to_string(),
+            }));
         }
 
-        // Check all defined constraints are satisfied
         for (field, constraint) in &self.constraints {
-            let value = args
-                .get(field)
-                .ok_or_else(|| Error::ConstraintNotSatisfied {
+            let Some(value) = args.get(field) else {
+                violations.push(ConstraintViolation {
                     field: field.clone(),
+                    kind: ConstraintViolationKind::MissingRequired,
                     reason: "missing required argument".to_string(),
-                })?;
+                });
+                continue;
+            };
 
             if !constraint.matches(value)? {
-                return Err(Error::ConstraintNotSatisfied {
+                violations.push(ConstraintViolation {
                     field: field.clone(),
+                    kind: ConstraintViolationKind::ConstraintMismatch,
                     reason: "value does not match constraint".to_string(),
                 });
             }
         }
-        Ok(())
+
+        Ok(ConstraintDiagnostics {
+            closed_world,
+            violations,
+        })
     }
 
     /// Validate that `child` is a valid attenuation of this constraint set.
@@ -5784,6 +5884,76 @@ mod tests {
 
         // Should FAIL - url doesn't match pattern
         assert!(cs.matches(&args).is_err());
+    }
+
+    #[test]
+    fn test_constraint_diagnostics_reports_all_failures_deterministically() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("amount", Range::new(Some(0.0), Some(100.0)).unwrap());
+        cs.insert("currency", Exact::new("USD"));
+        cs.insert("memo", Wildcard::new());
+
+        let mut args = HashMap::new();
+        args.insert("amount".to_string(), ConstraintValue::Float(300.0));
+        args.insert("z_extra".to_string(), ConstraintValue::Boolean(true));
+        args.insert("a_extra".to_string(), ConstraintValue::Boolean(true));
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        assert!(diagnostics.closed_world);
+        assert!(!diagnostics.is_satisfied());
+        assert_eq!(
+            diagnostics
+                .violations
+                .iter()
+                .map(|violation| (violation.field.as_str(), violation.kind.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("a_extra", "unknown_field"),
+                ("z_extra", "unknown_field"),
+                ("amount", "constraint_mismatch"),
+                ("currency", "missing_required"),
+                ("memo", "missing_required"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_constraint_diagnostics_honors_allow_unknown_and_wildcard() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("payload", Wildcard::new());
+        cs.set_allow_unknown(true);
+
+        let mut args = HashMap::new();
+        args.insert(
+            "payload".to_string(),
+            ConstraintValue::String("anything".into()),
+        );
+        args.insert("extra".to_string(), ConstraintValue::Integer(1));
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        assert!(!diagnostics.closed_world);
+        assert!(diagnostics.is_satisfied());
+        assert!(cs.matches(&args).is_ok());
+    }
+
+    #[test]
+    fn test_constraint_diagnostics_and_matches_share_first_failure() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("required", Exact::new("value"));
+
+        let mut args = HashMap::new();
+        args.insert("extra".to_string(), ConstraintValue::Integer(1));
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        let first = diagnostics.violations.first().unwrap();
+        let error = cs.matches(&args).unwrap_err();
+        match error {
+            Error::ConstraintNotSatisfied { field, reason } => {
+                assert_eq!(field, first.field);
+                assert_eq!(reason, first.reason);
+            }
+            other => panic!("unexpected error: {other}"),
+        }
     }
 
     #[test]

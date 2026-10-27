@@ -38,7 +38,7 @@
 
 use crate::approval::{AuditEvent, AuditEventType};
 use crate::audit::log_event;
-use crate::constraints::{Constraint, ConstraintSet, ConstraintValue};
+use crate::constraints::{Constraint, ConstraintDiagnostics, ConstraintSet, ConstraintValue};
 use crate::crypto::{PublicKey, Signature, SigningKey};
 use crate::diff::ClearanceDiff;
 use crate::error::{Error, Result};
@@ -1331,6 +1331,28 @@ impl Warrant {
         };
 
         constraints.matches(args)
+    }
+
+    /// Diagnose all capability-constraint failures without authorizing the call.
+    ///
+    /// This resolves exact and wildcard tool capabilities exactly as
+    /// [`Self::check_constraints`] does, but returns deterministic structured
+    /// diagnostics for adapters and developer tooling. It does not verify any
+    /// cryptographic or temporal security property.
+    pub fn diagnose_constraints(
+        &self,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+    ) -> Result<ConstraintDiagnostics> {
+        let constraints = if let Some(c) = self.payload.tools.get(tool) {
+            c
+        } else if let Some(c) = self.payload.tools.get("*") {
+            c
+        } else {
+            return Ok(ConstraintDiagnostics::tool_not_authorized(tool));
+        };
+
+        constraints.diagnose(args)
     }
 
     /// Canonical PoP preimage: `POP_CONTEXT || CBOR((warrant_id_hex, tool, sorted_args, window_ts))`.

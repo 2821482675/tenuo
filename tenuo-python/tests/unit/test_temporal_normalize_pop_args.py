@@ -281,9 +281,46 @@ class TestNormalizeArgsForPop:
 
 
 def _make_mock_warrant(capabilities: dict) -> object:
-    """Build a minimal mock warrant object with .capabilities dict."""
+    """Build a minimal mock warrant exposing core-style diagnostics."""
     class MockWarrant:
-        pass
+        def diagnose_constraints(self, tool_name, args):
+            tool_cap = capabilities.get(tool_name)
+            if not isinstance(tool_cap, dict):
+                return {
+                    "closed_world": False,
+                    "violations": [{
+                        "field": "tool",
+                        "kind": "tool_not_authorized",
+                        "reason": "tool not authorized",
+                    }],
+                }
+
+            allow_unknown = tool_cap.get("_allow_unknown", False)
+            declared = set(tool_cap) - {"_allow_unknown"}
+            actual = set(args)
+            violations = []
+            if declared and not allow_unknown:
+                violations.extend(
+                    {
+                        "field": field,
+                        "kind": "unknown_field",
+                        "reason": "unknown field not allowed (zero-trust mode)",
+                    }
+                    for field in sorted(actual - declared)
+                )
+            violations.extend(
+                {
+                    "field": field,
+                    "kind": "missing_required",
+                    "reason": "missing required argument",
+                }
+                for field in sorted(declared - actual)
+            )
+            return {
+                "closed_world": bool(declared and not allow_unknown),
+                "violations": violations,
+            }
+
     w = MockWarrant()
     w.capabilities = capabilities
     return w
@@ -385,8 +422,9 @@ class TestPrevalidateArgsAgainstWarrant:
 
     def test_allow_unknown_capability_permits_extra_fields(self):
         """The pre-validator honors core's per-capability allow-unknown bit."""
-        warrant = _make_mock_warrant({"score_risk": {"application_id": None}})
-        warrant.allows_unknown_fields = lambda tool: tool == "score_risk"
+        warrant = _make_mock_warrant({
+            "score_risk": {"application_id": None, "_allow_unknown": True}
+        })
 
         _prevalidate_args_against_warrant(
             warrant, "score_risk", {"application_id": "X", "extra": "fine"}
