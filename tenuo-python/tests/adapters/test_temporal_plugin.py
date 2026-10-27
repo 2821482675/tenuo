@@ -663,6 +663,25 @@ def test_config_replace_preserves_provider_snapshots() -> None:
     assert calls == {"roots": 1, "srl": 1}
 
 
+def test_config_replace_cannot_enable_staleness_without_snapshot() -> None:
+    """A carried ready snapshot with no SRL still fails strict validation."""
+    from tenuo.exceptions import ConfigurationError
+
+    sk = SigningKey.generate()
+    config = TenuoPluginConfig(
+        key_resolver=EnvKeyResolver(),
+        trusted_roots=[sk.public_key],
+        revocation_list_provider=lambda: None,
+        revocation_refresh_secs=30,
+    )
+
+    with pytest.raises(ConfigurationError, match="initial revocation snapshot"):
+        dataclasses.replace(
+            config,
+            max_revocation_refresh_staleness_secs=90,
+        )
+
+
 def test_config_replace_after_root_refresh_uses_latest_snapshot() -> None:
     """A copied provider config must not reactivate its startup trust roots."""
     startup = SigningKey.generate().public_key

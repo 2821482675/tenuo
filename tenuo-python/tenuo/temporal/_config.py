@@ -487,6 +487,17 @@ class TenuoPluginConfig:
     _provider_state_lock: Any = field(
         default_factory=threading.RLock, init=False, repr=False, compare=False
     )
+    _last_trusted_roots_refresh_attempt_monotonic: float = field(
+        default_factory=time.monotonic, init=False, repr=False, compare=False
+    )
+    _last_revocation_refresh_attempt_monotonic: float = field(
+        default_factory=time.monotonic, init=False, repr=False, compare=False
+    )
+
+    def _provider_snapshot(self) -> _ProviderSnapshots:
+        """Return one coherent immutable provider snapshot."""
+        with self._provider_state_lock:
+            return self._provider_snapshots
 
     @property
     def _provider_snapshots_ready(self) -> bool:
@@ -665,17 +676,17 @@ class TenuoPluginConfig:
                         "SRL endpoint availability, credentials, and timeout settings, "
                         "or pass a static revocation_list for bootstrap."
                     ) from exc
-                if (
-                    initial_srl is None
-                    and self.max_revocation_refresh_staleness_secs is not None
-                ):
-                    from tenuo.exceptions import ConfigurationError
+            if (
+                initial_srl is None
+                and self.max_revocation_refresh_staleness_secs is not None
+            ):
+                from tenuo.exceptions import ConfigurationError
 
-                    raise ConfigurationError(
-                        "TenuoPluginConfig: revocation_list_provider returned None "
-                        "during startup, but max_revocation_refresh_staleness_secs "
-                        "requires an initial revocation snapshot."
-                    )
+                raise ConfigurationError(
+                    "TenuoPluginConfig: revocation_list_provider returned None "
+                    "during startup, but max_revocation_refresh_staleness_secs "
+                    "requires an initial revocation snapshot."
+                )
         else:
             # Static values may have been explicitly overridden through
             # dataclasses.replace(), so they take precedence over a carried

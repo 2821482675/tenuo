@@ -1421,7 +1421,8 @@ async def tenuo_complete_async_activity(
                     "revocation_list_provider returned None during async completion; "
                     "retaining last good revocation list"
                 )
-    last_good_revocations = worker_cfg._last_good_revocation_list
+    provider_snapshot = worker_cfg._provider_snapshot()
+    last_good_revocations = provider_snapshot.revocation_list
     if (
         refreshed_revocations is not _MISSING_REVOCATION_LIST
         and last_good_revocations is not None
@@ -1442,7 +1443,7 @@ async def tenuo_complete_async_activity(
     ):
         import time as _time
 
-        refreshed_at = worker_cfg._last_good_revocation_refresh_monotonic
+        refreshed_at = provider_snapshot.revocation_refreshed_at
         stale_for = (
             float("inf")
             if refreshed_at is None

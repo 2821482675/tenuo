@@ -13,7 +13,6 @@ import binascii
 import inspect as _inspect
 import json
 import logging
-import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional
@@ -943,34 +942,15 @@ class TenuoActivityInboundInterceptor:
         )
         self._trusted_roots_provider = config.trusted_roots_provider
         self._trusted_roots_refresh_interval = config.trusted_roots_refresh_interval_secs
-        import time as _time
-
-        self._last_trusted_roots_refresh = _time.monotonic()
-        self._last_srl_refresh: float = _time.monotonic()
-        self._last_successful_srl_refresh: float = (
-            config._last_good_revocation_refresh_monotonic
-            or self._last_srl_refresh
-        )
-        self._authorizer_lock = threading.Lock()
         self._authorizer: Optional[Any] = None
         self._retry_authorizer: Optional[Any] = None
         try:
-            from tenuo_core import Authorizer
-            initial_revocation_list = config._last_good_revocation_list
-            self._authorizer = _build_authorizer(
-                Authorizer,
-                config.trusted_roots,
-                config,
-                revocation_list=initial_revocation_list,
+            snapshot = config._provider_snapshot()
+            self._authorizer, self._retry_authorizer = self._build_authorizers(
+                snapshot.trusted_roots,
+                snapshot.revocation_list,
             )
-            if config.retry_pop_max_windows is not None:
-                self._retry_authorizer = _build_authorizer(
-                    Authorizer,
-                    config.trusted_roots,
-                    config,
-                    revocation_list=initial_revocation_list,
-                    pop_max_windows=config.retry_pop_max_windows,
-                )
+            self._installed_provider_snapshot = snapshot
         except ImportError as e:
             from tenuo.exceptions import ConfigurationError
             raise ConfigurationError(
@@ -978,6 +958,44 @@ class TenuoActivityInboundInterceptor:
                 "Install tenuo with the native extension, or ensure the "
                 "interpreter can import tenuo_core."
             ) from e
+
+    def _build_authorizers(
+        self,
+        roots: Any,
+        revocation_list: Any,
+    ) -> tuple[Any, Optional[Any]]:
+        """Build both authorizers from one coherent provider snapshot."""
+        from tenuo_core import Authorizer
+
+        authorizer = _build_authorizer(
+            Authorizer,
+            roots,
+            self._config,
+            revocation_list=revocation_list,
+        )
+        retry_authorizer = None
+        if self._config.retry_pop_max_windows is not None:
+            retry_authorizer = _build_authorizer(
+                Authorizer,
+                roots,
+                self._config,
+                revocation_list=revocation_list,
+                pop_max_windows=self._config.retry_pop_max_windows,
+            )
+        return authorizer, retry_authorizer
+
+    def _sync_authorizers_from_provider_snapshot(self) -> None:
+        """Install provider state published by another Activity interceptor."""
+        snapshot = self._config._provider_snapshot()
+        if snapshot is self._installed_provider_snapshot:
+            return
+        authorizer, retry_authorizer = self._build_authorizers(
+            snapshot.trusted_roots,
+            snapshot.revocation_list,
+        )
+        self._authorizer = authorizer
+        self._retry_authorizer = retry_authorizer
+        self._installed_provider_snapshot = snapshot
 
     def _maybe_refresh_trusted_roots(self) -> None:
         """Rebuild Authorizer from ``trusted_roots_provider`` on a fixed interval."""
@@ -988,53 +1006,44 @@ class TenuoActivityInboundInterceptor:
         if p is None or interval is None:
             return
         now = _time.monotonic()
-        if (now - self._last_trusted_roots_refresh) < interval:
+        if (
+            now - self._config._last_trusted_roots_refresh_attempt_monotonic
+        ) < interval:
+            self._sync_authorizers_from_provider_snapshot()
             return
-        with self._authorizer_lock:
+        with self._config._provider_state_lock:
             now2 = _time.monotonic()
-            if (now2 - self._last_trusted_roots_refresh) < interval:
-                return
-            try:
-                roots = list(p())
-            except Exception as e:
-                logger.warning("trusted_roots_provider failed during refresh: %s", e)
-                return
-            if not roots:
-                logger.warning(
-                    "trusted_roots_provider returned empty during refresh; "
-                    "keeping prior Authorizer"
-                )
-                return
-            try:
-                from tenuo_core import Authorizer
-
-                # NB: ``_build_authorizer`` uses its explicit ``trusted_roots``
-                # argument and re-reads ``clearance_requirements`` / the latest
-                # SRL from ``self._config``; we deliberately do not resync
-                # ``self._config.trusted_roots`` because ``dataclasses.replace``
-                # would re-run ``__post_init__`` and fail the either/or check
-                # when ``trusted_roots_provider=`` is set.
-                self._authorizer = _build_authorizer(
-                    Authorizer,
-                    roots,
-                    self._config,
-                    revocation_list=self._config._last_good_revocation_list,
-                )
-                if self._config.retry_pop_max_windows is not None:
-                    self._retry_authorizer = _build_authorizer(
-                        Authorizer,
-                        roots,
-                        self._config,
-                        revocation_list=self._config._last_good_revocation_list,
-                        pop_max_windows=self._config.retry_pop_max_windows,
+            if (
+                now2 - self._config._last_trusted_roots_refresh_attempt_monotonic
+            ) >= interval:
+                try:
+                    roots = list(p())
+                    if not roots:
+                        logger.warning(
+                            "trusted_roots_provider returned empty during refresh; "
+                            "keeping prior Authorizer"
+                        )
+                    else:
+                        snapshot = self._config._provider_snapshots
+                        authorizer, retry_authorizer = self._build_authorizers(
+                            roots,
+                            snapshot.revocation_list,
+                        )
+                        self._config._record_provider_snapshot(trusted_roots=roots)
+                        self._authorizer = authorizer
+                        self._retry_authorizer = retry_authorizer
+                        self._installed_provider_snapshot = (
+                            self._config._provider_snapshots
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "trusted_roots_provider failed during refresh: %s", e
                     )
-            except Exception as e:
-                logger.warning(
-                    "Authorizer rebuild failed during trusted root refresh: %s", e
-                )
-                return
-            self._config._record_provider_snapshot(trusted_roots=roots)
-            self._last_trusted_roots_refresh = _time.monotonic()
+                finally:
+                    self._config._last_trusted_roots_refresh_attempt_monotonic = (
+                        _time.monotonic()
+                    )
+        self._sync_authorizers_from_provider_snapshot()
 
     def _maybe_refresh_revocation_list(self) -> None:
         """Refresh the SRL from ``revocation_list_provider`` on a fixed interval."""
@@ -1046,10 +1055,14 @@ class TenuoActivityInboundInterceptor:
             self._raise_if_revocation_state_stale(_time.monotonic())
             return
         now = _time.monotonic()
-        if (now - self._last_srl_refresh) >= interval:
-            with self._authorizer_lock:
+        if (
+            now - self._config._last_revocation_refresh_attempt_monotonic
+        ) >= interval:
+            with self._config._provider_state_lock:
                 now2 = _time.monotonic()
-                if (now2 - self._last_srl_refresh) >= interval:
+                if (
+                    now2 - self._config._last_revocation_refresh_attempt_monotonic
+                ) >= interval:
                     try:
                         try:
                             srl = provider()
@@ -1064,34 +1077,42 @@ class TenuoActivityInboundInterceptor:
                                     "refresh; keeping prior revocation list"
                                 )
                             else:
-                                authorizers = [
-                                    auth
-                                    for auth in (self._authorizer, self._retry_authorizer)
-                                    if auth is not None
-                                ]
-                                for auth in authorizers:
-                                    auth.set_revocation_list(srl)
+                                snapshot = self._config._provider_snapshots
+                                authorizer, retry_authorizer = self._build_authorizers(
+                                    snapshot.trusted_roots,
+                                    srl,
+                                )
                                 self._config._record_provider_snapshot(
                                     revocation_list=srl
                                 )
-                                self._last_successful_srl_refresh = (
-                                    self._config._last_good_revocation_refresh_monotonic
-                                    or _time.monotonic()
+                                self._authorizer = authorizer
+                                self._retry_authorizer = retry_authorizer
+                                self._installed_provider_snapshot = (
+                                    self._config._provider_snapshots
                                 )
                     except Exception as e:
                         logger.warning("SRL refresh failed: %s", e)
                     finally:
                         # Advance on every attempt so a broken source retries on
                         # interval instead of on every subsequent activity.
-                        self._last_srl_refresh = _time.monotonic()
+                        self._config._last_revocation_refresh_attempt_monotonic = (
+                            _time.monotonic()
+                        )
 
+        self._sync_authorizers_from_provider_snapshot()
         self._raise_if_revocation_state_stale(_time.monotonic())
 
     def _raise_if_revocation_state_stale(self, now: float) -> None:
         max_staleness = self._config.max_revocation_refresh_staleness_secs
         if max_staleness is None:
             return
-        stale_for = max(0.0, now - self._last_successful_srl_refresh)
+        snapshot = self._config._provider_snapshot()
+        refreshed_at = snapshot.revocation_refreshed_at
+        stale_for = (
+            float("inf")
+            if refreshed_at is None
+            else max(0.0, now - refreshed_at)
+        )
         if stale_for >= max_staleness:
             raise RevocationStateStale(stale_for, max_staleness)
 
