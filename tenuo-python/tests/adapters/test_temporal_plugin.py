@@ -493,6 +493,76 @@ def test_revocation_list_provider_accepted() -> None:
     assert config.revocation_refresh_secs == 60
 
 
+def test_bounded_revocation_staleness_config_accepted() -> None:
+    """Strict freshness is opt-in and requires a usable initial snapshot."""
+    sk = SigningKey.generate()
+    srl = object()
+    config = TenuoPluginConfig(
+        signing_key=sk,
+        trusted_roots=[sk.public_key],
+        revocation_list_provider=lambda: srl,
+        revocation_refresh_secs=30,
+        max_revocation_refresh_staleness_secs=90,
+    )
+
+    assert config._last_good_revocation_list is srl
+    assert config.max_revocation_refresh_staleness_secs == 90
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        (
+            {"max_revocation_refresh_staleness_secs": 0},
+            "must be positive",
+        ),
+        (
+            {"max_revocation_refresh_staleness_secs": 60},
+            "requires revocation_list_provider",
+        ),
+        (
+            {
+                "revocation_list_provider": lambda: object(),
+                "max_revocation_refresh_staleness_secs": 60,
+            },
+            "requires revocation_refresh_secs",
+        ),
+        (
+            {
+                "revocation_list_provider": lambda: object(),
+                "revocation_refresh_secs": 60,
+                "max_revocation_refresh_staleness_secs": 30,
+            },
+            "greater than or equal",
+        ),
+    ],
+)
+def test_bounded_revocation_staleness_rejects_invalid_config(kwargs, message) -> None:
+    from tenuo.exceptions import ConfigurationError
+
+    sk = SigningKey.generate()
+    with pytest.raises(ConfigurationError, match=message):
+        TenuoPluginConfig(
+            signing_key=sk,
+            trusted_roots=[sk.public_key],
+            **kwargs,
+        )
+
+
+def test_bounded_revocation_staleness_requires_startup_snapshot() -> None:
+    from tenuo.exceptions import ConfigurationError
+
+    sk = SigningKey.generate()
+    with pytest.raises(ConfigurationError, match="initial revocation snapshot"):
+        TenuoPluginConfig(
+            signing_key=sk,
+            trusted_roots=[sk.public_key],
+            revocation_list_provider=lambda: None,
+            revocation_refresh_secs=30,
+            max_revocation_refresh_staleness_secs=90,
+        )
+
+
 def test_config_private_provider_state_is_excluded_from_equality() -> None:
     """Provider caches and locks must not make identical configs compare unequal."""
     sk = SigningKey.generate()
@@ -585,6 +655,10 @@ def test_config_replace_preserves_provider_snapshots() -> None:
     assert copy._provider_snapshots_ready
     assert copy._last_good_trusted_roots == [sk.public_key]
     assert copy._last_good_revocation_list is srl
+    assert (
+        copy._last_good_revocation_refresh_monotonic
+        == config._last_good_revocation_refresh_monotonic
+    )
     assert copy.trusted_roots == [sk.public_key]
     assert calls == {"roots": 1, "srl": 1}
 

@@ -1435,6 +1435,23 @@ async def tenuo_complete_async_activity(
         if refreshed_revocations is not _MISSING_REVOCATION_LIST
         else last_good_revocations
     )
+    max_revocation_staleness = worker_cfg.max_revocation_refresh_staleness_secs
+    if (
+        max_revocation_staleness is not None
+        and refreshed_revocations is _MISSING_REVOCATION_LIST
+    ):
+        import time as _time
+
+        refreshed_at = worker_cfg._last_good_revocation_refresh_monotonic
+        stale_for = (
+            float("inf")
+            if refreshed_at is None
+            else max(0.0, _time.monotonic() - refreshed_at)
+        )
+        if stale_for >= max_revocation_staleness:
+            from tenuo.temporal.exceptions import RevocationStateStale
+
+            raise RevocationStateStale(stale_for, max_revocation_staleness)
 
     from tenuo.exceptions import ConfigurationError
     from tenuo_core import Authorizer

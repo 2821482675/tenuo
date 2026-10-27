@@ -122,6 +122,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "WarrantExpired": ("tenuo.temporal.exceptions", "WarrantExpired"),
     "ChainValidationError": ("tenuo.temporal.exceptions", "ChainValidationError"),
     "PopVerificationError": ("tenuo.temporal.exceptions", "PopVerificationError"),
+    "RevocationStateStale": ("tenuo.temporal.exceptions", "RevocationStateStale"),
     "LocalActivityError": ("tenuo.temporal.exceptions", "LocalActivityError"),
     "KeyResolutionError": ("tenuo.temporal.exceptions", "KeyResolutionError"),
     # _constants

@@ -75,12 +75,14 @@ from tenuo.temporal.exceptions import (
     ChainValidationError,
     LocalActivityError,
     PopVerificationError,
+    RevocationStateStale,
     TemporalConstraintViolation,
     TenuoArgNormalizationError,
     TenuoContextError,
     TenuoTemporalError,
     WarrantExpired,
     _build_non_retryable_application_error,
+    _build_retryable_application_error,
     _error_type_for_wire,  # noqa: F401 — re-exported for back-compat (tests import from here)
 )
 
@@ -912,6 +914,8 @@ def _activity_denial_error_type(
             return "chain_invalid"
         if isinstance(exc, WarrantExpired):
             return "expired"
+        if isinstance(exc, RevocationStateStale):
+            return "revocation_state_stale"
         from tenuo._enforcement import _enforcement_result_from_chain_error
 
         return _enforcement_result_from_chain_error(exc, "", {}, None).error_type
@@ -943,6 +947,10 @@ class TenuoActivityInboundInterceptor:
 
         self._last_trusted_roots_refresh = _time.monotonic()
         self._last_srl_refresh: float = _time.monotonic()
+        self._last_successful_srl_refresh: float = (
+            config._last_good_revocation_refresh_monotonic
+            or self._last_srl_refresh
+        )
         self._authorizer_lock = threading.Lock()
         self._authorizer: Optional[Any] = None
         self._retry_authorizer: Optional[Any] = None
@@ -1035,40 +1043,57 @@ class TenuoActivityInboundInterceptor:
         provider = self._config.revocation_list_provider
         interval = self._config.revocation_refresh_secs
         if provider is None or interval is None:
+            self._raise_if_revocation_state_stale(_time.monotonic())
             return
         now = _time.monotonic()
-        if (now - self._last_srl_refresh) < interval:
+        if (now - self._last_srl_refresh) >= interval:
+            with self._authorizer_lock:
+                now2 = _time.monotonic()
+                if (now2 - self._last_srl_refresh) >= interval:
+                    try:
+                        try:
+                            srl = provider()
+                        except Exception as e:
+                            logger.warning(
+                                "revocation_list_provider failed during refresh: %s", e
+                            )
+                        else:
+                            if srl is None:
+                                logger.warning(
+                                    "revocation_list_provider returned None during "
+                                    "refresh; keeping prior revocation list"
+                                )
+                            else:
+                                authorizers = [
+                                    auth
+                                    for auth in (self._authorizer, self._retry_authorizer)
+                                    if auth is not None
+                                ]
+                                for auth in authorizers:
+                                    auth.set_revocation_list(srl)
+                                self._config._record_provider_snapshot(
+                                    revocation_list=srl
+                                )
+                                self._last_successful_srl_refresh = (
+                                    self._config._last_good_revocation_refresh_monotonic
+                                    or _time.monotonic()
+                                )
+                    except Exception as e:
+                        logger.warning("SRL refresh failed: %s", e)
+                    finally:
+                        # Advance on every attempt so a broken source retries on
+                        # interval instead of on every subsequent activity.
+                        self._last_srl_refresh = _time.monotonic()
+
+        self._raise_if_revocation_state_stale(_time.monotonic())
+
+    def _raise_if_revocation_state_stale(self, now: float) -> None:
+        max_staleness = self._config.max_revocation_refresh_staleness_secs
+        if max_staleness is None:
             return
-        with self._authorizer_lock:
-            now2 = _time.monotonic()
-            if (now2 - self._last_srl_refresh) < interval:
-                return
-            try:
-                try:
-                    srl = provider()
-                except Exception as e:
-                    logger.warning("revocation_list_provider failed during refresh: %s", e)
-                    return
-                if srl is None:
-                    logger.warning(
-                        "revocation_list_provider returned None during refresh; "
-                        "keeping prior revocation list"
-                    )
-                    return
-                authorizers = [
-                    auth
-                    for auth in (self._authorizer, self._retry_authorizer)
-                    if auth is not None
-                ]
-                for auth in authorizers:
-                    auth.set_revocation_list(srl)
-                self._config._record_provider_snapshot(revocation_list=srl)
-            except Exception as e:
-                logger.warning("SRL refresh failed: %s", e)
-            finally:
-                # Advance on every attempt so a broken source retries on
-                # interval instead of on every subsequent activity.
-                self._last_srl_refresh = _time.monotonic()
+        stale_for = max(0.0, now - self._last_successful_srl_refresh)
+        if stale_for >= max_staleness:
+            raise RevocationStateStale(stale_for, max_staleness)
 
     def init(self, outbound: Any) -> None:
         """Called by Temporal to initialize the interceptor with an outbound impl."""
@@ -1085,6 +1110,14 @@ class TenuoActivityInboundInterceptor:
         """
         try:
             return _build_non_retryable_application_error(exc)
+        except ImportError:
+            return exc
+
+    @staticmethod
+    def _wrap_as_retryable(exc: Exception) -> Exception:
+        """Wrap a transient authorization dependency failure for Temporal retry."""
+        try:
+            return _build_retryable_application_error(exc)
         except ImportError:
             return exc
 
@@ -1276,7 +1309,22 @@ class TenuoActivityInboundInterceptor:
 
         # -- 7. Trusted-Root & Revocation Refresh --
         self._maybe_refresh_trusted_roots()
-        self._maybe_refresh_revocation_list()
+        try:
+            self._maybe_refresh_revocation_list()
+        except RevocationStateStale as exc:
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args=args,
+                reason=str(exc),
+                constraint="revocation_state_stale",
+                start_ns=start_ns,
+                authorizer=self._authorizer,
+                presented_chain=list(chain) if chain else [warrant],
+                exc=exc,
+            )
+            raise self._wrap_as_retryable(exc) from exc
 
         if self._authorizer is None:
             from tenuo.exceptions import ConfigurationError

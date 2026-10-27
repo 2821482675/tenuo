@@ -889,6 +889,94 @@ class TestTenuoPluginConfig:
             "is not re-invoked on every subsequent activity"
         )
 
+    def test_revocation_refresh_fails_closed_after_configured_staleness(
+        self, monkeypatch
+    ):
+        """A provider outage may use cached state only within the configured bound."""
+        from tenuo import SigningKey
+        from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
+        from tenuo.temporal.exceptions import RevocationStateStale
+
+        import tenuo_core  # type: ignore[import-not-found]
+
+        class _FakeAuthorizer:
+            def __init__(self, *, trusted_roots, **kwargs):
+                self.trusted_roots = list(trusted_roots)
+
+            def require_clearance(self, tool, clearance):  # pragma: no cover
+                pass
+
+            def set_revocation_list(self, srl):
+                self.srl = srl
+
+        monkeypatch.setattr(tenuo_core, "Authorizer", _FakeAuthorizer)
+
+        root = SigningKey.generate().public_key
+        initial_srl = object()
+        calls = 0
+
+        def provider():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return initial_srl
+            raise TimeoutError("revocation service unavailable")
+
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[root],
+            revocation_list_provider=provider,
+            revocation_refresh_secs=1,
+            max_revocation_refresh_staleness_secs=5,
+        )
+        ai = TenuoActivityInboundInterceptor(MagicMock(), cfg, "test")
+        ai._last_srl_refresh = -1e9
+        ai._last_successful_srl_refresh = -1e9
+
+        with pytest.raises(RevocationStateStale) as exc_info:
+            ai._maybe_refresh_revocation_list()
+
+        assert exc_info.value.max_staleness_seconds == 5
+        assert cfg._last_good_revocation_list is initial_srl
+        assert ai._last_srl_refresh > 0
+
+    def test_successful_revocation_refresh_resets_staleness_clock(self, monkeypatch):
+        """A successfully installed SRL restores authorization availability."""
+        from tenuo import SigningKey
+        from tenuo.temporal._interceptors import TenuoActivityInboundInterceptor
+
+        import tenuo_core  # type: ignore[import-not-found]
+
+        class _FakeAuthorizer:
+            def __init__(self, *, trusted_roots, **kwargs):
+                self.trusted_roots = list(trusted_roots)
+
+            def require_clearance(self, tool, clearance):  # pragma: no cover
+                pass
+
+            def set_revocation_list(self, srl):
+                self.srl = srl
+
+        monkeypatch.setattr(tenuo_core, "Authorizer", _FakeAuthorizer)
+
+        root = SigningKey.generate().public_key
+        snapshots = iter((object(), object()))
+        cfg = TenuoPluginConfig(
+            key_resolver=EnvKeyResolver(),
+            trusted_roots=[root],
+            revocation_list_provider=lambda: next(snapshots),
+            revocation_refresh_secs=1,
+            max_revocation_refresh_staleness_secs=5,
+        )
+        ai = TenuoActivityInboundInterceptor(MagicMock(), cfg, "test")
+        ai._last_srl_refresh = -1e9
+        ai._last_successful_srl_refresh = -1e9
+
+        ai._maybe_refresh_revocation_list()
+
+        assert ai._last_successful_srl_refresh > 0
+        assert cfg._last_good_revocation_list is ai._authorizer.srl
+
     def test_retry_authorizer_selected_on_retry_attempt(self):
         """``_retry_authorizer`` must be used for ``info.attempt > 1``."""
         from tenuo import SigningKey
@@ -2751,6 +2839,58 @@ async def test_async_activity_completion_revocation_provider_failure_falls_back(
 
     handle.complete.assert_awaited_once_with("result")
     assert "retaining last good revocation list" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_async_completion_fails_closed_when_revocation_snapshot_is_stale():
+    import dataclasses
+
+    from tenuo_core import SignedRevocationList, SigningKey, Warrant
+    from tenuo.temporal import tenuo_complete_async_activity
+    from tenuo.temporal._state import _set_worker_config
+    from tenuo.temporal.exceptions import RevocationStateStale
+
+    root_key = SigningKey.generate()
+    warrant = Warrant.issue(
+        root_key,
+        capabilities={"external_job": {}},
+        holder=root_key.public_key,
+    )
+    builder = SignedRevocationList.builder()
+    builder.version(1)
+    initial_srl = builder.build(root_key)
+    calls = 0
+
+    def provider():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return initial_srl
+        raise TimeoutError("revocation provider timed out")
+
+    cfg = TenuoPluginConfig(
+        key_resolver=AsyncMock(),
+        trusted_roots=[root_key.public_key],
+        revocation_list_provider=provider,
+        revocation_refresh_secs=1,
+        max_revocation_refresh_staleness_secs=5,
+    )
+    cfg._provider_snapshots = dataclasses.replace(
+        cfg._provider_snapshots,
+        revocation_refreshed_at=-1e9,
+    )
+    _set_worker_config(cfg, task_queue="async-completion-stale-revocations")
+    handle = AsyncMock()
+
+    with pytest.raises(RevocationStateStale):
+        await tenuo_complete_async_activity(
+            handle,
+            "result",
+            warrant,
+            task_queue="async-completion-stale-revocations",
+        )
+
+    handle.complete.assert_not_awaited()
 
 
 def test_revocation_provider_installs_startup_snapshot():
