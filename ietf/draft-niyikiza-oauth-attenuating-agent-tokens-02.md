@@ -8,7 +8,6 @@ submissiontype: IETF
 ipr: trust200902
 area: Security
 workgroup: Web Authorization Protocol (OAuth)
-date: 2026-10-20
 
 author:
   - fullname: Niki Aimable Niyikiza
@@ -2750,6 +2749,11 @@ that break -01 implementations:
 
 Byte-exact JWS vectors covering the verifier changes are published in
 the suite described in Appendix E ({{AAT-VECTORS}}).
+
+Review of -01 on the OAuth list is addressed in Section 1.3 (the
+comparison with HMAC-chained Macaroons and SPKI/SDSI), Section 9.1.1
+(replay of parent and intermediate tokens), and Section 9.4 (no
+re-keying on attenuation).
 
 # Acknowledgments
 {:numbered="false"}
