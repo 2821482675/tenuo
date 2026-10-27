@@ -50,4 +50,4 @@ Please report both; ambiguities are fixed in the draft.
 
 | Implementation | Language | Version | Suite SHA-256 | Agree | Skipped | Notes |
 |---|---|---|---|---|---|---|
-| `gen_vectors.py` self-check | Python | this repository | `2a3e607c9821a23e…` | 227 / 227 | 0 | Generates the suite; its Section 8 verifier shares no code with Tenuo. |
+| `gen_vectors.py` self-check | Python | this repository | `b7a42e9dfdce7fbc…` | 229 / 229 | 0 | Generates the suite; its Section 8 verifier shares no code with Tenuo. |

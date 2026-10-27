@@ -1505,6 +1505,26 @@ add("J.16.6", "any: cross-type clause subsumption", None,
     "format: any[one_of[pdf, csv], exact xlsx] -> any[exact pdf]. exact pdf ⊑ one_of[pdf, csv] per the cross-type rules.",
     [CR, cd_], pop_sign(pop_claims(uuid7ish(0xAF6), cd_, "export", {"format": "pdf", "limit": 3}), WK),
     "export", {"format": "pdf", "limit": 3}, "PERMIT")
+# split: parent any[one_of[pdf, csv]] -> derived any[exact pdf, exact csv]
+SR = jws_sign(root_claims(uuid7ish(0xF4), {"export": {"format": ANY({"constraint_type": "one_of", "values": ["pdf", "csv"]}), "limit": WILD}}, ORCH), CP)
+sd_ = jws_sign(derived_claims(uuid7ish(0xF1A), SR, ORCH, WK, {"export": {"format": ANY(ex("pdf"), ex("csv")), "limit": WILD}},
+                              IAT_ROOT + 60, 1704069000, 2), ORCH)
+add("J.16.7", "any: one parent clause split into two derived clauses", None,
+    "format: any[one_of[pdf, csv]] -> any[exact pdf, exact csv]. The derived any has more clauses than its parent, "
+    "and each is subsumed by the one parent clause (§4.5). A verifier that rejects added clauses, or that matches "
+    "derived clauses to parent clauses one to one, would DENY.",
+    [SR, sd_], pop_sign(pop_claims(uuid7ish(0xAFA), sd_, "export", {"format": "csv", "limit": 3}), WK),
+    "export", {"format": "csv", "limit": 3}, "PERMIT")
+# union: parent any[range 0..10, range 5..20] -> derived any[range 0..20]
+UR = jws_sign(root_claims(uuid7ish(0xF5), {"export": {"format": WILD, "limit": ANY(rng(min=0, max=10), rng(min=5, max=20))}}, ORCH), CP)
+ud_ = jws_sign(derived_claims(uuid7ish(0xF1B), UR, ORCH, WK, {"export": {"format": WILD, "limit": ANY(rng(min=0, max=20))}},
+                              IAT_ROOT + 60, 1704069000, 2), ORCH)
+add("J.16.8", "any: derived clause covered only by the union of parent clauses", None,
+    "limit: any[range 0..10, range 5..20] -> any[range 0..20]. The parent's clauses together accept every value "
+    "range 0..20 accepts, but no single parent clause subsumes it, so the clause-wise rule of §4.5 denies at step 4p4. "
+    "A verifier that compares accepted values instead of clauses would PERMIT.",
+    [UR, ud_], pop_sign(pop_claims(uuid7ish(0xAFB), ud_, "export", {"format": "pdf", "limit": 15}), WK),
+    "export", {"format": "pdf", "limit": 15}, "DENY", "4p4")
 
 
 # --- J.8 empty maps, unknown types, flatten ----------------------------------
