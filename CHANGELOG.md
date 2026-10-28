@@ -49,6 +49,16 @@ Two checks are stricter, and some calls that used to pass now fail:
   still covers an approval dated slightly in the future. The `clock_tolerance_secs`
   argument of `verify_approvals` now applies to `approved_at` only.
 
+### Fixed
+
+- **WASM builders reject malformed Shlex and approval gates.** Invalid command
+  lists, unsupported Shlex options, and malformed nested approval constraints
+  fail warrant creation instead of being silently omitted. Shlex remains a
+  syntax constraint; path authorization uses explicit structured arguments.
+  Valid approval-gate display messages are preserved. The legacy delegated
+  builder inherits parent approval policy and rejects supplied replacements
+  it cannot apply rather than silently ignoring them.
+
 ### Security
 
 - **Shlex (type 128) uses one POSIX-quoting tokenizer across every SDK.**
