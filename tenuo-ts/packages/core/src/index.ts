@@ -4,10 +4,12 @@ export type {
   ApprovalRequirementStatus,
   ConstraintDiagnostics,
   ConstraintViolationKind,
+  ShlexCheck,
 } from "./wasm.ts";
 
 export {
   approvalRequirement,
+  checkShlex,
   diagnoseConstraints,
   evaluateApprovalGates,
   inspectApprovalGate,

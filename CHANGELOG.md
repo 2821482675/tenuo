@@ -36,6 +36,32 @@ Two checks are stricter, and some calls that used to pass now fail:
   still covers an approval dated slightly in the future. The `clock_tolerance_secs`
   argument of `verify_approvals` now applies to `approved_at` only.
 
+### Security
+
+- **Shlex (type 128) uses one POSIX-quoting tokenizer across every SDK.**
+  Quoted and escaped operator characters are literal arguments
+  (`ls "foo; bar"`, `echo ";"`, `find . -exec rm {} \;`). A 0.3.2/0.3.3
+  verifier still rejects those commands. Words break only at unquoted spaces,
+  tabs, and operators (`./ls,evil` is one command name, and `#` is an ordinary
+  word character so `ls foo#; rm -rf /` and `ls #; rm` are both rejected). `$`
+  and backticks are rejected everywhere in the raw command. Each `allow` entry
+  matches the command word literally (`allow=["ls"]` matches `ls` and does not
+  match `/usr/bin/ls`, `./ls`, or `/tmp/attacker/ls`), and any command word
+  containing `..` is rejected. Because older Rust verifiers accepted any path
+  whose basename matched a bare `allow` entry (such as `/tmp/attacker/ls` for
+  `allow=["ls"]`), upgrade every enforcement point before relying on literal
+  command-word matching. The shared decisions are `tests/vectors/shlex.json`.
+
+### Changed
+
+- **Python `Shlex` is the core class, and explanations come from that
+  check.** `DANGEROUS_TOKENS`, `EXPANSION_CHARS`, and `CONTROL_CHARS` are
+  gone. `allowed_bins` is the same list as `allow`, not a set. `isinstance`
+  checks see the core class. `Shlex.check(command)` returns the decision
+  (`allowed`, `reason`, `tokens`, `operators`, `expansion`, `controls`,
+  `binary_allowed`). TypeScript `checkShlex(allow, command)` returns the same
+  decision.
+
 ### Fixed
 
 - **Temporal structured arguments preserve their type in PoP.** Structured
