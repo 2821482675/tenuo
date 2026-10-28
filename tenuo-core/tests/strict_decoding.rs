@@ -47,13 +47,17 @@ fn assert_unknown_field(err: impl std::fmt::Display) {
 fn signed_approval_rejects_unknown_members() {
     let key = SigningKey::generate();
     let now = Utc::now();
-    let payload = ApprovalPayload::new(
+    let mut payload = ApprovalPayload::new(
         [7; 32],
         rand::random(),
         "user:alice".into(),
         now,
         now + Duration::minutes(5),
     );
+    payload.extensions = Some(std::collections::HashMap::from([(
+        "com.example.audit".into(),
+        vec![0xa1, 0x01, 0x02],
+    )]));
 
     // Envelope
     let envelope = to_cbor(&SignedApproval::create(payload.clone(), &key));
@@ -76,7 +80,8 @@ fn signed_approval_rejects_unknown_members() {
         }
     };
     let payload_bytes = to_cbor(&payload);
-    sign(payload_bytes.clone()).verify().unwrap();
+    let verified = sign(payload_bytes.clone()).verify().unwrap();
+    assert_eq!(verified.extensions, payload.extensions);
     let extended = to_cbor(&with_unknown_member(to_value(&payload_bytes)));
     assert_unknown_field(sign(extended).verify().unwrap_err());
 }
