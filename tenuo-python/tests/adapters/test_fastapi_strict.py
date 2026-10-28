@@ -346,6 +346,21 @@ def test_mount_fails_unless_exempt():
     _start(app)
 
 
+@pytest.mark.parametrize("kind", ["subapp", "static"])
+@pytest.mark.parametrize("exemption", [None, "/", ""])
+def test_root_mount_requires_and_accepts_an_explicit_exemption(kind, exemption, tmp_path):
+    from starlette.staticfiles import StaticFiles
+
+    app = _app(strict=True, exempt=[] if exemption is None else [exemption])
+    mounted = FastAPI() if kind == "subapp" else StaticFiles(directory=tmp_path)
+    app.mount("/", mounted)
+    if exemption is None:
+        with pytest.raises(ConfigurationError, match=r"MOUNT /$"):
+            _start(app)
+    else:
+        _start(app)
+
+
 def test_websocket_without_guard_fails_startup():
     app = _app(strict=True)
 

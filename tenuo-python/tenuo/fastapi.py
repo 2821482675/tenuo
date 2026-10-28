@@ -240,10 +240,14 @@ def _is_builtin_docs_route(app: Any, route: Any) -> bool:
 
 def _unguarded_routes(app: Any, exempt: Iterable[str]) -> List[str]:
     """Describe each non-exempt route without a TenuoGuard, e.g. ``"GET /items"``."""
-    skip = set(exempt)
+    skip = {"/" if path == "" else path for path in exempt}
     found: List[Tuple[str, str]] = []
     for route in _iter_app_routes(app):
-        path = getattr(route, "path", None) or repr(route)
+        path = getattr(route, "path", None)
+        if path == "":
+            path = "/"  # Starlette represents root mounts with an empty path.
+        elif path is None:
+            path = repr(route)
         if path in skip or _is_builtin_docs_route(app, route):
             continue
         dependant = getattr(route, "dependant", None)
