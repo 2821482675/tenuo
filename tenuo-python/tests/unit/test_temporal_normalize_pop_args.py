@@ -520,6 +520,32 @@ class TestNormalizePopArgValuePydantic:
 
         assert _normalize_pop_arg_value(Ctx(topic="events"), "c") == {"topic": "events"}
 
+    @pytest.mark.parametrize("configured_on", ["field", "config"])
+    def test_v1_inclusion_filters_that_hide_siblings_are_refused(self, configured_on):
+        v1 = pytest.importorskip("pydantic.v1")
+
+        if configured_on == "field":
+
+            class Ctx(v1.BaseModel):
+                visible: str = v1.Field(include=True)
+                hidden: str
+
+        else:
+
+            class Ctx(v1.BaseModel):
+                visible: str
+                hidden: str
+
+                class Config:
+                    fields = {"visible": {"include": True}}
+
+        original = Ctx(visible="same", hidden="one")
+        substituted = Ctx(visible="same", hidden="two")
+        assert original.dict() == substituted.dict() == {"visible": "same"}
+        for value in (original, substituted):
+            with pytest.raises(TenuoArgNormalizationError, match="inclusion-filtered"):
+                _normalize_pop_arg_value(value, "c")
+
     def test_model_class_is_not_a_model_value(self):
         pydantic = pytest.importorskip("pydantic")
 

@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dataclasses, dictionaries, and lists are signed by PoP as typed,
   JSON-compatible values. The signed representation matches Temporal's default
   Pydantic converter, including serialization aliases, and rejects lossy custom
-  serialization, alias collisions, unordered collections, out-of-range
+  serialization filters, alias collisions, unordered collections, out-of-range
   integers, bare bytes, and converter-dependent nested values or dictionary
   keys.
   `tenuo.temporal.framework_args("tool_ctx")` declares a framework-owned

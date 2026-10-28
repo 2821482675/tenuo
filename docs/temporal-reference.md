@@ -540,9 +540,9 @@ floats, integers outside the signed 64-bit core range, converter-dependent
 dictionary keys such as `None`, colliding JSON dictionary keys, and arbitrary
 classes. Typed Pydantic fields for values such as `bytes` and `datetime` are
 supported because the Pydantic schema defines their JSON representation. Models
-with colliding serialization aliases, excluded or conditionally excluded fields,
-custom serializers, secret fields, or overridden dump methods are refused
-because their signed view could omit or rewrite a value the activity receives.
+with colliding serialization aliases, exclusion or inclusion filters, custom
+serializers, secret fields, or overridden dump methods are refused because their
+signed view could omit or rewrite a value the activity receives.
 Pass unsafe values as separate supported arguments or replace them with an
 explicitly ordered, JSON-compatible representation.
 

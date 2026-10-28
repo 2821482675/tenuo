@@ -246,6 +246,7 @@ def _check_model_is_signable(model: Any, field_name: str) -> None:
     if fields is None:  # Pydantic v1
         fields = {name: getattr(field, "field_info", field) for name, field in getattr(cls, "__fields__", {}).items()}
     excluded = sorted(name for name, info in fields.items() if getattr(info, "exclude", None))
+    included = sorted(name for name, info in fields.items() if getattr(info, "include", None) is not None)
     decorators = getattr(cls, "__pydantic_decorators__", None)
     serializers = bool(decorators and (decorators.field_serializers or decorators.model_serializers))
     config = getattr(cls, "__config__", None)  # Pydantic v1
@@ -256,6 +257,8 @@ def _check_model_is_signable(model: Any, field_name: str) -> None:
     why = (
         f"excluded field(s) {', '.join(excluded)}"
         if excluded
+        else f"inclusion-filtered field(s) {', '.join(included)}"
+        if included
         else "a custom serializer"
         if serializers
         else f"an overridden {overridden}() method"
