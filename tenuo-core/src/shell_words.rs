@@ -134,7 +134,7 @@ impl Lexer {
             };
             match quote {
                 None => match ch {
-                    ' ' | '\t' | '\n' | '\r' => return Ok(text),
+                    ' ' | '\t' | '\n' => return Ok(text),
                     '\\' => {
                         self.bump();
                         let Some(escaped) = self.bump() else {
@@ -196,7 +196,7 @@ impl Lexer {
         self.skip_blank();
         match self.peek() {
             None => Ok(None),
-            Some('\n' | '\r') => {
+            Some('\n') => {
                 let ch = self.bump().expect("peeked");
                 Ok(Some(Token {
                     text: ch.to_string(),
@@ -535,6 +535,7 @@ mod tests {
             ("echo foo\\\n bar", vec!["echo", "foo", "bar"]),
             ("cat >\\\n> file", vec!["cat", ">>", "file"]),
             ("ls &\\\n& rm", vec!["ls", "&&", "rm"]),
+            ("echo a\rb", vec!["echo", "a\rb"]),
             ("echo \\\n", vec!["echo"]),
             ("\\\n", Vec::<&str>::new()),
             ("café --help", vec!["café", "--help"]),
