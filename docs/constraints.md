@@ -656,7 +656,10 @@ constraint.is_safe("not-a-url")  # False
 
 ### Shlex
 
-Validates that a shell command string is safe and simple. Ensures the command is a single executable with literal arguments, preventing shell injection.
+Checks a command string against a binary allowlist and a defined subset of POSIX
+shell syntax. Every SDK uses the same core tokenizer for matching, explanations,
+and attenuation. The check does not execute the command, resolve the executable,
+or identify the resources the program will access.
 
 ```python
 from tenuo import Shlex
@@ -668,7 +671,7 @@ constraint.matches("ls -la /tmp")           # True
 constraint.matches("cat file.txt")          # True
 constraint.matches("ls -la; rm -rf /")      # False (operator blocked)
 constraint.matches('ls "foo; bar"')         # True (quoted semicolon is literal)
-constraint.matches('echo ";"')              # True (a quoted operator is an argument)
+Shlex(allow=["echo"]).matches('echo ";"')    # True (a quoted operator is an argument)
 constraint.matches("ls -la # note")         # True (literal # with no operators)
 constraint.matches("ls #; rm")              # False (# is a word character, so ; is still blocked)
 constraint.matches("ls foo#; rm -rf /")     # False (# inside a word does not hide ;)
@@ -701,12 +704,15 @@ A quoted or backslash-escaped operator is a literal argument, so `find . -exec r
 > Glob characters (`*`, `?`, `[`) are literal arguments to this check. A
 > shell that runs the command may still expand them. Bash may also expand
 > `{a,b,c}`; this check keeps that as one word. If you need to restrict file
-> access, combine `Shlex` with `Subpath`.
+> access, expose explicit path arguments checked with `Subpath` and execute the
+> checked values through a trusted runner.
 
 > [!WARNING]
-> **Tier 1 Mitigation Only**
+> **Syntax checks and execution**
 >
-> Shlex validates **shell syntax**, not **tool semantics**. Some tools interpret arguments as commands:
+> `Shlex` can be used in local policies and signed warrants. Its guarantee covers
+> command syntax and the command word; each program still interprets its own
+> arguments. Some tools interpret arguments as commands:
 >
 > ```python
 > # These pass Shlex but the tool executes the argument:
@@ -715,7 +721,11 @@ A quoted or backslash-escaped operator is a literal argument, so `find . -exec r
 > "find . -exec rm {} \\;"
 > ```
 >
-> For complete protection, use `proc_jail` which bypasses the shell entirely via `execve()`.
+> For tools that execute commands, prefer structured operations with explicit
+> flags, paths, and working directories, authorize those values, and execute
+> them without a shell. Program-specific execution profiles must account for
+> options and configuration that run other programs. Filesystem or process
+> isolation is needed when the program itself must be confined.
 
 > [!NOTE]
 > **Dangerous Binaries**
