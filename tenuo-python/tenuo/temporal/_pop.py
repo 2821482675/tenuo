@@ -13,6 +13,7 @@ import base64
 import dataclasses as _dataclasses
 import json
 import logging
+import math
 from typing import Any, Dict, List, Optional, Sequence
 
 from tenuo.temporal.exceptions import (
@@ -52,8 +53,7 @@ def _add_workflow_scope(
     if reserved_args:
         names = ", ".join(repr(name) for name in sorted(reserved_args))
         raise TenuoContextError(
-            f"Activity argument name(s) {names} are reserved: the plugin fills "
-            "them from the running Temporal workflow"
+            f"Activity argument name(s) {names} are reserved: the plugin fills them from the running Temporal workflow"
         )
 
     try:
@@ -77,9 +77,7 @@ def _add_workflow_scope(
             "is unique only within its namespace"
         )
     if not workflow_namespace or not workflow_id:
-        raise TenuoContextError(
-            f"Temporal did not provide a complete workflow identity for {tool_name!r}"
-        )
+        raise TenuoContextError(f"Temporal did not provide a complete workflow identity for {tool_name!r}")
 
     return {
         **args,
@@ -109,8 +107,7 @@ def _validate_no_reserved_workflow_parameters(activity_fn: Optional[Any]) -> Non
     if reserved_parameters:
         names = ", ".join(repr(name) for name in sorted(reserved_parameters))
         raise TenuoContextError(
-            f"Activity parameter name(s) {names} are reserved: the plugin fills "
-            "them from the running Temporal workflow"
+            f"Activity parameter name(s) {names} are reserved: the plugin fills them from the running Temporal workflow"
         )
 
 
@@ -187,21 +184,11 @@ def _args_to_dict_by_fn(
 # ---------------------------------------------------------------------------
 # PoP arg normalization — Fix for FINDING-002 (loan-underwriting dogfooding)
 # ---------------------------------------------------------------------------
-# Tenuo's PoP signing runs inside the Temporal workflow sandbox. The Rust
-# CBOR encoder (py_to_constraint_value in tenuo-core) only accepts primitive
-# types: str, int, float, bool, list. Python dataclasses — idiomatic in
-# Temporal activity signatures — would otherwise crash with:
-#   ValueError: value must be str, int, float, bool, or list
-#
-# This layer normalizes non-primitive activity args to canonical JSON strings
-# *before* warrant.sign() sees them. Normalization only affects what PoP signs;
-# the activity still receives its original Python object via Temporal's data
-# converter. Security properties are preserved:
-#   - Invocation binding: json.dumps(sort_keys=True) is deterministic; same
-#     input → same PoP bytes; substitution requires resigning with holder key.
-#   - Constraint scoping: tenuo-core constraints operate on top-level arg names
-#     only. Structural matching already requires lifting to primitive top-level
-#     args. Stringification does not remove a capability that exists today.
+# Tenuo's PoP signing runs inside the Temporal workflow sandbox. This layer
+# converts supported Python objects to the same plain JSON-compatible values
+# the activity worker receives. Structured values remain objects/lists when
+# passed to the Rust core; converting them to JSON text would let a literal
+# string impersonate an object while retaining the same PoP.
 
 _POP_NORMALIZE_MAX_DEPTH = 32
 
@@ -210,16 +197,35 @@ def _is_pydantic_model(value: Any) -> bool:
     """A Pydantic (v1 or v2) model instance, detected without importing pydantic."""
     if isinstance(value, type):
         return False
-    return any(
-        cls.__module__.startswith("pydantic") and cls.__name__ == "BaseModel"
-        for cls in type(value).__mro__
-    )
+    return any(cls.__module__.startswith("pydantic") and cls.__name__ == "BaseModel" for cls in type(value).__mro__)
 
 
 _MODEL_UNSIGNABLE = (
     "Its signed form would not cover what the activity receives: {why}. Pass "
     "those fields as separate arguments, or use a model without them."
 )
+
+
+def _pydantic_base_class(cls: type) -> Optional[type]:
+    """Return the real Pydantic BaseModel in ``cls``'s MRO."""
+    return next(
+        (base for base in cls.__mro__ if base.__name__ == "BaseModel" and base.__module__.startswith("pydantic")),
+        None,
+    )
+
+
+def _overridden_dump_method(cls: type, base: type) -> Optional[str]:
+    """Return a serialization method overridden between ``cls`` and BaseModel."""
+    names = (
+        ("model_dump", "model_dump_json") if hasattr(base, "model_dump") else ("dict", "json", "_iter", "_get_value")
+    )
+    for name in names:
+        for owner in cls.__mro__:
+            if name in owner.__dict__:
+                if owner is not base:
+                    return name
+                break
+    return None
 
 
 def _check_model_is_signable(model: Any, field_name: str) -> None:
@@ -229,19 +235,31 @@ def _check_model_is_signable(model: Any, field_name: str) -> None:
     change that value without changing the signed form.
     """
     cls = type(model)
+    base = _pydantic_base_class(cls)
+    if base is None:
+        raise TenuoArgNormalizationError(
+            f"Activity argument '{field_name}' claims to be a Pydantic model "
+            "but has no Pydantic BaseModel implementation"
+        )
     fields = getattr(cls, "model_fields", None)
     if fields is None:  # Pydantic v1
-        fields = {name: getattr(f, "field_info", f) for name, f in getattr(cls, "__fields__", {}).items()}
+        fields = {name: getattr(field, "field_info", field) for name, field in getattr(cls, "__fields__", {}).items()}
     excluded = sorted(name for name, info in fields.items() if getattr(info, "exclude", None))
     decorators = getattr(cls, "__pydantic_decorators__", None)
     serializers = bool(decorators and (decorators.field_serializers or decorators.model_serializers))
     config = getattr(cls, "__config__", None)  # Pydantic v1
     serializers = serializers or bool(getattr(config, "json_encoders", None))
+    overridden = _overridden_dump_method(cls, base)
     secrets = sorted(name for name in fields if _is_secret(getattr(model, name, None)))
     why = (
-        f"excluded field(s) {', '.join(excluded)}" if excluded
-        else "a custom serializer" if serializers
-        else f"secret field(s) {', '.join(secrets)}" if secrets
+        f"excluded field(s) {', '.join(excluded)}"
+        if excluded
+        else "a custom serializer"
+        if serializers
+        else f"an overridden {overridden}() method"
+        if overridden
+        else f"secret field(s) {', '.join(secrets)}"
+        if secrets
         else _core_schema_hides_values(getattr(cls, "__pydantic_core_schema__", None))
     )
     if why:
@@ -269,8 +287,10 @@ def _core_schema_hides_values(schema: Any) -> Optional[str]:
         if not isinstance(node, dict) or id(node) in seen:
             continue
         seen.add(id(node))
-        if node.get("serialization_exclude"):
+        if node.get("serialization_exclude") or node.get("serialization_exclude_if") is not None:
             return "an excluded field"
+        if node.get("type") in ("set", "frozenset"):
+            return "an unordered set field"
         serialization = node.get("serialization")
         if isinstance(serialization, dict) and str(serialization.get("type", "")).startswith("function"):
             module = getattr(serialization.get("function"), "__module__", "") or ""
@@ -301,12 +321,21 @@ def _check_signable_tree(value: Any, field_name: str, depth: int = 0) -> None:
     if _is_pydantic_model(value):
         _check_model_is_signable(value, field_name)
         # Field values and allowed extras (v2 keeps extras apart; v1 in __dict__).
-        children: Any = [*vars(value).values(), *(getattr(value, "__pydantic_extra__", None) or {}).values()]
+        children: Any = [
+            *vars(value).values(),
+            *(getattr(value, "__pydantic_extra__", None) or {}).values(),
+        ]
     elif _dataclasses.is_dataclass(value) and not isinstance(value, type):
         children = [getattr(value, f.name) for f in _dataclasses.fields(value)]
     elif isinstance(value, dict):
         children = value.values()
-    elif isinstance(value, (list, tuple, set, frozenset)):
+    elif isinstance(value, (set, frozenset)):
+        raise TenuoArgNormalizationError(
+            f"Activity argument '{field_name}' contains an unordered "
+            f"{type(value).__name__}. Use a list with a stable order. "
+            "See docs/temporal-reference.md: 'Structured activity arguments'."
+        )
+    elif isinstance(value, (list, tuple)):
         children = value
     else:
         return
@@ -318,6 +347,8 @@ def _json_key(key: Any, field_name: str) -> str:
     """A dict key as JSON transport writes it: True as "true", None as "null"."""
     if isinstance(key, str):
         return key
+    if isinstance(key, float) and not math.isfinite(key):
+        raise TenuoArgNormalizationError(f"Activity argument '{field_name}' has a non-finite float dictionary key")
     if key is None or isinstance(key, (bool, int, float)):
         return json.dumps(key)
     raise TenuoArgNormalizationError(
@@ -339,39 +370,75 @@ def _jsonable(value: Any, field_name: str, depth: int = 0) -> Any:
             f"({_POP_NORMALIZE_MAX_DEPTH}) for PoP normalization. "
             f"See docs/temporal-reference.md: 'Structured activity arguments'."
         )
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise TenuoArgNormalizationError(f"Activity argument '{field_name}' contains a non-finite float")
         return value
     if _is_pydantic_model(value):
         _check_signable_tree(value, field_name, depth)
-        dumped = value.model_dump(mode="json") if hasattr(value, "model_dump") else json.loads(value.json())
+        base = _pydantic_base_class(type(value))
+        assert base is not None  # checked by _check_model_is_signable
+        try:
+            if hasattr(base, "model_dump"):
+                # Temporal's PydanticJSONPlainPayloadConverter uses
+                # pydantic_core.to_json(), which applies serialization aliases.
+                # Calling the schema serializer directly produces the same plain
+                # value without invoking a user-overridden model_dump().
+                dumped = type(value).__pydantic_serializer__.to_python(
+                    value,
+                    mode="json",
+                    by_alias=True,
+                )
+            else:
+                # Temporal's default v1 fallback calls BaseModel.dict() and then
+                # encodes that value as JSON.
+                dumped = getattr(base, "dict")(value)
+        except Exception as exc:
+            raise TenuoArgNormalizationError(
+                f"Activity argument '{field_name}' could not be serialized for "
+                f"PoP: {exc}. See docs/temporal-reference.md: "
+                "'Structured activity arguments'."
+            ) from exc
         return _jsonable(dumped, field_name, depth + 1)
     if _dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return {f.name: _jsonable(getattr(value, f.name), field_name, depth + 1) for f in _dataclasses.fields(value)}
+        return {
+            field.name: _jsonable(getattr(value, field.name), field_name, depth + 1)
+            for field in _dataclasses.fields(value)
+        }
     if isinstance(value, dict):
-        return {_json_key(k, field_name): _jsonable(v, field_name, depth + 1) for k, v in value.items()}
+        result: Dict[str, Any] = {}
+        for key, child in value.items():
+            normalized_key = _json_key(key, field_name)
+            if normalized_key in result:
+                raise TenuoArgNormalizationError(
+                    f"Activity argument '{field_name}' has dictionary keys that both encode as {normalized_key!r}"
+                )
+            result[normalized_key] = _jsonable(child, field_name, depth + 1)
+        return result
     if isinstance(value, (list, tuple)):
         return [_jsonable(v, field_name, depth + 1) for v in value]
     if isinstance(value, bytes):
-        return base64.b64encode(value).decode("ascii")
+        if depth == 0:
+            return base64.b64encode(value).decode("ascii")
+        raise TenuoArgNormalizationError(
+            f"Activity argument '{field_name}' contains nested bytes whose wire "
+            "representation depends on the Temporal data converter. Use a typed "
+            "Pydantic field or pass the bytes as a separate top-level argument."
+        )
     if _is_secret(value):  # str() would mask every secret the same way
         raise TenuoArgNormalizationError(
             f"Activity argument '{field_name}' contains a secret value. "
             + _MODEL_UNSIGNABLE.format(why="a secret value")
             + " See docs/temporal-reference.md: 'Structured activity arguments'."
         )
-    return str(value)  # as before for leaf values such as datetime
-
-
-def _canonical_json(value: Any, field_name: str) -> str:
-    try:
-        return json.dumps(_jsonable(value, field_name), sort_keys=True, ensure_ascii=False)
-    except TenuoArgNormalizationError:
-        raise
-    except Exception as exc:
-        raise TenuoArgNormalizationError(
-            f"Activity argument '{field_name}' could not be serialized for PoP: {exc}. "
-            f"See docs/temporal-reference.md: 'Structured activity arguments'."
-        ) from exc
+    raise TenuoArgNormalizationError(
+        f"Activity argument '{field_name}' contains unsupported nested type "
+        f"'{type(value).__qualname__}'. Convert it with a typed Pydantic field "
+        "or lift it to a supported top-level argument. "
+        "See docs/temporal-reference.md: 'Structured activity arguments'."
+    )
 
 
 def _normalize_pop_arg_value(value: Any, field_name: str, depth: int = 0) -> Any:
@@ -389,33 +456,21 @@ def _normalize_pop_arg_value(value: Any, field_name: str, depth: int = 0) -> Any
             f"See docs/temporal-reference.md: 'Structured activity arguments'."
         )
 
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise TenuoArgNormalizationError(f"Activity argument '{field_name}' contains a non-finite float")
         return value
 
     if _is_pydantic_model(value):
-        # Framework context objects are often Pydantic models. Sign them like a
-        # dataclass, as canonical JSON of their JSON-mode dump, so they stay
-        # covered by PoP and receipts instead of being excluded from them.
-        return _canonical_json(value, field_name)
+        return _jsonable(value, field_name, depth)
 
     if (_dataclasses.is_dataclass(value) and not isinstance(value, type)) or isinstance(value, dict):
-        return _canonical_json(value, field_name)
+        return _jsonable(value, field_name, depth)
 
     if isinstance(value, (list, tuple)):
-        normalized = [
-            _normalize_pop_arg_value(item, f"{field_name}[{i}]", depth + 1)
-            for i, item in enumerate(value)
-        ]
-        if all(isinstance(item, (str, int, float, bool, type(None))) for item in normalized):
-            return normalized
-        try:
-            return json.dumps(normalized, sort_keys=True, default=str, ensure_ascii=False)
-        except Exception as exc:
-            raise TenuoArgNormalizationError(
-                f"Activity argument '{field_name}' (list/tuple) could not be "
-                f"serialized: {exc}. "
-                f"See docs/temporal-reference.md: 'Structured activity arguments'."
-            ) from exc
+        return _jsonable(value, field_name, depth)
 
     if isinstance(value, bytes):
         return base64.b64encode(value).decode("ascii")
@@ -460,6 +515,7 @@ def _normalize_args_for_pop(args_dict: Dict[str, Any]) -> Dict[str, Any]:
 # Warrant pre-validation — Fix for FINDING-004 (loan-underwriting dogfooding)
 # ---------------------------------------------------------------------------
 
+
 def _prevalidate_args_against_warrant(
     warrant: Any,
     tool_name: str,
@@ -487,16 +543,12 @@ def _prevalidate_args_against_warrant(
     unknown = [
         item["field"]
         for item in violations
-        if isinstance(item, dict)
-        and item.get("kind") == "unknown_field"
-        and isinstance(item.get("field"), str)
+        if isinstance(item, dict) and item.get("kind") == "unknown_field" and isinstance(item.get("field"), str)
     ]
     missing = [
         item["field"]
         for item in violations
-        if isinstance(item, dict)
-        and item.get("kind") == "missing_required"
-        and isinstance(item.get("field"), str)
+        if isinstance(item, dict) and item.get("kind") == "missing_required" and isinstance(item.get("field"), str)
     ]
 
     if not unknown and not missing:
@@ -505,9 +557,7 @@ def _prevalidate_args_against_warrant(
     parts: List[str] = []
     if unknown:
         fields_str = ", ".join(unknown)
-        parts.append(
-            f"unknown field not allowed (zero-trust mode): {fields_str}"
-        )
+        parts.append(f"unknown field not allowed (zero-trust mode): {fields_str}")
     if missing:
         fields_str = ", ".join(missing)
         parts.append(f"missing required fields: {fields_str}")
@@ -568,5 +618,7 @@ def framework_args(*names: str) -> Dict[str, Any]:
 
     if not names or not all(isinstance(n, str) and n for n in names):
         raise ValueError("framework_args needs one or more argument names")
+    reserved = {"_allow_unknown", *WORKFLOW_SCOPE_ARGS}.intersection(names)
+    if reserved:
+        raise ValueError("framework_args cannot declare reserved argument name(s): " + ", ".join(sorted(reserved)))
     return {name: AnyValue() for name in names}
-

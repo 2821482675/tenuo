@@ -524,22 +524,38 @@ async with Worker(
 Activity arguments are signed by PoP and checked against the warrant as values.
 Primitives (`str`, `int`, `float`, `bool`, `None`) are used as they are. `dict`,
 `list`, `tuple`, `bytes`, `@dataclass` instances and Pydantic models (v1 or v2)
-are normalized first, on both sides: a Pydantic model becomes the canonical JSON
-of `model_dump(mode="json")`, a dataclass or dict the canonical JSON of its
-fields. The worker checks the same normalized values the workflow signed; the
-activity still receives the original objects. Nested values are converted the
-same way at every depth, so a dataclass inside a dict signs as the dict the
-worker receives. Anything else (a `set`, a bare `datetime`, an arbitrary class)
-is refused with `TenuoArgNormalizationError`, and so is a Pydantic model whose
-dump could leave out or mask a value the activity receives: one with an excluded
-field, a custom serializer or a secret field. Pass those values as their own
-arguments.
+are normalized first, on both sides. A Pydantic model becomes the plain
+JSON-compatible object produced by the default Temporal Pydantic converter; a
+dataclass or dict stays an object, and a tuple becomes a list. Structured values
+are not converted to JSON text, so the PoP for an object cannot be reused for a
+literal string that happens to contain the same JSON. The worker checks the same
+normalized values the workflow signed; the activity still receives the original
+objects.
+
+Nested values are converted the same way at every depth, so a dataclass inside
+a dict signs as the dict the worker receives. Tenuo fails closed when the wire
+form could be ambiguous or converter-dependent. This includes unordered
+`set`/`frozenset` values, bare nested `bytes` or `datetime` values, non-finite
+floats, colliding JSON dictionary keys, and arbitrary classes. Typed Pydantic
+fields for values such as `bytes` and `datetime` are supported because the
+Pydantic schema defines their JSON representation. Models with excluded or
+conditionally excluded fields, custom serializers, secret fields, or overridden
+dump methods are refused because their signed view could omit or rewrite a value
+the activity receives. Pass unsafe values as separate supported arguments or
+replace them with an explicitly ordered, JSON-compatible representation.
+
+This matching is defined for Temporal's default JSON converter and the default
+`pydantic_data_converter`. A customized data converter must preserve the same
+JSON-compatible values; otherwise Tenuo rejects the argument instead of signing
+a representation that may differ from the activity payload.
 
 Some frameworks pass every activity an argument of their own, such as a Pydantic
 context saying where to publish events. Under closed-world constraints the
 warrant has to name it. Declare it with `framework_args`, which adds an ordinary
 any-value constraint, so the argument stays signed and in receipts and a narrower
-warrant can still constrain it:
+warrant can still constrain it. Reserved Tenuo metadata names such as
+`_allow_unknown`, `_workflow_id`, and `_workflow_namespace` cannot be declared
+through `framework_args`:
 
 ```python
 from tenuo import Pattern, Warrant

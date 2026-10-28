@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Pydantic activity arguments on Temporal.** Pydantic models (v1 and v2),
+  dataclasses, dictionaries, and lists are signed by PoP as typed,
+  JSON-compatible values. The signed representation matches Temporal's default
+  Pydantic converter, including serialization aliases, and rejects lossy custom
+  serialization, unordered collections, and converter-dependent nested values.
+  `tenuo.temporal.framework_args("tool_ctx")` declares a framework-owned
+  argument as an any-value constraint so it remains signed and recorded in
+  receipts.
+
 ### Upgrade notes
 
 Two checks are stricter, and some calls that used to pass now fail:
@@ -24,6 +35,12 @@ Two checks are stricter, and some calls that used to pass now fail:
   argument of `verify_approvals` now applies to `approved_at` only.
 
 ### Fixed
+
+- **Temporal structured arguments preserve their type in PoP.** Structured
+  values were previously signed as JSON text, so an object and a literal string
+  containing the same JSON had the same signed form. They now remain objects or
+  lists through core canonicalization, and models that could hide fields from
+  the signed form fail closed.
 
 - **Warrants have exactly one valid encoding.** The decoder accepted an
   envelope whose signature array header claimed three elements but held two,
@@ -101,12 +118,6 @@ are now denied. Check these before upgrading:
   approvals apply only when a `nonceStore` is passed.
 
 ### Added
-
-- **Pydantic activity arguments on Temporal.** Pydantic models (v1 and v2)
-  are signed by PoP as the canonical JSON of their JSON-mode dump, like
-  dataclasses. `tenuo.temporal.framework_args("tool_ctx")` declares a
-  framework's own argument as an any-value constraint, so it stays signed and in
-  receipts.
 - **`ControlPlaneClient.status`.** Reports the connection state
   (`registering`, `connected`, `degraded`, `standalone`, `stopped`), the last
   error, and buffered, flushed and dropped audit event counts. It does no I/O,
@@ -190,10 +201,6 @@ are now denied. Check these before upgrading:
 
 ### Fixed
 
-- **Temporal: dict and dataclass activity arguments were refused.** The
-  workflow signed them in normalized form, but the worker checked the raw
-  objects, so every such call failed. The worker now checks the same normalized
-  values; the activity still receives the original objects.
 - **OpenAI `guard()` checks async clients.** On `AsyncOpenAI`,
   `chat.completions.create()` returned the raw coroutine, and the awaited
   result was never verified, so every tool call ran unchecked. `create()` now
