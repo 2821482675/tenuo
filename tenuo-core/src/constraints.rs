@@ -3411,13 +3411,14 @@ impl From<UrlSafe> for Constraint {
 ///
 /// Validates that a command string is one allowlisted binary plus literal
 /// arguments. Words follow POSIX shell rules: they end at unquoted spaces,
-/// tabs, and operators, and `#` starts a comment only at the start of a
-/// word. A quoted or escaped operator character is a literal argument.
-/// `$` and backticks are rejected anywhere in the raw command, including
-/// inside quotes and escapes.
+/// tabs, and operators, and `#` is an ordinary word character so operators
+/// after `#` are still rejected. A quoted or escaped operator character is a
+/// literal argument. `$` and backticks are rejected anywhere in the raw
+/// command, including inside quotes and escapes.
 ///
-/// A bare `allow` entry matches that word and the final component of a
-/// path, so `ls` admits `/tmp/attacker/ls` and does not admit `./ls,evil`.
+/// Each `allow` entry matches the command word literally: `ls` matches `ls`
+/// only (not `/usr/bin/ls`, `./ls`, or `/tmp/attacker/ls`), and any command
+/// word containing `..` is rejected.
 ///
 /// Every SDK calls [`crate::shell_words::check`]. There is no second evaluator.
 ///
@@ -6607,13 +6608,19 @@ mod tests {
     }
 
     #[test]
-    fn test_shlex_path_normalization() {
-        let sh = Shlex::new(vec!["npm"]);
-        // POSIX normpath, then the path or its basename must be allowlisted.
-        assert!(sh
+    fn test_shlex_path_traversal_in_binary() {
+        let sh = Shlex::new(vec!["npm", "/usr/bin/npm"]);
+        // Any command word containing `..` is rejected, and a bare allow entry
+        // matches only that bare word.
+        assert!(!sh
             .matches(&ConstraintValue::String("/usr/../bin/npm install".into()))
             .unwrap());
-        assert!(sh
+        assert!(!sh
+            .matches(&ConstraintValue::String(
+                "/tmp/l/../../usr/bin/npm install".into()
+            ))
+            .unwrap());
+        assert!(!sh
             .matches(&ConstraintValue::String("../npm install".into()))
             .unwrap());
         assert!(!sh

@@ -548,8 +548,9 @@ export function parseStrictJson(text: string): unknown {
 /**
  * The core's Shlex decision for one command.
  *
- * `allow` is the binary allowlist. A bare entry matches that word and the
- * final component of a path. The reason is the same string the warrant uses.
+ * `allow` is the binary allowlist. Each entry matches the command word
+ * literally, and any command word containing `..` is rejected. The reason is
+ * the same string the warrant uses.
  */
 export function checkShlex(allow: readonly string[], command: string): ShlexCheck {
   return loadWasm().shlex_inspect([...allow], command);

@@ -669,8 +669,9 @@ constraint.matches("cat file.txt")          # True
 constraint.matches("ls -la; rm -rf /")      # False (operator blocked)
 constraint.matches('ls "foo; bar"')         # True (quoted semicolon is literal)
 constraint.matches('echo ";"')              # True (a quoted operator is an argument)
-constraint.matches("ls #; rm")              # True (# starts a word, so the rest is a comment)
-constraint.matches("ls foo#; rm -rf /")     # False (# inside a word is not a comment)
+constraint.matches("ls -la # note")         # True (literal # with no operators)
+constraint.matches("ls #; rm")              # False (# is a word character, so ; is still blocked)
+constraint.matches("ls foo#; rm -rf /")     # False (# inside a word does not hide ;)
 constraint.matches("./ls,evil -la")         # False (the command name is ./ls,evil)
 constraint.matches("echo $(whoami)")        # False (command substitution)
 constraint.matches('echo "$HOME"')          # False ($ expands inside double quotes)
@@ -678,7 +679,7 @@ constraint.matches("ls $HOME")              # False (variable expansion)
 constraint.matches("rm -rf /")              # False (rm not in allowlist)
 ```
 
-`#` starts a comment only when it is the first character of a word. `allow=["ls"]` matches the word `ls` and any path whose file name is `ls`, including `/tmp/attacker/ls`. It does not match `./ls,evil`.
+`#` is an ordinary word character, never a comment, so an operator after `#` is still rejected. Each `allow` entry matches the command word literally: `allow=["ls"]` matches `ls` only (not `/usr/bin/ls`, `./ls`, or `/tmp/attacker/ls`), and any command word containing `..` is rejected.
 
 A quoted or backslash-escaped operator is a literal argument, so `find . -exec rm {} \;` passes this check. `find` still runs the argument. That is the semantic gap in the warning below. `Shlex.check(command)` returns the same decision the warrant uses, including the reason.
 

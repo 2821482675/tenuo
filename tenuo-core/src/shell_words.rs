@@ -1,7 +1,8 @@
 //! POSIX shell tokenization for [`crate::constraints::Shlex`].
 //!
-//! Words end at unquoted spaces, tabs, or operators. `#` starts a comment
-//! only when it is the first character of a word. A comma, bracket, or other
+//! Words end at unquoted spaces, tabs, or operators. `#` is an ordinary word
+//! character, never a comment, so an operator after `#` is still rejected even
+//! when a shell would not treat `#` as a comment. A comma, bracket, or other
 //! non-operator character stays inside the word, so `./ls,evil` is one
 //! command name. Quoted and backslash-escaped operator characters are
 //! literal arguments.
@@ -84,35 +85,23 @@ impl Lexer {
         Some(ch)
     }
 
-    fn rest(&self) -> String {
-        self.chars[self.pos..].iter().collect()
-    }
-
     fn starts_operator(&self) -> bool {
         self.match_operator().is_some()
     }
 
+    /// Compare in place. Copying the rest of the input here made the lexer
+    /// quadratic in the command length.
     fn match_operator(&self) -> Option<&'static str> {
-        let rest = self.rest();
-        OPERATORS.iter().copied().find(|op| rest.starts_with(op))
+        let rest = &self.chars[self.pos..];
+        OPERATORS.iter().copied().find(|op| {
+            let mut at = rest.iter();
+            op.chars().all(|ch| at.next() == Some(&ch))
+        })
     }
 
     fn skip_blank(&mut self) {
         while matches!(self.peek(), Some(' ' | '\t')) {
             self.bump();
-        }
-    }
-
-    /// `#` comments only at the start of a word. The `#` and the rest of the
-    /// line are discarded. A `#` later in a word is an ordinary character.
-    fn skip_comment(&mut self) {
-        if self.peek() != Some('#') {
-            return;
-        }
-        while let Some(ch) = self.bump() {
-            if ch == '\n' {
-                break;
-            }
         }
     }
 
@@ -182,35 +171,32 @@ impl Lexer {
     }
 
     fn next_token(&mut self) -> Result<Option<Token>, ShellError> {
-        loop {
-            self.skip_blank();
-            match self.peek() {
-                None => return Ok(None),
-                Some('#') => self.skip_comment(),
-                Some('\n' | '\r') => {
-                    let ch = self.bump().expect("peeked");
-                    return Ok(Some(Token {
-                        text: ch.to_string(),
-                        operator: true,
-                    }));
+        self.skip_blank();
+        match self.peek() {
+            None => Ok(None),
+            Some('\n' | '\r') => {
+                let ch = self.bump().expect("peeked");
+                Ok(Some(Token {
+                    text: ch.to_string(),
+                    operator: true,
+                }))
+            }
+            Some(_) if self.starts_operator() => {
+                let op = self.match_operator().expect("starts_operator");
+                for _ in op.chars() {
+                    self.bump();
                 }
-                Some(_) if self.starts_operator() => {
-                    let op = self.match_operator().expect("starts_operator");
-                    for _ in op.chars() {
-                        self.bump();
-                    }
-                    return Ok(Some(Token {
-                        text: op.to_string(),
-                        operator: true,
-                    }));
-                }
-                Some(_) => {
-                    let text = self.read_word()?;
-                    return Ok(Some(Token {
-                        text,
-                        operator: false,
-                    }));
-                }
+                Ok(Some(Token {
+                    text: op.to_string(),
+                    operator: true,
+                }))
+            }
+            Some(_) => {
+                let text = self.read_word()?;
+                Ok(Some(Token {
+                    text,
+                    operator: false,
+                }))
             }
         }
     }
@@ -226,56 +212,15 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, ShellError> {
     Ok(tokens)
 }
 
-/// POSIX `normpath`. Two leading slashes are preserved; three or more collapse.
-pub fn posix_normpath(path: &str) -> String {
-    if path.is_empty() {
-        return ".".to_string();
-    }
-    let mut initial_slashes: usize = 0;
-    if path.starts_with('/') {
-        initial_slashes = if path.starts_with("//") && !path.starts_with("///") {
-            2
-        } else {
-            1
-        };
-    }
-    let mut comps = Vec::new();
-    for comp in path.split('/') {
-        if comp.is_empty() || comp == "." {
-            continue;
-        }
-        if comp != ".."
-            || (initial_slashes == 0 && comps.is_empty())
-            || comps.last().map(String::as_str) == Some("..")
-        {
-            comps.push(comp.to_string());
-        } else if !comps.is_empty() {
-            comps.pop();
-        }
-    }
-    let mut out = comps.join("/");
-    if initial_slashes > 0 {
-        out.insert_str(0, &"/".repeat(initial_slashes));
-    }
-    if out.is_empty() {
-        ".".to_string()
-    } else {
-        out
-    }
-}
-
 fn binary_allowed(allow: &[String], binary: &str) -> bool {
-    let normalized = if binary.contains('/') {
-        posix_normpath(binary)
-    } else {
-        binary.to_string()
-    };
-    let base = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
-    // A bare allow entry matches that word and the final component of a path.
-    // `allow=["ls"]` admits `/tmp/attacker/ls`. It does not admit `./ls,evil`.
-    allow
-        .iter()
-        .any(|entry| entry == &normalized || entry == base)
+    if binary.is_empty() || binary.contains("..") {
+        return false;
+    }
+    // Each `allow` entry matches the command word literally. A bare entry such
+    // as `ls` matches `ls` only, never `/usr/bin/ls`, `./ls`, or
+    // `/tmp/attacker/ls`. Any command word containing `..` is rejected so
+    // symlinks cannot combine with `..` to escape a pinned path.
+    allow.iter().any(|entry| entry == binary)
 }
 
 fn denied(reason: impl Into<String>, extras: ShlexCheck) -> ShlexCheck {
@@ -404,7 +349,7 @@ mod tests {
             ("echo {a,b,c}", vec!["echo", "{a,b,c}"]),
             ("ls file[12].txt", vec!["ls", "file[12].txt"]),
             ("echo hello!", vec!["echo", "hello!"]),
-            ("echo hello #world", vec!["echo", "hello"]),
+            ("echo hello #world", vec!["echo", "hello", "#world"]),
             ("foo#bar", vec!["foo#bar"]),
             ("ls foo#; rm", vec!["ls", "foo#", ";", "rm"]),
             ("./ls,evil -la", vec!["./ls,evil", "-la"]),
@@ -413,7 +358,7 @@ mod tests {
                 vec!["find", ".", "-exec", "rm", "{}", ";"],
             ),
             ("echo \";\"", vec!["echo", ";"]),
-            ("ls #; rm", vec!["ls"]),
+            ("ls #; rm", vec!["ls", "#", ";", "rm"]),
             ("echo 'a'\"b\"'c'", vec!["echo", "abc"]),
             ("café --help", vec!["café", "--help"]),
         ];
@@ -449,9 +394,12 @@ mod tests {
     }
 
     #[test]
-    fn comment_at_the_start_of_a_word_is_a_comment() {
+    fn hash_never_hides_an_operator() {
         let allow = vec!["ls".to_string()];
-        assert!(command_allowed(&allow, "ls #; rm -rf /"));
+        assert!(!command_allowed(&allow, "ls #; rm -rf /"));
+        assert!(!command_allowed(&allow, "ls # ; rm -rf /"));
+        assert!(!command_allowed(&allow, "ls # |& sh"));
+        assert!(command_allowed(&allow, "ls -la # list everything"));
     }
 
     #[test]
@@ -462,12 +410,19 @@ mod tests {
     }
 
     #[test]
-    fn posix_normpath_matches_python() {
-        assert_eq!(posix_normpath("/usr/bin/../bin/ls"), "/usr/bin/ls");
-        assert_eq!(posix_normpath("//bin//ls"), "//bin/ls");
-        assert_eq!(posix_normpath("/bin/./ls"), "/bin/ls");
-        assert_eq!(posix_normpath("./ls"), "ls");
-        assert_eq!(posix_normpath("../../../usr/bin/ls"), "../../../usr/bin/ls");
+    fn binary_allowlist_requires_exact_command_word_and_rejects_dotdot() {
+        let bare = vec!["ls".to_string()];
+        assert!(command_allowed(&bare, "ls -la"));
+        assert!(!command_allowed(&bare, "/usr/bin/ls -la"));
+        assert!(!command_allowed(&bare, "/tmp/attacker/ls -la"));
+        assert!(!command_allowed(&bare, "./ls -la"));
+        assert!(!command_allowed(&bare, "../ls -la"));
+
+        let pinned = vec!["/usr/bin/ls".to_string()];
+        assert!(command_allowed(&pinned, "/usr/bin/ls -la"));
+        assert!(!command_allowed(&pinned, "ls -la"));
+        assert!(!command_allowed(&pinned, "/usr/bin/../bin/ls -la"));
+        assert!(!command_allowed(&pinned, "/tmp/l/../../usr/bin/ls -la"));
     }
 
     #[test]
@@ -498,16 +453,64 @@ mod tests {
         assert!(!command_allowed(&allow, "cat <<EOF"));
     }
 
-    /// Run `command` under `/bin/sh` with a recording stub on `PATH`.
+    #[test]
+    fn long_commands_tokenize_in_linear_time() {
+        // One long word, then one long run of quoted operator characters.
+        // The quadratic lexer took about 4 s for 100 KB in a release build;
+        // these inputs take milliseconds now, with room for instrumented CI runs.
+        let allow = vec!["ls".to_string()];
+        let word = format!("ls {}", "a".repeat(200_000));
+        let quoted = format!("ls \"{}\"", ";".repeat(200_000));
+        let start = std::time::Instant::now();
+        assert!(command_allowed(&allow, &word));
+        assert!(command_allowed(&allow, &quoted));
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "400 KB of input took {elapsed:?}"
+        );
+    }
+
+    /// Shells to compare against: `/bin/sh` plus dash and bash when present.
+    /// CI's `/bin/sh` is dash and macOS's is bash, so each host checks both
+    /// when it can.
+    #[cfg(unix)]
+    fn oracle_shells() -> Vec<std::path::PathBuf> {
+        let mut shells: Vec<std::path::PathBuf> = Vec::new();
+        for candidate in [
+            "/bin/sh",
+            "/bin/dash",
+            "/usr/bin/dash",
+            "/bin/bash",
+            "/usr/bin/bash",
+        ] {
+            let Ok(real) = std::fs::canonicalize(candidate) else {
+                continue;
+            };
+            if !shells
+                .iter()
+                .any(|seen| std::fs::canonicalize(seen).ok().as_ref() == Some(&real))
+            {
+                shells.push(candidate.into());
+            }
+        }
+        assert!(!shells.is_empty(), "no POSIX shell found");
+        shells
+    }
+
+    /// Run `command` under `shell` with a recording stub on `PATH`.
     /// Each invocation is `[argv0, arg, ...]`. `set -f` keeps globs literal
     /// so the comparison is about word splitting, not filename generation.
     #[cfg(unix)]
-    fn shell_invocations(command: &str) -> Vec<Vec<String>> {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("tenuo-shlex-{nanos}"));
+    fn shell_invocations(shell: &std::path::Path, command: &str) -> Vec<Vec<String>> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "tenuo-shlex-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("temp dir");
         let stub = dir.join("stub");
         std::fs::write(
@@ -528,12 +531,14 @@ mod tests {
             std::os::unix::fs::symlink(&stub, &path).expect("symlink");
         }
         let log = dir.join("log");
-        let output = std::process::Command::new("/bin/sh")
+        let output = std::process::Command::new(shell)
             .arg("-c")
-            // `set -f` stops pathname expansion. `braceexpand` is a bash
-            // extra; POSIX words keep `{a,b,c}` together. Turn it off when
-            // the shell has it so the comparison is word splitting.
-            .arg("set -f; set +o braceexpand 2>/dev/null || true; eval \"$1\"")
+            // `set -f` stops pathname expansion. Brace expansion is a bash
+            // extra; POSIX words keep `{a,b,c}` together. Turn it off only
+            // when `$-` shows it: `set +o braceexpand` is an error in dash,
+            // and a special builtin error exits a non-interactive shell even
+            // with `|| true`.
+            .arg("set -f; case $- in *B*) set +B;; esac; eval \"$1\"")
             .arg("sh")
             .arg(command)
             .current_dir(&dir)
@@ -545,7 +550,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
             output.status.success() || !text.is_empty(),
-            "sh failed without invocations: {}",
+            "{} exited {:?} without invocations: {}",
+            shell.display(),
+            output.status.code(),
             String::from_utf8_lossy(&output.stderr)
         );
         text.lines()
@@ -571,23 +578,26 @@ mod tests {
             "ls \";\"",
             "ls {a,b,c}",
             "ls foo\\ bar",
-            "ls #; rm -rf /",
-            "ls hello #world",
+            "ls foo#bar",
+            "ls \"#world\"",
             "find . -exec rm {} \\;",
             "ls 'a'\"b\"'c'",
         ];
-        for command in samples {
-            let decision = check(&["ls".into(), "find".into()], command);
-            assert!(decision.allowed, "{command}: {}", decision.reason);
-            let calls = shell_invocations(command);
-            assert_eq!(calls.len(), 1, "{command} invoked {calls:?}");
-            let invoked = calls[0][0].rsplit('/').next().unwrap_or(&calls[0][0]);
-            let expected_name = decision.tokens[0]
-                .rsplit('/')
-                .next()
-                .unwrap_or(&decision.tokens[0]);
-            assert_eq!(invoked, expected_name, "{command}");
-            assert_eq!(calls[0][1..], decision.tokens[1..], "{command}");
+        for shell in oracle_shells() {
+            let sh = shell.display();
+            for command in samples {
+                let decision = check(&["ls".into(), "find".into()], command);
+                assert!(decision.allowed, "{command}: {}", decision.reason);
+                let calls = shell_invocations(&shell, command);
+                assert_eq!(calls.len(), 1, "{sh}: {command} invoked {calls:?}");
+                let invoked = calls[0][0].rsplit('/').next().unwrap_or(&calls[0][0]);
+                let expected_name = decision.tokens[0]
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&decision.tokens[0]);
+                assert_eq!(invoked, expected_name, "{sh}: {command}");
+                assert_eq!(calls[0][1..], decision.tokens[1..], "{sh}: {command}");
+            }
         }
     }
 
@@ -596,11 +606,14 @@ mod tests {
     fn shell_runs_the_command_hidden_by_a_midword_hash() {
         let command = "ls foo#; rm -rf /";
         assert!(!command_allowed(&["ls".into()], command));
-        let calls = shell_invocations(command);
-        assert!(
-            calls.iter().any(|call| call[0].ends_with("rm")),
-            "shell should run rm, got {calls:?}"
-        );
+        for shell in oracle_shells() {
+            let calls = shell_invocations(&shell, command);
+            assert!(
+                calls.iter().any(|call| call[0].ends_with("rm")),
+                "{} should run rm, got {calls:?}",
+                shell.display()
+            );
+        }
     }
 
     #[cfg(unix)]
@@ -608,9 +621,11 @@ mod tests {
     fn shell_runs_the_comma_command_not_ls() {
         let command = "./ls,evil -la";
         assert!(!command_allowed(&["ls".into()], command));
-        let calls = shell_invocations(command);
-        assert_eq!(calls.len(), 1, "{calls:?}");
-        assert!(calls[0][0].ends_with("ls,evil"), "{calls:?}");
-        assert_eq!(calls[0][1..], ["-la"]);
+        for shell in oracle_shells() {
+            let calls = shell_invocations(&shell, command);
+            assert_eq!(calls.len(), 1, "{}: {calls:?}", shell.display());
+            assert!(calls[0][0].ends_with("ls,evil"), "{calls:?}");
+            assert_eq!(calls[0][1..], ["-la"]);
+        }
     }
 }

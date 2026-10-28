@@ -38,15 +38,18 @@ class TestShlexBasic:
         constraint = Shlex(allow=["/usr/bin/ls"])
         assert constraint.matches("/usr/bin/ls -la")
 
-    def test_basename_match(self):
-        """Full path should match basename in allowlist."""
+    def test_bare_allow_does_not_match_path_binary(self):
+        """A bare allowlist entry matches only the bare command word."""
         constraint = Shlex(allow=["ls"])
-        assert constraint.matches("/usr/bin/ls -la")
+        assert not constraint.matches("/usr/bin/ls -la")
+        assert not constraint.matches("/tmp/attacker/ls -la")
+        assert not constraint.matches("./ls -la")
 
-    def test_path_normalization(self):
-        """Path traversal in binary should be normalized."""
-        constraint = Shlex(allow=["/usr/bin/ls"])
-        assert constraint.matches("/usr/bin/../bin/ls -la")
+    def test_path_traversal_in_binary_rejected(self):
+        """Path traversal in binary is rejected."""
+        constraint = Shlex(allow=["/usr/bin/ls", "ls"])
+        assert not constraint.matches("/usr/bin/../bin/ls -la")
+        assert not constraint.matches("../ls -la")
 
     def test_multiple_allowed_binaries(self):
         """Multiple binaries in allowlist."""
@@ -573,33 +576,31 @@ class TestShlexAdversarialBinaryBypass:
         # Try to traverse to rm
         assert not constraint.matches("/bin/../bin/rm -rf /")
 
-    def test_symlink_style_path(self):
-        """Paths that look like symlinks should be normalized."""
+    def test_symlink_style_path_rejected(self):
+        """Paths with .. segments are rejected so symlinks cannot escape pinned paths."""
         constraint = Shlex(allow=["/usr/bin/ls"])
-        # Multiple traversals
-        assert constraint.matches("/usr/bin/../../usr/bin/ls -la")
+        assert not constraint.matches("/usr/bin/../../usr/bin/ls -la")
+        assert not constraint.matches("/tmp/l/../../usr/bin/ls -la")
 
-    def test_double_slash_path(self):
-        """Double slashes should be normalized."""
+    def test_double_slash_path_rejected(self):
+        """Non-canonical double slashes do not match a bare allowlist entry."""
         constraint = Shlex(allow=["ls"])
-        assert constraint.matches("//bin//ls -la")
+        assert not constraint.matches("//bin//ls -la")
 
-    def test_dot_path_component(self):
-        """Single dot path components should be handled."""
+    def test_dot_path_component_rejected(self):
+        """Single dot path components do not match a bare allowlist entry."""
         constraint = Shlex(allow=["ls"])
-        assert constraint.matches("/bin/./ls -la")
+        assert not constraint.matches("/bin/./ls -la")
 
-    def test_current_dir_binary(self):
-        """./binary should be handled correctly."""
+    def test_current_dir_binary_rejected_for_bare_allow(self):
+        """./binary does not match a bare allowlist entry."""
         constraint = Shlex(allow=["ls"])
-        # ./ls with ls in allowlist - should match basename
-        assert constraint.matches("./ls -la")
+        assert not constraint.matches("./ls -la")
 
-    def test_relative_path_traversal(self):
-        """Relative path with traversal."""
+    def test_relative_path_traversal_rejected(self):
+        """Relative path with traversal is rejected."""
         constraint = Shlex(allow=["ls"])
-        # This normalizes to just 'ls'
-        assert constraint.matches("../../../usr/bin/ls -la")
+        assert not constraint.matches("../../../usr/bin/ls -la")
 
     def test_case_sensitivity(self):
         """Binary names should be case-sensitive."""
@@ -867,10 +868,10 @@ class TestShlexAllowlistVariations:
         assert not constraint.matches("lsof")
 
     def test_binary_with_extension(self):
-        """Binary with extension (Windows-style)."""
+        """Binary with extension."""
         constraint = Shlex(allow=["script.sh"])
         assert constraint.matches("script.sh arg1")
-        assert constraint.matches("./script.sh arg1")
+        assert not constraint.matches("./script.sh arg1")
 
 
 class TestShlexQuotedOperators:
@@ -942,33 +943,22 @@ class TestShlexKnownGaps:
 
 
 class TestShlexCrossPlatform:
-    """Tests verifying Unix-style paths work on all platforms (including Windows).
-
-    Shell commands use Unix-style paths (forward slashes) even when the Python
-    code runs on Windows. The Shlex constraint uses posixpath.normpath() to
-    ensure consistent behavior across platforms.
-    """
+    """Tests verifying Unix-style paths work on all platforms (including Windows)."""
 
     def test_unix_path_on_all_platforms(self):
         """Unix-style paths should work regardless of host OS."""
         constraint = Shlex(allow=["/usr/bin/ls"])
-        # This would fail on Windows if we used os.path.normpath
-        # because it would convert /usr/bin/ls to \\usr\\bin\\ls
         assert constraint.matches("/usr/bin/ls -la")
 
-    def test_path_normalization_cross_platform(self):
-        """Path normalization uses posixpath, not os.path."""
+    def test_path_traversal_rejected_cross_platform(self):
+        """Path traversal in binary is rejected on all platforms."""
         constraint = Shlex(allow=["/usr/bin/ls"])
-        # posixpath.normpath("/usr/bin/../bin/ls") == "/usr/bin/ls"
-        # os.path.normpath on Windows would give "\\usr\\bin\\ls"
-        assert constraint.matches("/usr/bin/../bin/ls -la")
+        assert not constraint.matches("/usr/bin/../bin/ls -la")
 
-    def test_basename_extraction_cross_platform(self):
-        """Basename extraction uses posixpath, not os.path."""
+    def test_bare_allow_requires_bare_command_cross_platform(self):
+        """Bare allow entry does not match full path."""
         constraint = Shlex(allow=["ls"])
-        # posixpath.basename("/usr/bin/ls") == "ls"
-        # os.path.basename on Windows with forward slashes returns full path
-        assert constraint.matches("/usr/bin/ls -la")
+        assert not constraint.matches("/usr/bin/ls -la")
 
 
 _SHELL_WORDS = [
@@ -988,13 +978,13 @@ _SHELL_WORDS = [
     ("ls foo\\ bar", ["ls", "foo bar"]),
     ("echo {a,b,c}", ["echo", "{a,b,c}"]),
     ("ls file[12].txt", ["ls", "file[12].txt"]),
-    ("ls &#59;", ["ls", "&"]),
-    ("echo hello #world", ["echo", "hello"]),
+    ("ls &#59;", ["ls", "&", "#59", ";"]),
+    ("echo hello #world", ["echo", "hello", "#world"]),
     ("find . -exec rm {} \\;", ["find", ".", "-exec", "rm", "{}", ";"]),
     ("cat <> /etc/passwd", ["cat", "<>", "/etc/passwd"]),
     ('"my program" arg1', ["my program", "arg1"]),
     ("echo 'a'\"b\"'c'", ["echo", "abc"]),
-    ("ls #; rm", ["ls"]),
+    ("ls #; rm", ["ls", "#", ";", "rm"]),
     ("foo#bar", ["foo#bar"]),
     ("ls foo#; rm -rf /", ["ls", "foo#", ";", "rm", "-rf", "/"]),
     ("./ls,evil -la", ["./ls,evil", "-la"]),
@@ -1050,3 +1040,33 @@ class TestShlexCoreTokenizer:
         """`<>` is one operator token. The old exact-token list did not name it."""
         constraint = Shlex(allow=["cat"])
         assert not constraint.matches("cat <> /etc/passwd")
+
+    def test_exported_shlex_mints_and_attenuates_in_warrants(self):
+        from tenuo import Cmd, Exact, Shlex as TopShlex, SigningKey, Warrant
+
+        assert TopShlex is CoreShlex
+        assert Cmd is CoreShlex
+        key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("shell", {"command": TopShlex(allow=["ls", "cat"])})
+            .holder(key.public_key)
+            .ttl(60)
+            .mint(key)
+        )
+        child = (
+            warrant.grant_builder()
+            .capability("shell", {"command": Exact('ls "foo; bar"')})
+            .holder(key.public_key)
+            .ttl(30)
+            .grant(key)
+        )
+        assert child is not None
+        with pytest.raises(Exception):
+            (
+                warrant.grant_builder()
+                .capability("shell", {"command": Exact("ls #; rm -rf /")})
+                .holder(key.public_key)
+                .ttl(30)
+                .grant(key)
+            )
