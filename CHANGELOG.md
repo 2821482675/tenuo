@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and can attenuate to a narrower `Subpath` or `Subset`. `run_command` does the
   same for tools that take one command string. The `GIT` profile stops
   repository config and `.gitattributes` from running programs. POSIX only.
+- **Pydantic activity arguments on Temporal.** Pydantic models (v1 and v2),
+  dataclasses, dictionaries, and lists are signed by PoP as typed,
+  JSON-compatible values. The signed representation matches Temporal's default
+  Pydantic converter, including serialization aliases, and rejects lossy custom
+  serialization filters, alias collisions, unordered collections, out-of-range
+  integers, bare bytes, and converter-dependent nested values or dictionary
+  keys.
+  `tenuo.temporal.framework_args("tool_ctx")` declares a framework-owned
+  argument as an any-value constraint so it remains signed and recorded in
+  receipts.
 
 ### Upgrade notes
 
@@ -34,7 +44,42 @@ Two checks are stricter, and some calls that used to pass now fail:
   still covers an approval dated slightly in the future. The `clock_tolerance_secs`
   argument of `verify_approvals` now applies to `approved_at` only.
 
+### Security
+
+- **Shlex (type 128) uses one POSIX-quoting tokenizer across every SDK.**
+  Quoted and escaped operator characters are literal arguments
+  (`ls "foo; bar"`, `echo ";"`, `find . -exec rm {} \;`). A 0.3.2/0.3.3
+  verifier still rejects those commands. Words break only at unquoted spaces,
+  tabs, and operators (`./ls,evil` is one command name, and `#` is an ordinary
+  word character so `ls foo#; rm -rf /` and `ls #; rm` are both rejected). `$`
+  and backticks are rejected everywhere in the raw command. Each `allow` entry
+  matches the command word literally (`allow=["ls"]` matches `ls` and does not
+  match `/usr/bin/ls`, `./ls`, or `/tmp/attacker/ls`), and any command word
+  containing `..` is rejected. Because older Rust verifiers accepted any path
+  whose basename matched a bare `allow` entry (such as `/tmp/attacker/ls` for
+  `allow=["ls"]`), upgrade every enforcement point before relying on literal
+  command-word matching. The shared decisions are `tests/vectors/shlex.json`.
+
+### Changed
+
+- **Python `Shlex` is the core class, and explanations come from that
+  check.** `DANGEROUS_TOKENS`, `EXPANSION_CHARS`, and `CONTROL_CHARS` are
+  gone. `allowed_bins` is the same list as `allow`, not a set. `isinstance`
+  checks see the core class. `Shlex.check(command)` returns the decision
+  (`allowed`, `reason`, `tokens`, `operators`, `expansion`, `controls`,
+  `binary_allowed`). TypeScript `checkShlex(allow, command)` returns the same
+  decision.
+
 ### Fixed
+
+- **Temporal structured arguments preserve their type in PoP.** Structured
+  values were previously signed as JSON text, so an object and a literal string
+  containing the same JSON had the same signed form. They now remain objects or
+  lists through core canonicalization, and models that could hide fields from
+  the signed form fail closed.
+- **Python rejects integers outside the core's signed 64-bit argument range.**
+  They previously fell through to floating-point conversion, where distinct
+  large integers could produce the same PoP input.
 
 - **Warrants have exactly one valid encoding.** The decoder accepted an
   envelope whose signature array header claimed three elements but held two,
@@ -112,7 +157,6 @@ are now denied. Check these before upgrading:
   approvals apply only when a `nonceStore` is passed.
 
 ### Added
-
 - **`ControlPlaneClient.status`.** Reports the connection state
   (`registering`, `connected`, `degraded`, `standalone`, `stopped`), the last
   error, and buffered, flushed and dropped audit event counts. It does no I/O,
@@ -227,7 +271,6 @@ are now denied. Check these before upgrading:
 - **Temporal reports PoP failures as `POP_VERIFICATION_FAILED`.** A missing
   or wrong-key PoP was reported as `CONSTRAINT_VIOLATED`. Untrusted issuers
   keep their existing type.
-
 - **Temporal `warrant_chain=` takes one shape everywhere.** The workflow start
   helpers took the parents only and rejected a chain that ended with the leaf,
   while `tenuo_execute_activity`, the Nexus helpers, and

