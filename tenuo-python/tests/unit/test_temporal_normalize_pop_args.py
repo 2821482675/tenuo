@@ -661,9 +661,17 @@ class TestSignedFormCoversWhatTheActivityReceives:
     @pytest.mark.parametrize("kind", ["set", "frozenset"])
     def test_unordered_model_fields_are_refused(self, kind):
         pydantic = pytest.importorskip("pydantic")
+        from typing import FrozenSet, Set
 
-        class Ctx(pydantic.BaseModel):
-            tags: set[str] | frozenset[str]
+        if kind == "set":
+
+            class Ctx(pydantic.BaseModel):
+                tags: Set[str]
+
+        else:
+
+            class Ctx(pydantic.BaseModel):
+                tags: FrozenSet[str]
 
         value = {"alpha", "beta"}
         if kind == "frozenset":
