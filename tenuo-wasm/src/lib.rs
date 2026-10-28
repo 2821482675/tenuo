@@ -224,6 +224,11 @@ fn approval_gate_map_to_json(gm: &ApprovalGateMap) -> JsonValue {
                 map.insert(tool.clone(), json!({ "args": JsonValue::Object(args_map) }));
             }
         }
+        if let Some(message) = &gate.message {
+            map.get_mut(tool).and_then(JsonValue::as_object_mut)
+                .expect("gate object was just inserted")
+                .insert("message".into(), json!(message));
+        }
     }
     JsonValue::Object(map)
 }
@@ -395,12 +400,20 @@ fn parse_approval_gates_json(val: &serde_json::Value) -> Option<ApprovalGateMap>
     let mut gm = ApprovalGateMap::new();
     for (tool, gate_val) in obj {
         let gate_obj = gate_val.as_object()?;
-        if gate_obj.len() != 1 {
+        if gate_obj.keys().any(|key| key != "args" && key != "message") {
             return None;
         }
+        let message = match gate_obj.get("message") {
+            None | Some(JsonValue::Null) => None,
+            Some(value) => Some(value.as_str()?),
+        };
         let args_value = gate_obj.get("args")?;
         if args_value.is_null() {
-            gm.insert(tool.clone(), ToolApprovalGate::whole_tool());
+            let mut gate = ToolApprovalGate::whole_tool();
+            if let Some(message) = message {
+                gate = gate.with_message(message);
+            }
+            gm.insert(tool.clone(), gate);
             continue;
         }
         let mut args = BTreeMap::new();
@@ -417,7 +430,11 @@ fn parse_approval_gates_json(val: &serde_json::Value) -> Option<ApprovalGateMap>
             };
             args.insert(arg.clone(), gate);
         }
-        gm.insert(tool.clone(), ToolApprovalGate::with_args(args));
+        let mut gate = ToolApprovalGate::with_args(args);
+        if let Some(message) = message {
+            gate = gate.with_message(message);
+        }
+        gm.insert(tool.clone(), gate);
     }
     if gm.is_empty() {
         None
@@ -1739,6 +1756,40 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
         }
     };
 
+    let invalid_config = |error: String| {
+        serde_wasm_bindgen::to_value(&BuilderWarrantResult {
+            warrant_b64: String::new(),
+            issuer_public_key_hex: String::new(),
+            issuer_private_key_hex: String::new(),
+            holder_public_key_hex: String::new(),
+            holder_private_key_hex: String::new(),
+            tools: vec![],
+            error: Some(error),
+        }).unwrap()
+    };
+    // Validate supplied policy before either minting path. Delegation inherits
+    // policy from its parent; this legacy builder cannot apply replacements.
+    let approval_gate_bytes = if let Some(gates_json) = &config.approval_gates {
+        let Some(gates) = parse_approval_gates_json(gates_json) else {
+            return invalid_config("Invalid approval_gates configuration".into());
+        };
+        match approval_gate::encode_approval_gate_map(&gates) {
+            Ok(bytes) => Some(bytes),
+            Err(e) => return invalid_config(format!("Failed to encode approval gates: {e}")),
+        }
+    } else {
+        None
+    };
+    if config.parent_warrant_b64.is_some()
+        && (config.approval_gates.is_some()
+            || config.required_approvers.is_some()
+            || config.min_approvals.is_some())
+    {
+        return invalid_config(
+            "Delegated builder inherits approval policy; supplied approval_gates, required_approvers, or min_approvals cannot be applied".into(),
+        );
+    }
+
     // Generate or parse keypairs
     let issuer_key = if let Some(hex_str) = &config.signing_key_hex {
         match hex::decode(hex_str) {
@@ -2269,40 +2320,9 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
         builder = builder.capability(tool_name, constraint_set);
     }
 
-    // Wire approval gates into extensions
-    if let Some(gates_json) = &config.approval_gates {
-        match parse_approval_gates_json(gates_json) {
-            Some(gm) => match approval_gate::encode_approval_gate_map(&gm) {
-                Ok(encoded) => {
-                    builder =
-                        builder.extension(approval_gate::APPROVAL_GATE_EXTENSION_KEY, encoded);
-                }
-                Err(e) => {
-                    return serde_wasm_bindgen::to_value(&BuilderWarrantResult {
-                        warrant_b64: String::new(),
-                        issuer_public_key_hex: String::new(),
-                        issuer_private_key_hex: String::new(),
-                        holder_public_key_hex: String::new(),
-                        holder_private_key_hex: String::new(),
-                        tools: tool_names,
-                        error: Some(format!("Failed to encode approval gates: {}", e)),
-                    })
-                    .unwrap();
-                }
-            },
-            None => {
-                return serde_wasm_bindgen::to_value(&BuilderWarrantResult {
-                    warrant_b64: String::new(),
-                    issuer_public_key_hex: String::new(),
-                    issuer_private_key_hex: String::new(),
-                    holder_public_key_hex: String::new(),
-                    holder_private_key_hex: String::new(),
-                    tools: tool_names,
-                    error: Some("Invalid approval_gates configuration".to_string()),
-                })
-                .unwrap();
-            }
-        }
+    // Policy was validated before the root/delegation split.
+    if let Some(encoded) = approval_gate_bytes {
+        builder = builder.extension(approval_gate::APPROVAL_GATE_EXTENSION_KEY, encoded);
     }
 
     // Wire required approvers
@@ -2990,6 +3010,28 @@ mod tests {
     fn parse_empty_returns_none() {
         let input = json!({});
         assert!(parse_approval_gates_json(&input).is_none());
+    }
+
+    #[test]
+    fn gate_messages_survive_readable_and_wire_roundtrips() {
+        for args in [json!(null), json!({"cmd": "all"})] {
+            let input = json!({"exec": {"args": args, "message": "  Confirm execution  "}});
+            let gates = parse_approval_gates_json(&input).unwrap();
+            assert_eq!(gates.get("exec").unwrap().message.as_deref(), Some("Confirm execution"));
+            let readable = approval_gate_map_to_json(&gates);
+            let reparsed = parse_approval_gates_json(&readable).unwrap();
+            assert_eq!(reparsed.get("exec").unwrap().message, gates.get("exec").unwrap().message);
+            let encoded = approval_gate::encode_approval_gate_map(&gates).unwrap();
+            let decoded = approval_gate::parse_approval_gate_map(Some(&encoded)).unwrap().unwrap();
+            assert_eq!(decoded.get("exec").unwrap().message.as_deref(), Some("Confirm execution"));
+        }
+        for message in [json!(1), json!([]), json!({}), json!(true)] {
+            assert!(parse_approval_gates_json(&json!({"exec": {"args": null, "message": message}})).is_none());
+        }
+        for message in [json!(null), json!("   ")] {
+            let gates = parse_approval_gates_json(&json!({"exec": {"args": null, "message": message}})).unwrap();
+            assert_eq!(gates.get("exec").unwrap().message, None);
+        }
     }
 
     #[test]

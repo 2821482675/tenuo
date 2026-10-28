@@ -53,6 +53,9 @@ Two checks are stricter, and some calls that used to pass now fail:
   lists, unsupported Shlex options, and malformed nested approval constraints
   fail warrant creation instead of being silently omitted. Shlex remains a
   syntax constraint; path authorization uses explicit structured arguments.
+  Valid approval-gate display messages are preserved. The legacy delegated
+  builder inherits parent approval policy and rejects supplied replacements
+  it cannot apply rather than silently ignoring them.
 
 ### Security
 

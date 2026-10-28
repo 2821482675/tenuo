@@ -1,10 +1,12 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
-import { approvalRequirement } from "../src/index.ts";
+import { approvalRequirement, inspectApprovalGate } from "../src/index.ts";
 
 const require = createRequire(import.meta.url);
 const wasm = require("../src/generated/tenuo_wasm.js") as {
-  create_warrant_from_config: (config: unknown) => { warrant_b64: string; error?: string };
+  create_warrant_from_config: (config: unknown) => {
+    warrant_b64: string; error?: string; holder_private_key_hex: string;
+  };
 };
 
 const mint = (constraint: unknown, approval_gates?: unknown) =>
@@ -14,6 +16,44 @@ const mint = (constraint: unknown, approval_gates?: unknown) =>
   });
 
 describe("legacy WASM Shlex builder fails closed", () => {
+  it("preserves optional messages for whole-tool and per-argument gates", () => {
+    for (const args of [null, { command: "all" }]) {
+      const result = mint({ shlex: { allow: ["cat"] } }, {
+        exec: { args, message: "  Confirm execution  " },
+      });
+      expect(result.error).toBeFalsy();
+      expect(inspectApprovalGate(result.warrant_b64, "exec").message).toBe("Confirm execution");
+    }
+    for (const message of [true, 123, [], {}]) {
+      expect(mint({ shlex: { allow: ["cat"] } }, { exec: { args: null, message } }).error).toBeTruthy();
+    }
+  });
+
+  it("inherits parent gates and rejects supplied delegation approval policy", () => {
+    const parent = wasm.create_warrant_from_config({
+      tools: { exec: { command: { shlex: { allow: ["cat"] } } } }, ttl: 600,
+      approval_gates: { exec: { args: null, message: "Parent approval" } },
+    });
+    expect(parent.error).toBeFalsy();
+    const config = {
+      tools: { exec: { command: { shlex: { allow: ["cat"] } } } }, ttl: 30,
+      parent_warrant_b64: parent.warrant_b64, signing_key_hex: parent.holder_private_key_hex,
+    };
+    const child = wasm.create_warrant_from_config(config);
+    expect(child.error).toBeFalsy();
+    expect(inspectApprovalGate(child.warrant_b64, "exec")).toMatchObject({
+      kind: "whole_tool", message: "Parent approval",
+    });
+    for (const policy of [
+      { approval_gates: { exec: false } },
+      { approval_gates: { exec: { args: null } } },
+      { required_approvers: [] }, { min_approvals: 1 },
+    ]) {
+      const result = wasm.create_warrant_from_config({ ...config, ...policy });
+      expect(result.error).toBeTruthy();
+      expect(result.warrant_b64).toBe("");
+    }
+  });
   it("rejects malformed allow lists and unsupported options in both forms", () => {
     for (const options of [
       { allow: [] }, { allow: "cat" }, { allow: ["cat", 42] },
