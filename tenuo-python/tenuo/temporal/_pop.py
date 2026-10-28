@@ -9,7 +9,6 @@ cryptic core-side failure).
 
 from __future__ import annotations
 
-import base64
 import dataclasses as _dataclasses
 import json
 import logging
@@ -487,12 +486,10 @@ def _jsonable(value: Any, field_name: str, depth: int = 0) -> Any:
     if isinstance(value, (list, tuple)):
         return [_jsonable(v, field_name, depth + 1) for v in value]
     if isinstance(value, bytes):
-        if depth == 0:
-            return base64.b64encode(value).decode("ascii")
         raise TenuoArgNormalizationError(
-            f"Activity argument '{field_name}' contains nested bytes whose wire "
+            f"Activity argument '{field_name}' contains bare bytes whose wire "
             "representation depends on the Temporal data converter. Use a typed "
-            "Pydantic field or pass the bytes as a separate top-level argument."
+            "Pydantic field or an explicit string representation."
         )
     if _is_secret(value):  # str() would mask every secret the same way
         raise TenuoArgNormalizationError(
@@ -512,8 +509,8 @@ def _normalize_pop_arg_value(value: Any, field_name: str, depth: int = 0) -> Any
     """Recursively normalize a single activity arg value for PoP signing.
 
     Primitives pass through unchanged. Dataclasses, Pydantic models, dicts,
-    lists, tuples, bytes, and None are normalized to representations the Rust
-    CBOR encoder can accept. Anything else raises TenuoArgNormalizationError.
+    lists, tuples, and None are normalized to representations the Rust CBOR
+    encoder can accept. Anything else raises TenuoArgNormalizationError.
     """
     if depth > _POP_NORMALIZE_MAX_DEPTH:
         raise TenuoArgNormalizationError(
@@ -546,13 +543,18 @@ def _normalize_pop_arg_value(value: Any, field_name: str, depth: int = 0) -> Any
         return _jsonable(value, field_name, depth)
 
     if isinstance(value, bytes):
-        return base64.b64encode(value).decode("ascii")
+        raise TenuoArgNormalizationError(
+            f"Activity argument '{field_name}' contains bare bytes whose wire "
+            "representation depends on the Temporal data converter and can "
+            "collide with a string in PoP. Use a typed Pydantic field or an "
+            "explicit string representation."
+        )
 
     type_name = type(value).__qualname__
     raise TenuoArgNormalizationError(
         f"Activity argument '{field_name}' has type '{type_name}' which cannot "
         f"be normalized for PoP signing. Supported types: str, int, float, bool, "
-        f"None, bytes, list, tuple, dict, @dataclass and Pydantic models. For {type_name}: "
+        f"None, list, tuple, dict, @dataclass and Pydantic models. For {type_name}: "
         f"convert to a @dataclass or dict, or lift the relevant fields to "
         f"top-level primitive arguments with explicit constraints. "
         f"See docs/temporal-reference.md: 'Structured activity arguments'."

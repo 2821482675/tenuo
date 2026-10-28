@@ -11,7 +11,6 @@ produce distinct PoP inputs.
 
 from __future__ import annotations
 
-import base64
 import dataclasses
 import inspect
 import json
@@ -169,17 +168,17 @@ class TestNormalizePopArgValueListTuple:
 
 
 class TestNormalizePopArgValueBytes:
-    """bytes → base64-encoded ASCII string."""
+    """Bare bytes fail closed because their wire form is converter-dependent."""
 
-    def test_bytes_base64_encoded(self):
+    def test_bytes_are_refused_instead_of_colliding_with_base64_text(self):
         raw = b"\x00\x01\x02\xff"
-        result = _normalize_pop_arg_value(raw, "field")
-        assert isinstance(result, str)
-        assert base64.b64decode(result) == raw
+        with pytest.raises(TenuoArgNormalizationError, match="collide with a string"):
+            _normalize_pop_arg_value(raw, "field")
+        assert _normalize_pop_arg_value("AAEC/w==", "field") == "AAEC/w=="
 
     def test_empty_bytes(self):
-        result = _normalize_pop_arg_value(b"", "field")
-        assert result == ""
+        with pytest.raises(TenuoArgNormalizationError, match="bare bytes"):
+            _normalize_pop_arg_value(b"", "field")
 
 
 class TestNormalizePopArgValueUnsupported:
@@ -770,7 +769,7 @@ class TestSignedFormCoversWhatTheActivityReceives:
     def test_converter_dependent_nested_values_are_refused(self):
         import datetime
 
-        with pytest.raises(TenuoArgNormalizationError, match="nested bytes"):
+        with pytest.raises(TenuoArgNormalizationError, match="bare bytes"):
             _normalize_pop_arg_value({"blob": b"abc"}, "c")
         with pytest.raises(TenuoArgNormalizationError, match="unsupported nested type"):
             _normalize_pop_arg_value(

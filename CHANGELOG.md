@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JSON-compatible values. The signed representation matches Temporal's default
   Pydantic converter, including serialization aliases, and rejects lossy custom
   serialization, alias collisions, unordered collections, out-of-range
-  integers, and converter-dependent nested values or dictionary keys.
+  integers, bare bytes, and converter-dependent nested values or dictionary
+  keys.
   `tenuo.temporal.framework_args("tool_ctx")` declares a framework-owned
   argument as an any-value constraint so it remains signed and recorded in
   receipts.

@@ -523,7 +523,7 @@ async with Worker(
 
 Activity arguments are signed by PoP and checked against the warrant as values.
 Primitives (`str`, `int`, `float`, `bool`, `None`) are used as they are. `dict`,
-`list`, `tuple`, `bytes`, `@dataclass` instances and Pydantic models (v1 or v2)
+`list`, `tuple`, `@dataclass` instances and Pydantic models (v1 or v2)
 are normalized first, on both sides. A Pydantic model becomes the plain
 JSON-compatible object produced by the default Temporal Pydantic converter; a
 dataclass or dict stays an object, and a tuple becomes a list. Structured values
@@ -535,7 +535,7 @@ objects.
 Nested values are converted the same way at every depth, so a dataclass inside
 a dict signs as the dict the worker receives. Tenuo fails closed when the wire
 form could be ambiguous or converter-dependent. This includes unordered
-`set`/`frozenset` values, bare nested `bytes` or `datetime` values, non-finite
+`set`/`frozenset` values, bare `bytes` or `datetime` values, non-finite
 floats, integers outside the signed 64-bit core range, converter-dependent
 dictionary keys such as `None`, colliding JSON dictionary keys, and arbitrary
 classes. Typed Pydantic fields for values such as `bytes` and `datetime` are
