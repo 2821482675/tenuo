@@ -668,13 +668,23 @@ missing or trailing tuple elements rather than silently ignoring them.
 | **Not** | Not | NO | Negation reverses the subset direction (`Not(B) ⊆ Not(A)` requires `A ⊆ B`, not `B ⊆ A`), making safe attenuation infeasible. |
 | **Cel** | Cel | IFF | `child.expr == "(parent.expr) && (extra)"` (parenthesized conjunction only; bare `||` after `&&` is rejected) |
 | **Subpath** | Subpath | IFF | `child.root` is subpath of `parent.root` |
-| **Subpath** | Exact | IFF | `parent.contains(child.path)` |
+| **Subpath** | Subset | IFF | Every allowed item is a string satisfying the parent Subpath |
+| **Subpath** | Exact | IFF | Child is a contained path string, or a list in which every item is a contained path string |
 | **UrlSafe** | UrlSafe | IFF | All child restrictions ≥ parent restrictions (see field rules) |
 | **UrlSafe** | Exact | IFF | `parent.is_safe(child.url)` |
 | **Shlex** | Shlex | IFF | `child.allow ⊆ parent.allow` |
 | **Shlex** | Exact | IFF | `parent.matches(child.value)` |
 
 **All unlisted (Parent, Child) pairs are INVALID and MUST be rejected.**
+
+Subpath (type 17) accepts a path string or a list of path strings. Every list
+element MUST satisfy the same scalar containment check; nested lists and
+non-string elements MUST fail. An empty list matches vacuously. An executor
+whose operation has implicit paths MUST authorize that actual scope rather than
+substituting an empty list. These rules and Subpath-to-Subset/Exact attenuation
+are shared across SDKs in `tests/vectors/subpath-lists.json`. Older verifiers
+reject list-valued Subpath arguments and these new attenuation pairs, so all
+participants in those calls must support list matching before deployment.
 
 #### Pattern Attenuation Rules
 

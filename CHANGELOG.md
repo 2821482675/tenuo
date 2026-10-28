@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`tenuo.process`: run the command the warrant authorized.** `run` checks a
+  structured call (`subcommand`, `flags`, `paths`, `cwd`, with `cwd` and
+  `paths` resolved with `realpath`) against the warrant and executes those
+  exact values as argv, without a shell and with a fixed environment.
+  `Subpath` now also validates lists of paths (`paths=Subpath("/workspace")`)
+  and can attenuate to a narrower `Subpath` or `Subset`. `run_command` does the
+  same for tools that take one command string. The `GIT` profile stops
+  repository config and `.gitattributes` from running programs on `status`,
+  `diff`, and `log`; Git 2.41+ is required. Command strings use the core
+  tokenizer's returned tokens, and trusted executor profiles pin binary
+  resolution and copy their environment and safety flags. POSIX only.
+  SHA-1/SHA-256 Git repositories are supported; signed approvals can be passed
+  to both execution entry points and must cover the exact resolved arguments.
 - **Pydantic activity arguments on Temporal.** Pydantic models (v1 and v2),
   dataclasses, dictionaries, and lists are signed by PoP as typed,
   JSON-compatible values. The signed representation matches Temporal's default
