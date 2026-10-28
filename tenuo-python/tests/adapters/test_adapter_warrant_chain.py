@@ -302,7 +302,7 @@ class TestWarrantTokenSizeLimit:
             )
             warrants.append(warrant)
         stack = encode_warrant_stack(warrants)
-        assert all(w.expires_at == warrants[0].expires_at for w in warrants)
+        assert all(w.expires_at() == warrants[0].expires_at() for w in warrants)
         decoded_size = sum(len(w.to_bytes()) for w in warrants)
         assert MAX_WARRANT_SIZE < decoded_size < 256 * 1024
         assert len(stack) > MAX_WARRANT_SIZE
