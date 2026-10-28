@@ -32,6 +32,11 @@
     {"name": "empty command", "allow": ["ls"], "command": "", "matches": false},
     {"name": "unbalanced quote", "allow": ["ls"], "command": "ls \"", "matches": false},
     {"name": "unlisted binary", "allow": ["ls"], "command": "cat /etc/passwd", "matches": false},
-    {"name": "quoted binary name", "allow": ["my program"], "command": "\"my program\" arg1", "matches": true}
+    {"name": "quoted binary name", "allow": ["my program"], "command": "\"my program\" arg1", "matches": true},
+    {"name": "double quoted escaped quote", "allow": ["echo"], "command": "echo \"a\\\"b;c\"", "matches": true},
+    {"name": "double quoted escaped backslash", "allow": ["echo"], "command": "echo \"a\\\\b\"", "matches": true},
+    {"name": "double quoted backslash before ordinary char", "allow": ["echo"], "command": "echo \"a\\b\"", "matches": true},
+    {"name": "double quoted escaped quote then unquoted operator", "allow": ["echo"], "command": "echo \"a\\\"\"; rm", "matches": false},
+    {"name": "double quoted escaped backslash before closing quote then operator", "allow": ["echo"], "command": "echo \"a\\\\\"; rm", "matches": false}
   ]
 }

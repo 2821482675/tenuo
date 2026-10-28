@@ -100,8 +100,15 @@ impl Lexer {
     }
 
     fn skip_blank(&mut self) {
-        while matches!(self.peek(), Some(' ' | '\t')) {
-            self.bump();
+        loop {
+            if matches!(self.peek(), Some(' ' | '\t')) {
+                self.bump();
+            } else if self.peek() == Some('\\') && self.chars.get(self.pos + 1) == Some(&'\n') {
+                self.bump();
+                self.bump();
+            } else {
+                break;
+            }
         }
     }
 
@@ -123,7 +130,9 @@ impl Lexer {
                         let Some(escaped) = self.bump() else {
                             return Err(ShellError::NoEscapedCharacter);
                         };
-                        text.push(escaped);
+                        if escaped != '\n' {
+                            text.push(escaped);
+                        }
                     }
                     '\'' | '"' => {
                         self.bump();
@@ -152,9 +161,12 @@ impl Lexer {
                         let Some(escaped) = self.bump() else {
                             return Err(ShellError::NoEscapedCharacter);
                         };
-                        // POSIX: inside double quotes, backslash is special
-                        // only before $, `, ", \, and newline.
-                        if matches!(escaped, '$' | '`' | '"' | '\\' | '\n') {
+                        // POSIX: inside double quotes, backslash-newline is a
+                        // line continuation (removed), and backslash is special
+                        // only before $, `, ", and \.
+                        if escaped == '\n' {
+                            continue;
+                        } else if matches!(escaped, '$' | '`' | '"' | '\\') {
                             text.push(escaped);
                         } else {
                             text.push('\\');
@@ -360,6 +372,18 @@ mod tests {
             ("echo \";\"", vec!["echo", ";"]),
             ("ls #; rm", vec!["ls", "#", ";", "rm"]),
             ("echo 'a'\"b\"'c'", vec!["echo", "abc"]),
+            ("echo \"a\\\"b;c\"", vec!["echo", "a\"b;c"]),
+            ("echo \"a\\\\b\"", vec!["echo", "a\\b"]),
+            ("echo \"a\\b\"", vec!["echo", "a\\b"]),
+            ("echo \"a\\\"\"; rm", vec!["echo", "a\"", ";", "rm"]),
+            ("echo \"a\\\\\"; rm", vec!["echo", "a\\", ";", "rm"]),
+            ("echo foo\\\nbar", vec!["echo", "foobar"]),
+            ("echo \"foo\\\nbar\"", vec!["echo", "foobar"]),
+            ("echo 'foo\\\nbar'", vec!["echo", "foo\\\nbar"]),
+            ("echo \\\n bar", vec!["echo", "bar"]),
+            ("echo foo\\\n bar", vec!["echo", "foo", "bar"]),
+            ("echo \\\n", vec!["echo"]),
+            ("\\\n", Vec::<&str>::new()),
             ("café --help", vec!["café", "--help"]),
         ];
         for (input, expected) in cases {
@@ -433,6 +457,12 @@ mod tests {
         assert!(command_allowed(&allow, "grep \"a|b\" file"));
         assert!(command_allowed(&allow, "echo \"AT&T\""));
         assert!(command_allowed(&allow, "echo \"<html>\""));
+        assert!(command_allowed(&allow, "echo \"a\\\"b;c\""));
+        assert!(command_allowed(&allow, "echo \"a\\\\b\""));
+        assert!(command_allowed(&allow, "echo \"a\\b\""));
+        assert!(!command_allowed(&allow, "echo \"a\\\"\"; rm"));
+        assert!(!command_allowed(&allow, "echo \"a\\\\\"; rm"));
+        assert!(!command_allowed(&allow, "echo foo\\\nbar"));
     }
 
     #[test]
@@ -580,6 +610,9 @@ mod tests {
             "ls foo\\ bar",
             "ls foo#bar",
             "ls \"#world\"",
+            "ls \"a\\\"b;c\"",
+            "ls \"a\\\\b\"",
+            "ls \"a\\b\"",
             "find . -exec rm {} \\;",
             "ls 'a'\"b\"'c'",
         ];

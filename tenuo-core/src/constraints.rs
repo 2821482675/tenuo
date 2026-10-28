@@ -6706,8 +6706,23 @@ mod tests {
         let parent = Constraint::Shlex(Shlex::new(vec!["ls"]));
         let child = Constraint::Exact(Exact::new(r#"ls "foo; bar""#));
         assert!(parent.validate_attenuation(&child).is_ok());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new(r#"ls "a\"b;c""#)))
+            .is_ok());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new(r#"ls "a\\b""#)))
+            .is_ok());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new(r#"ls "a\b""#)))
+            .is_ok());
         let chained = Constraint::Exact(Exact::new("ls; rm"));
         assert!(parent.validate_attenuation(&chained).is_err());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new(r#"ls "a\""; rm"#)))
+            .is_err());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new(r#"ls "a\\"; rm"#)))
+            .is_err());
         // `#` does not start a comment here, so the shell runs `rm`.
         let hidden = Constraint::Exact(Exact::new("ls foo#; rm -rf /"));
         assert!(parent.validate_attenuation(&hidden).is_err());
