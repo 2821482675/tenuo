@@ -1054,14 +1054,19 @@ class TestShlexCoreTokenizer:
         assert not constraint.matches("cat <> /etc/passwd")
 
     def test_exported_shlex_mints_and_attenuates_in_warrants(self):
-        from tenuo import Cmd, Exact, Shlex as TopShlex, SigningKey, Warrant
+        from tenuo import Capability, Cmd, Exact, Shlex as TopShlex, SigningKey, Warrant
+        from tenuo.constraints import ensure_constraint
 
         assert TopShlex is CoreShlex
         assert Cmd is CoreShlex
+        sh = TopShlex(allow=["ls", "cat"])
+        assert ensure_constraint(sh) is sh
+        cap = Capability("shell", command=sh)
+        assert cap.constraints["command"] is sh
         key = SigningKey.generate()
         warrant = (
             Warrant.mint_builder()
-            .capability("shell", {"command": TopShlex(allow=["ls", "cat"])})
+            .capability("shell", {"command": sh})
             .holder(key.public_key)
             .ttl(60)
             .mint(key)
@@ -1074,6 +1079,8 @@ class TestShlexCoreTokenizer:
             .grant(key)
         )
         assert child is not None
+        narrowed = warrant.grant(to=key.public_key, allow="shell", command=TopShlex(allow=["ls"]), ttl=30, key=key)
+        assert narrowed is not None
         with pytest.raises(Exception):
             (
                 warrant.grant_builder()
