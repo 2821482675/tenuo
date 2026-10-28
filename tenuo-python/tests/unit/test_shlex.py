@@ -1000,6 +1000,7 @@ _SHELL_WORDS = [
     ("echo \\\n bar", ["echo", "bar"]),
     ("cat >\\\n> file", ["cat", ">>", "file"]),
     ("ls &\\\n& rm", ["ls", "&&", "rm"]),
+    ("echo a\rb", ["echo", "a\rb"]),
     ("café --help", ["café", "--help"]),
     ("ls -- -rf;", ["ls", "--", "-rf", ";"]),
 ]
