@@ -1887,7 +1887,7 @@ class A2AServer:
             elif constraint_type == "Shlex":
                 from tenuo_core import Shlex
 
-                return Shlex(allow=data.get("allow", []), within=data.get("within"))
+                return Shlex(allow=data.get("allow", []))
 
             # Glob pattern matching
             elif constraint_type == "Pattern":

@@ -251,20 +251,10 @@ export function urlSafe(options?: {
   return out;
 }
 
-/** Shell command whose first word must be one of `allow`, optionally bounded to `within`. */
-export function shlex(
-  allow: readonly string[],
-  options?: { readonly within?: string },
-): ShlexConstraint {
-  rejectUnknownOptions("shlex", options, ["within"]);
+/** Shell command whose first word must be one of `allow`. Parsed with shell quoting rules in core. */
+export function shlex(allow: readonly string[]): ShlexConstraint {
   if (allow.length === 0) {
     throw new TenuoConfigurationError("tenuo.shlex() requires at least one allowed command");
-  }
-  if (options?.within !== undefined) {
-    if (typeof options.within !== "string" || !options.within.startsWith("/")) {
-      throw new TenuoConfigurationError("tenuo.shlex() within must be an absolute path");
-    }
-    return { kind: "shlex", allow, within: options.within };
   }
   return { kind: "shlex", allow };
 }

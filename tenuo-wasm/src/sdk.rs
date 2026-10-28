@@ -1797,10 +1797,7 @@ enum ConstraintExpr {
         deny_domains: Option<Vec<String>>,
     },
     #[serde(rename = "shlex")]
-    Shlex {
-        allow: Vec<String>,
-        within: Option<String>,
-    },
+    Shlex { allow: Vec<String> },
     #[serde(rename = "contains")]
     Contains { values: Vec<serde_json::Value> },
     #[serde(rename = "subset")]
@@ -1931,16 +1928,11 @@ pub(crate) fn constraint_from_expr(expr: &serde_json::Value) -> Result<Constrain
             }
             Ok(safe.into())
         }
-        ConstraintExpr::Shlex { allow, within } => {
+        ConstraintExpr::Shlex { allow } => {
             if allow.is_empty() {
                 return Err("shlex requires at least one allowed command".into());
             }
-            match within {
-                Some(root) => Ok(Shlex::with_within(allow, root)
-                    .map_err(|e| e.to_string())?
-                    .into()),
-                None => Ok(Shlex::new(allow).into()),
-            }
+            Ok(Shlex::new(allow).into())
         }
         ConstraintExpr::Contains { values } => Ok(Contains::new(value_list(&values)?).into()),
         ConstraintExpr::Subset { values } => Ok(Subset::new(value_list(&values)?).into()),

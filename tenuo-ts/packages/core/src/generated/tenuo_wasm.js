@@ -1305,15 +1305,12 @@ exports.sdkVerifyReceiptChain = sdkVerifyReceiptChain;
  * `binary_allowed`.
  * @param {any} allow
  * @param {string} command
- * @param {string | null} [within]
  * @returns {any}
  */
-function shlex_inspect(allow, command, within) {
+function shlex_inspect(allow, command) {
     const ptr0 = passStringToWasm0(command, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    var ptr1 = isLikeNone(within) ? 0 : passStringToWasm0(within, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    var len1 = WASM_VECTOR_LEN;
-    const ret = wasm.shlex_inspect(allow, ptr0, len0, ptr1, len1);
+    const ret = wasm.shlex_inspect(allow, ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }

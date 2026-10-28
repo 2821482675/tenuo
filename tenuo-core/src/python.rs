@@ -2023,19 +2023,16 @@ impl PyShlex {
     ///     >>> shlex.matches("rm -rf /")
     ///     False
     #[new]
-    #[pyo3(signature = (allow, within=None))]
-    fn new(allow: Vec<String>, within: Option<String>) -> PyResult<Self> {
+    #[pyo3(signature = (allow))]
+    fn new(allow: Vec<String>) -> PyResult<Self> {
         if allow.is_empty() {
             return Err(PyValueError::new_err(
                 "Shlex requires at least one allowed binary",
             ));
         }
-        let inner = match within {
-            Some(root) => crate::constraints::Shlex::with_within(allow, root)
-                .map_err(|err| PyValueError::new_err(err.to_string()))?,
-            None => crate::constraints::Shlex::new(allow),
-        };
-        Ok(Self { inner })
+        Ok(Self {
+            inner: crate::constraints::Shlex { allow },
+        })
     }
 
     /// Check if a command string is safe to execute.
@@ -2077,11 +2074,7 @@ impl PyShlex {
             dict.set_item("binary_allowed", false)?;
             return Ok(dict);
         };
-        let report = crate::shell_words::check_within(
-            &self.inner.allow,
-            self.inner.within.as_deref(),
-            &command,
-        );
+        let report = crate::shell_words::check(&self.inner.allow, &command);
         dict.set_item("allowed", report.allowed)?;
         dict.set_item("reason", &report.reason)?;
         dict.set_item("tokens", report.tokens)?;
@@ -2115,14 +2108,7 @@ impl PyShlex {
             .iter()
             .map(|item| python_single_quoted(item))
             .collect();
-        match &self.inner.within {
-            Some(within) => format!(
-                "Shlex(allow=[{}], within={})",
-                parts.join(", "),
-                python_single_quoted(within)
-            ),
-            None => format!("Shlex(allow=[{}])", parts.join(", ")),
-        }
+        format!("Shlex(allow=[{}])", parts.join(", "))
     }
 
     fn __str__(&self) -> String {
@@ -2133,12 +2119,6 @@ impl PyShlex {
     #[getter]
     fn allow(&self) -> Vec<String> {
         self.inner.allow.clone()
-    }
-
-    /// Optional lexical path boundary for command arguments.
-    #[getter]
-    fn within(&self) -> Option<String> {
-        self.inner.within.clone()
     }
 
     /// Allowed binaries. Same list as ``allow``, kept for callers that read

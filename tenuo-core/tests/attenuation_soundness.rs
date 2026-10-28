@@ -165,22 +165,15 @@ fn wildcard_strategy() -> impl Strategy<Value = Constraint> {
 }
 
 fn shlex_strategy() -> impl Strategy<Value = Constraint> {
-    (
-        prop::collection::vec(
-            prop::sample::select(&["ls", "cat", "echo", "grep", "wc"][..]),
-            1..=3,
-        ),
-        prop::option::of(prop::sample::select(
-            &["/data", "/data/reports", "/workspace"][..],
-        )),
+    prop::collection::vec(
+        prop::sample::select(&["ls", "cat", "echo", "grep", "wc"][..]),
+        1..=3,
     )
-        .prop_map(|(cmds, within)| {
-            let allow = cmds.into_iter().map(String::from).collect::<Vec<_>>();
-            match within {
-                Some(root) => Constraint::Shlex(Shlex::with_within(allow, root).unwrap()),
-                None => Constraint::Shlex(Shlex::new(allow)),
-            }
-        })
+    .prop_map(|cmds| {
+        Constraint::Shlex(Shlex::new(
+            cmds.into_iter().map(String::from).collect::<Vec<_>>(),
+        ))
+    })
 }
 
 fn urlsafe_strategy() -> impl Strategy<Value = Constraint> {

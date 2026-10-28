@@ -37,18 +37,6 @@
     {"name": "double quoted escaped backslash", "allow": ["echo"], "command": "echo \"a\\\\b\"", "matches": true},
     {"name": "double quoted backslash before ordinary char", "allow": ["echo"], "command": "echo \"a\\b\"", "matches": true},
     {"name": "double quoted escaped quote then unquoted operator", "allow": ["echo"], "command": "echo \"a\\\"\"; rm", "matches": false},
-    {"name": "double quoted escaped backslash before closing quote then operator", "allow": ["echo"], "command": "echo \"a\\\\\"; rm", "matches": false},
-    {"name": "within allows relative file", "allow": ["cat", "grep"], "within": "/work", "command": "cat notes.txt", "matches": true},
-    {"name": "within allows path inside root", "allow": ["cat", "grep"], "within": "/work", "command": "cat /work/sub/a.txt", "matches": true},
-    {"name": "within allows quoted path inside root", "allow": ["cat"], "within": "/work", "command": "cat \"/work/my notes.txt\"", "matches": true},
-    {"name": "within rejects absolute path outside root", "allow": ["cat", "grep"], "within": "/work", "command": "cat /etc/hostname", "matches": false},
-    {"name": "within rejects dotdot escape", "allow": ["cat", "grep"], "within": "/work", "command": "cat ../secret", "matches": false},
-    {"name": "within rejects tilde expansion", "allow": ["cat"], "within": "/work", "command": "cat ~/.ssh/id_rsa", "matches": false},
-    {"name": "within rejects option-attached path outside root", "allow": ["grep"], "within": "/work", "command": "grep -f/etc/x notes.txt", "matches": false},
-    {"name": "within rejects option-attached path after double dash", "allow": ["grep"], "within": "/work", "command": "grep -e -- -f/etc/passwd notes.txt", "matches": false},
-    {"name": "within rejects option-attached path containing equals", "allow": ["grep"], "within": "/work", "command": "grep -f../secret=patterns notes.txt", "matches": false},
-    {"name": "within rejects backslash in path argument", "allow": ["cat"], "within": "/work", "command": "cat 'a\\b/../../etc/passwd'", "matches": false},
-    {"name": "within rejects glob dotdot escape", "allow": ["cat"], "within": "/work", "command": "cat .[.]/secret", "matches": false},
-    {"name": "within allows option-attached path inside root", "allow": ["grep"], "within": "/work", "command": "grep -f/work/patterns.txt notes.txt", "matches": true}
+    {"name": "double quoted escaped backslash before closing quote then operator", "allow": ["echo"], "command": "echo \"a\\\\\"; rm", "matches": false}
   ]
 }

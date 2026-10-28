@@ -36,9 +36,12 @@ Two checks are stricter, and some calls that used to pass now fail:
   still covers an approval dated slightly in the future. The `clock_tolerance_secs`
   argument of `verify_approvals` now applies to `approved_at` only.
 
-### Added
+### Fixed
 
-- **Optional `within` path boundary on `Shlex` (#1023).** `Shlex(allow=[...], within="/work")` (Rust `Shlex::with_within`, TypeScript `shlex(allow, { within: "/work" })`) requires every argument path token (relative paths, absolute paths, `--opt=path`, and single-letter `-f/path` / `-I../path` flags) to resolve lexically inside `within`, and rejects `~` expansion. `within=None` omits the field on the wire, preserving existing encodings. Delegation may add `within` or narrow it to a subdirectory, never remove or widen it.
+- **WASM builders reject malformed Shlex and approval gates.** Invalid command
+  lists, unsupported Shlex options, and malformed nested approval constraints
+  fail warrant creation instead of being silently omitted. Shlex remains a
+  syntax constraint; path authorization uses explicit structured arguments.
 
 ### Security
 

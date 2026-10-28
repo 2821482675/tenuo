@@ -189,7 +189,6 @@ fn every_constraint() -> Vec<Constraint> {
         Constraint::UrlSafe(UrlSafe::new()),
         Constraint::UrlSafe(url_safe_with_options),
         Constraint::Shlex(Shlex::new(vec!["ls"])),
-        Constraint::Shlex(Shlex::with_within(vec!["ls"], "/work").unwrap()),
     ]
 }
 
