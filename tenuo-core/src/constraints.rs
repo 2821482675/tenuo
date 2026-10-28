@@ -3451,10 +3451,10 @@ impl Shlex {
     /// Create a new Shlex constraint with a binary allowlist and lexical path boundary.
     pub fn with_within(allow: Vec<impl Into<String>>, within: impl Into<String>) -> Result<Self> {
         let within = within.into();
-        if within.contains('\0') {
+        if within.contains('\0') || within.contains('\\') || !within.starts_with('/') {
             return Err(Error::InvalidPath {
                 path: within,
-                reason: "within root must not contain null bytes".to_string(),
+                reason: "within root must be an absolute POSIX path".to_string(),
             });
         }
         let subpath = Subpath::new(within)?;
@@ -3467,10 +3467,10 @@ impl Shlex {
     /// Validate that `within` (when present) is a valid absolute path root.
     pub fn validate(&self) -> Result<()> {
         if let Some(ref root) = self.within {
-            if root.contains('\0') {
+            if root.contains('\0') || root.contains('\\') || !root.starts_with('/') {
                 return Err(Error::InvalidPath {
                     path: root.clone(),
-                    reason: "within root must not contain null bytes".to_string(),
+                    reason: "within root must be an absolute POSIX path".to_string(),
                 });
             }
             Subpath::new(root)?;

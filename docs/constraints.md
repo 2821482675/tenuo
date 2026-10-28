@@ -687,7 +687,7 @@ bounded.matches("cat ../secret")            # False (normalizes outside /work)
 bounded.matches("grep -f/etc/x notes.txt")  # False (option-attached path outside /work)
 ```
 
-`#` is an ordinary word character, never a comment, so an operator after `#` is still rejected. Each `allow` entry matches the command word literally: `allow=["ls"]` matches `ls` only (not `/usr/bin/ls`, `./ls`, or `/tmp/attacker/ls`), and any command word containing `..` is rejected. When `within` is set, every argument token that denotes a path (including relative tokens, `--opt=path`, and `-f/path`) must resolve lexically inside `within`, and `~` expansion is rejected.
+`#` is an ordinary word character, never a comment, so an operator after `#` is still rejected. Each `allow` entry matches the command word literally: `allow=["ls"]` matches `ls` only (not `/usr/bin/ls`, `./ls`, or `/tmp/attacker/ls`), and any command word containing `..` is rejected. When `within` is set, every argument token that denotes a path (including relative tokens, `--opt=path`, and `-f/path`) must resolve lexically inside `within`, and `~` expansion and backslash-containing path tokens are rejected. Because `Shlex` is a pure lexical check and does not rewrite the command or change the process working directory, adapters that use `within` MUST run the command with its working directory set to `within` (and resolve symlinks beforehand if symlink containment is required).
 
 A quoted or backslash-escaped operator is a literal argument, so `find . -exec rm {} \;` passes this check. `find` still runs the argument. That is the semantic gap in the warning below. `Shlex.check(command)` returns the same decision the warrant uses, including the reason.
 

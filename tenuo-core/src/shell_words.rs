@@ -89,13 +89,23 @@ impl Lexer {
         self.match_operator().is_some()
     }
 
-    /// Compare in place. Copying the rest of the input here made the lexer
-    /// quadratic in the command length.
-    fn match_operator(&self) -> Option<&'static str> {
+    /// Compare in place, skipping any `\\\n` line continuations inside an
+    /// operator token (such as `>\\\n>` for `>>`). Copying the rest of the
+    /// input here made the lexer quadratic in the command length.
+    fn match_operator(&self) -> Option<(&'static str, usize)> {
         let rest = &self.chars[self.pos..];
-        OPERATORS.iter().copied().find(|op| {
-            let mut at = rest.iter();
-            op.chars().all(|ch| at.next() == Some(&ch))
+        OPERATORS.iter().copied().find_map(|op| {
+            let mut idx = 0;
+            for ch in op.chars() {
+                while idx + 1 < rest.len() && rest[idx] == '\\' && rest[idx + 1] == '\n' {
+                    idx += 2;
+                }
+                if rest.get(idx) != Some(&ch) {
+                    return None;
+                }
+                idx += 1;
+            }
+            Some((op, idx))
         })
     }
 
@@ -194,10 +204,8 @@ impl Lexer {
                 }))
             }
             Some(_) if self.starts_operator() => {
-                let op = self.match_operator().expect("starts_operator");
-                for _ in op.chars() {
-                    self.bump();
-                }
+                let (op, consumed) = self.match_operator().expect("starts_operator");
+                self.pos += consumed;
                 Ok(Some(Token {
                     text: op.to_string(),
                     operator: true,
@@ -243,63 +251,48 @@ fn denied(reason: impl Into<String>, extras: ShlexCheck) -> ShlexCheck {
     }
 }
 
-fn path_within_root(subpath: &crate::constraints::Subpath, token: &str) -> bool {
+fn path_within_root(root_comps: &[&str], token: &str) -> bool {
     if token.contains('\0')
+        || token.contains('\\')
         || token.starts_with('~')
         || token.contains(":~")
         || token.contains("=~")
     {
         return false;
     }
-    let is_windows_abs = token.len() >= 3
-        && token.as_bytes()[0].is_ascii_alphabetic()
-        && token.as_bytes()[1] == b':'
-        && matches!(token.as_bytes()[2], b'/' | b'\\');
-    if token.starts_with('/') || is_windows_abs {
-        // Reject any `..` step that visits or leaves a location outside `subpath`
-        // so symlinks outside the root cannot combine with `..` to land inside.
-        if token.split(['/', '\\']).any(|c| c == "..") {
-            let mut comps: Vec<&str> = Vec::new();
-            let (prefix, rest) = if let Some(s) = token.strip_prefix('/') {
-                ("/", s)
-            } else {
-                (&token[..3], &token[3..])
-            };
-            for comp in rest.split(['/', '\\']) {
-                match comp {
-                    "" | "." => continue,
-                    ".." => {
-                        let before = if comps.is_empty() {
-                            prefix.to_string()
-                        } else {
-                            format!("{}{}", prefix, comps.join("/"))
-                        };
-                        if !subpath.contains_path(&before).unwrap_or(false) {
-                            return false;
-                        }
-                        if comps.pop().is_none() {
-                            return false;
-                        }
-                        let after = if comps.is_empty() {
-                            prefix.to_string()
-                        } else {
-                            format!("{}{}", prefix, comps.join("/"))
-                        };
-                        if !subpath.contains_path(&after).unwrap_or(false) {
-                            return false;
-                        }
+    if token.len() >= 2 && token.as_bytes()[0].is_ascii_alphabetic() && token.as_bytes()[1] == b':'
+    {
+        return false;
+    }
+    if token.starts_with('/') {
+        // Single-pass O(n) check: the path must enter `root_comps` in order and
+        // never step out of `root_comps` via `..`, so symlinks outside the root
+        // cannot combine with `..` to land inside.
+        let mut depth: usize = 0;
+        for comp in token.split('/') {
+            match comp {
+                "" | "." => continue,
+                ".." => {
+                    if depth <= root_comps.len() {
+                        return false;
                     }
-                    _ => comps.push(comp),
+                    depth -= 1;
+                }
+                _ => {
+                    if depth < root_comps.len() && comp != root_comps[depth] {
+                        return false;
+                    }
+                    depth += 1;
                 }
             }
         }
-        return subpath.contains_path(token).unwrap_or(false);
+        return depth >= root_comps.len();
     }
 
-    // Relative path: resolve against `subpath.root` and reject any `..` step
-    // that ascends above the relative origin.
+    // Relative path: resolve against `within` and reject any `..` step that
+    // ascends above the relative origin.
     let mut depth: usize = 0;
-    for comp in token.split(['/', '\\']) {
+    for comp in token.split('/') {
         match comp {
             "" | "." => continue,
             ".." => {
@@ -311,16 +304,15 @@ fn path_within_root(subpath: &crate::constraints::Subpath, token: &str) -> bool 
             _ => depth += 1,
         }
     }
-    let joined = format!("{}/{}", subpath.root.trim_end_matches('/'), token);
-    subpath.contains_path(&joined).unwrap_or(false)
+    true
 }
 
-fn argument_within_root(subpath: &crate::constraints::Subpath, arg: &str) -> bool {
+fn argument_within_root(root_comps: &[&str], arg: &str) -> bool {
     if arg == "-" || arg == "--" {
         return true;
     }
     if !arg.starts_with('-') {
-        return path_within_root(subpath, arg);
+        return path_within_root(root_comps, arg);
     }
     if let Some((opt, val)) = arg.split_once('=') {
         let name = if let Some(long) = opt.strip_prefix("--") {
@@ -333,13 +325,13 @@ fn argument_within_root(subpath: &crate::constraints::Subpath, arg: &str) -> boo
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         {
-            return path_within_root(subpath, val);
+            return path_within_root(root_comps, val);
         }
     }
-    if arg.contains('~') {
+    if arg.contains('~') || arg.contains('\\') {
         return false;
     }
-    if !arg.contains('/') && !arg.contains('\\') && !arg.contains("..") {
+    if !arg.contains('/') && !arg.contains("..") {
         return true;
     }
     if arg.starts_with("--") {
@@ -349,14 +341,14 @@ fn argument_within_root(subpath: &crate::constraints::Subpath, arg: &str) -> boo
     // Require exactly one ASCII alphanumeric short-option character before `/` or `.` so
     // bundled flags like `-xvf/etc/passwd` fail closed instead of looking relative.
     let rest = &arg[1..];
-    let Some(idx) = rest.find(['/', '\\', '.']) else {
+    let Some(idx) = rest.find(['/', '.']) else {
         return false;
     };
     let prefix = &rest[..idx];
     if prefix.len() != 1 || !prefix.chars().all(|c| c.is_ascii_alphanumeric()) {
         return false;
     }
-    path_within_root(subpath, &rest[idx..])
+    path_within_root(root_comps, &rest[idx..])
 }
 
 /// Decide whether `command` is one allowlisted binary and literal arguments.
@@ -381,12 +373,12 @@ pub fn check_within(allow: &[String], within: Option<&str>, command: &str) -> Sh
     };
     let subpath = match within {
         Some(root) => {
-            if root.contains('\0') {
-                return denied("within root must be an absolute path", blank);
+            if root.contains('\0') || root.contains('\\') || !root.starts_with('/') {
+                return denied("within root must be an absolute POSIX path", blank);
             }
             match crate::constraints::Subpath::new(root) {
                 Ok(sp) => Some(sp),
-                Err(_) => return denied("within root must be an absolute path", blank),
+                Err(_) => return denied("within root must be an absolute POSIX path", blank),
             }
         }
         None => None,
@@ -449,8 +441,13 @@ pub fn check_within(allow: &[String], within: Option<&str>, command: &str) -> Sh
         );
     }
     if let Some(ref subpath) = subpath {
+        let root_comps: Vec<&str> = subpath
+            .root
+            .split('/')
+            .filter(|c| !c.is_empty() && *c != ".")
+            .collect();
         for word in &words[1..] {
-            if !argument_within_root(subpath, word) {
+            if !argument_within_root(&root_comps, word) {
                 return denied(
                     format!("path '{word}' is outside '{}'", subpath.root),
                     ShlexCheck {
@@ -536,6 +533,8 @@ mod tests {
             ("echo 'foo\\\nbar'", vec!["echo", "foo\\\nbar"]),
             ("echo \\\n bar", vec!["echo", "bar"]),
             ("echo foo\\\n bar", vec!["echo", "foo", "bar"]),
+            ("cat >\\\n> file", vec!["cat", ">>", "file"]),
+            ("ls &\\\n& rm", vec!["ls", "&&", "rm"]),
             ("echo \\\n", vec!["echo"]),
             ("\\\n", Vec::<&str>::new()),
             ("café --help", vec!["café", "--help"]),
@@ -682,9 +681,18 @@ mod tests {
         assert!(!command_allowed_within(
             &allow,
             within,
+            "cat 'a\\b/../../etc/passwd'"
+        ));
+        assert!(!command_allowed_within(
+            &allow,
+            within,
             "cat -- /etc/passwd"
         ));
         assert!(!command_allowed_within(&allow, within, "cat -- ../secret"));
+
+        // Linear-time check on deeply nested `a/../` segments under `within`.
+        let deep = format!("cat /work/{}notes.txt", "a/../".repeat(20_000));
+        assert!(command_allowed_within(&allow, within, &deep));
 
         let denied = check_within(&allow, within, "cat /etc/hostname");
         assert!(!denied.allowed);

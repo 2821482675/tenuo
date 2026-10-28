@@ -272,11 +272,17 @@ fn json_to_constraint(val: &JsonValue) -> Option<Constraint> {
         return UrlPattern::new(u).ok().map(Constraint::UrlPattern);
     }
     if let Some(arr) = obj.get("all").and_then(|v| v.as_array()) {
-        let inner: Vec<Constraint> = arr.iter().filter_map(json_to_constraint).collect();
+        let inner: Vec<Constraint> = arr.iter().map(json_to_constraint).collect::<Option<Vec<_>>>()?;
+        if inner.is_empty() {
+            return None;
+        }
         return Some(Constraint::All(All { constraints: inner }));
     }
     if let Some(arr) = obj.get("any").and_then(|v| v.as_array()) {
-        let inner: Vec<Constraint> = arr.iter().filter_map(json_to_constraint).collect();
+        let inner: Vec<Constraint> = arr.iter().map(json_to_constraint).collect::<Option<Vec<_>>>()?;
+        if inner.is_empty() {
+            return None;
+        }
         return Some(Constraint::Any(Any { constraints: inner }));
     }
     if let Some(inner) = obj.get("not") {
@@ -3012,6 +3018,22 @@ mod tests {
             }
         });
         assert!(parse_approval_gates_json(&relative).is_none());
+
+        let nested_in_all = json!({
+            "exec": {
+                "args": {
+                    "cmd": {
+                        "exempt": {
+                            "all": [
+                                { "pattern": "*" },
+                                { "shlex": { "allow": ["cat"], "within": ["/work"] } }
+                            ]
+                        }
+                    }
+                }
+            }
+        });
+        assert!(parse_approval_gates_json(&nested_in_all).is_none());
     }
 
     // --- approval_gate_map_to_json round-trip ---

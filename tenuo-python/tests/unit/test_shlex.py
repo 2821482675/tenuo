@@ -998,6 +998,8 @@ _SHELL_WORDS = [
     ('echo "foo\\\nbar"', ["echo", "foobar"]),
     ("echo 'foo\\\nbar'", ["echo", "foo\\\nbar"]),
     ("echo \\\n bar", ["echo", "bar"]),
+    ("cat >\\\n> file", ["cat", ">>", "file"]),
+    ("ls &\\\n& rm", ["ls", "&&", "rm"]),
     ("café --help", ["café", "--help"]),
     ("ls -- -rf;", ["ls", "--", "-rf", ";"]),
 ]
@@ -1073,7 +1075,7 @@ class TestShlexCoreTokenizer:
         with pytest.raises(Exception):
             narrower.validate_attenuation(constraint)
 
-        with pytest.raises(ValueError, match="absolute path"):
+        with pytest.raises(ValueError, match="absolute.*path"):
             Shlex(allow=["cat"], within="relative/path")
 
     def test_unquoted_operator_run_is_rejected(self):
