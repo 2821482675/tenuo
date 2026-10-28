@@ -89,13 +89,23 @@ impl Lexer {
         self.match_operator().is_some()
     }
 
-    /// Compare in place. Copying the rest of the input here made the lexer
-    /// quadratic in the command length.
-    fn match_operator(&self) -> Option<&'static str> {
+    /// Compare in place, skipping any `\\\n` line continuations inside an
+    /// operator token (such as `>\\\n>` for `>>`). Copying the rest of the
+    /// input here made the lexer quadratic in the command length.
+    fn match_operator(&self) -> Option<(&'static str, usize)> {
         let rest = &self.chars[self.pos..];
-        OPERATORS.iter().copied().find(|op| {
-            let mut at = rest.iter();
-            op.chars().all(|ch| at.next() == Some(&ch))
+        OPERATORS.iter().copied().find_map(|op| {
+            let mut idx = 0;
+            for ch in op.chars() {
+                while idx + 1 < rest.len() && rest[idx] == '\\' && rest[idx + 1] == '\n' {
+                    idx += 2;
+                }
+                if rest.get(idx) != Some(&ch) {
+                    return None;
+                }
+                idx += 1;
+            }
+            Some((op, idx))
         })
     }
 
@@ -194,10 +204,8 @@ impl Lexer {
                 }))
             }
             Some(_) if self.starts_operator() => {
-                let op = self.match_operator().expect("starts_operator");
-                for _ in op.chars() {
-                    self.bump();
-                }
+                let (op, consumed) = self.match_operator().expect("starts_operator");
+                self.pos += consumed;
                 Ok(Some(Token {
                     text: op.to_string(),
                     operator: true,
@@ -382,6 +390,8 @@ mod tests {
             ("echo 'foo\\\nbar'", vec!["echo", "foo\\\nbar"]),
             ("echo \\\n bar", vec!["echo", "bar"]),
             ("echo foo\\\n bar", vec!["echo", "foo", "bar"]),
+            ("cat >\\\n> file", vec!["cat", ">>", "file"]),
+            ("ls &\\\n& rm", vec!["ls", "&&", "rm"]),
             ("echo \\\n", vec!["echo"]),
             ("\\\n", Vec::<&str>::new()),
             ("café --help", vec!["café", "--help"]),

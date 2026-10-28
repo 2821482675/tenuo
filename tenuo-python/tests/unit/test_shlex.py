@@ -998,6 +998,8 @@ _SHELL_WORDS = [
     ('echo "foo\\\nbar"', ["echo", "foobar"]),
     ("echo 'foo\\\nbar'", ["echo", "foo\\\nbar"]),
     ("echo \\\n bar", ["echo", "bar"]),
+    ("cat >\\\n> file", ["cat", ">>", "file"]),
+    ("ls &\\\n& rm", ["ls", "&&", "rm"]),
     ("café --help", ["café", "--help"]),
     ("ls -- -rf;", ["ls", "--", "-rf", ";"]),
 ]
