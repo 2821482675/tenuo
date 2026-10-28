@@ -9,6 +9,8 @@ from unittest.mock import patch
 import pytest
 
 from tenuo import OneOf, SigningKey, Subpath, Subset, Warrant
+from tenuo.approval import ApprovalRequest, sign_approval
+from tenuo_core import py_compute_request_hash
 from tenuo.exceptions import AuthorizationDenied, ConfigurationError
 from tenuo.process import GIT, Program, run, run_command
 
@@ -21,11 +23,11 @@ def git(repo, *args):
     subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t", *args], check=True)
 
 
-@pytest.fixture
-def repo(tmp_path):
+@pytest.fixture(params=["sha1", "sha256"])
+def repo(tmp_path, request):
     repo = (tmp_path / "repo").resolve()
     repo.mkdir()
-    git(repo, "init", "-q")
+    git(repo, "init", "-q", f"--object-format={request.param}")
     (repo / "app.py").write_text("print('hi')\n")
     git(repo, "add", "app.py")
     git(repo, "commit", "-q", "-m", "init")
@@ -57,6 +59,40 @@ def test_allowed_call_runs(warrant, repo):
     assert out.returncode == 0
     assert out.stdout.decode().strip() == "M app.py"
     assert git_run(warrant, repo, subcommand="log", flags=["--oneline"]).stdout.decode().endswith("init\n")
+
+
+@pytest.mark.parametrize("command_string", [False, True])
+def test_approval_is_verified_for_the_exact_resolved_call(repo, command_string):
+    approver = SigningKey.generate()
+    gated = Warrant.issue(
+        keypair=ROOT,
+        capabilities={"git": capability(repo)},
+        holder=AGENT.public_key,
+        ttl_seconds=600,
+        approval_gates={"git": None},
+        required_approvers=[approver.public_key],
+        min_approvals=1,
+    )
+    args = {"subcommand": "status", "flags": ["--short"], "paths": [str(repo)], "cwd": str(repo)}
+    request = ApprovalRequest(
+        tool="git",
+        arguments=args,
+        warrant_id=gated.id,
+        request_hash=py_compute_request_hash(gated.id, "git", args, AGENT.public_key),
+    )
+    signed = sign_approval(request, approver)
+
+    def call(approvals, flags=("--short",)):
+        options = dict(cwd=str(repo), trusted_roots=[ROOT.public_key], approvals=approvals)
+        if command_string:
+            return run_command(gated.bind(AGENT), GIT, "git status " + " ".join(flags), **options)
+        return run(gated.bind(AGENT), GIT, subcommand="status", flags=flags, **options)
+
+    with pytest.raises(AuthorizationDenied):
+        call(None)
+    assert call([signed]).returncode == 0
+    with pytest.raises(AuthorizationDenied):
+        call([signed], flags=())
 
 
 @pytest.mark.parametrize(
@@ -203,11 +239,12 @@ def test_repository_config_cannot_run_programs(warrant, repo):
     tree = subprocess.run(
         ["git", "-C", str(repo), "write-tree"], capture_output=True, text=True, check=True
     ).stdout.strip()
+    signature_header = "gpgsig-sha256" if len(tree) == 64 else "gpgsig"
     raw_commit = (
         f"tree {tree}\n"
         "author t <t@t> 1700000000 +0000\n"
         "committer t <t@t> 1700000000 +0000\n"
-        "gpgsig -----BEGIN PGP SIGNATURE-----\n \n -----END PGP SIGNATURE-----\n\n"
+        f"{signature_header} -----BEGIN PGP SIGNATURE-----\n \n -----END PGP SIGNATURE-----\n\n"
         "signed\n"
     ).encode()
     commit_oid = (
