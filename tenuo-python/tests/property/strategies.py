@@ -135,7 +135,8 @@ def st_delegation_chain(
             w = chain[-1].delegate(
                 current_issuer,
                 capabilities={tool: {}},
-                ttl_seconds=3600,
+                # Path/shape generation does not narrow time. Inherit expiry
+                # so a clock tick cannot invalidate a generated chain.
                 holder=next_holder.public_key,
             )
         chain.append(w)
