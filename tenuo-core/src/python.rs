@@ -35,7 +35,7 @@ use crate::warrant::{
 use crate::wire;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PySequence, PyTuple};
+use pyo3::types::{PyDict, PyFloat, PyInt, PyList, PySequence, PyTuple};
 use pyo3::IntoPyObjectExt;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -2543,10 +2543,13 @@ pub(crate) fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<Constra
         Ok(ConstraintValue::String(s))
     } else if let Ok(b) = obj.extract::<bool>() {
         Ok(ConstraintValue::Boolean(b))
-    } else if let Ok(i) = obj.extract::<i64>() {
+    } else if obj.cast::<PyInt>().is_ok() {
+        let i = obj.extract::<i64>().map_err(|_| {
+            py_validation_err("integer argument is outside the signed 64-bit range")
+        })?;
         Ok(ConstraintValue::Integer(i))
-    } else if let Ok(f) = obj.extract::<f64>() {
-        Ok(ConstraintValue::Float(f))
+    } else if obj.cast::<PyFloat>().is_ok() {
+        Ok(ConstraintValue::Float(obj.extract::<f64>()?))
     } else if let Ok(l) = obj.extract::<Vec<Py<PyAny>>>() {
         // Recursively convert list items
         let py = obj.py();

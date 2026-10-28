@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Pydantic activity arguments on Temporal.** Pydantic models (v1 and v2),
+  dataclasses, dictionaries, and lists are signed by PoP as typed,
+  JSON-compatible values. The signed representation matches Temporal's default
+  Pydantic converter, including serialization aliases, and rejects lossy custom
+  serialization filters, alias collisions, unordered collections, out-of-range
+  integers, bare bytes, and converter-dependent nested values or dictionary
+  keys.
+  `tenuo.temporal.framework_args("tool_ctx")` declares a framework-owned
+  argument as an any-value constraint so it remains signed and recorded in
+  receipts.
+
 ### Upgrade notes
 
 Two checks are stricter, and some calls that used to pass now fail:
@@ -54,6 +67,15 @@ Two checks are stricter, and some calls that used to pass now fail:
   decision.
 
 ### Fixed
+
+- **Temporal structured arguments preserve their type in PoP.** Structured
+  values were previously signed as JSON text, so an object and a literal string
+  containing the same JSON had the same signed form. They now remain objects or
+  lists through core canonicalization, and models that could hide fields from
+  the signed form fail closed.
+- **Python rejects integers outside the core's signed 64-bit argument range.**
+  They previously fell through to floating-point conversion, where distinct
+  large integers could produce the same PoP input.
 
 - **Warrants have exactly one valid encoding.** The decoder accepted an
   envelope whose signature array header claimed three elements but held two,
@@ -131,7 +153,6 @@ are now denied. Check these before upgrading:
   approvals apply only when a `nonceStore` is passed.
 
 ### Added
-
 - **`ControlPlaneClient.status`.** Reports the connection state
   (`registering`, `connected`, `degraded`, `standalone`, `stopped`), the last
   error, and buffered, flushed and dropped audit event counts. It does no I/O,
@@ -246,7 +267,6 @@ are now denied. Check these before upgrading:
 - **Temporal reports PoP failures as `POP_VERIFICATION_FAILED`.** A missing
   or wrong-key PoP was reported as `CONSTRAINT_VIOLATED`. Untrusted issuers
   keep their existing type.
-
 - **Temporal `warrant_chain=` takes one shape everywhere.** The workflow start
   helpers took the parents only and rejected a chain that ended with the leaf,
   while `tenuo_execute_activity`, the Nexus helpers, and
