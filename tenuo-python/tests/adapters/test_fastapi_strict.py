@@ -325,6 +325,44 @@ def test_async_error_handler_supported():
     assert (resp.status_code, resp.text) == (418, "async")
 
 
+def test_sync_error_handler_runs_without_blocking_the_event_loop():
+    import asyncio
+
+    def handler(exc):
+        with pytest.raises(RuntimeError):
+            asyncio.get_running_loop()
+        return PlainTextResponse("worker", status_code=418)
+
+    resp = TestClient(_raising_app(error_handler=handler)).get("/boom")
+    assert (resp.status_code, resp.text) == (418, "worker")
+
+
+def test_async_callable_error_handler_supported():
+    import asyncio
+
+    class Handler:
+        async def __call__(self, exc):
+            assert asyncio.get_running_loop().is_running()
+            return PlainTextResponse("async callable", status_code=418)
+
+    resp = TestClient(_raising_app(error_handler=Handler())).get("/boom")
+    assert (resp.status_code, resp.text) == (418, "async callable")
+
+
+def test_sync_error_handler_returning_awaitable_is_awaited():
+    import asyncio
+
+    async def response():
+        assert asyncio.get_running_loop().is_running()
+        return PlainTextResponse("awaited", status_code=418)
+
+    def handler(exc):
+        return response()
+
+    resp = TestClient(_raising_app(error_handler=handler)).get("/boom")
+    assert (resp.status_code, resp.text) == (418, "awaited")
+
+
 def test_error_handler_returning_none_falls_back_to_default():
     seen = []
     resp = TestClient(_raising_app(error_handler=seen.append)).get("/boom")

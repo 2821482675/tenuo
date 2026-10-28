@@ -49,6 +49,7 @@ logger = logging.getLogger("tenuo.fastapi")
 # Use string forward refs or try import, FastAPI must be installed
 try:
     from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, status
+    from fastapi.concurrency import run_in_threadpool
     from fastapi.responses import JSONResponse, Response
     from fastapi.security import APIKeyHeader
 
@@ -65,6 +66,7 @@ except ImportError:
     status = Any  # type: ignore
     JSONResponse = Any  # type: ignore
     Response = Any  # type: ignore
+    run_in_threadpool = Any  # type: ignore
     APIKeyHeader = Any  # type: ignore
     FASTAPI_AVAILABLE = False
 
@@ -170,7 +172,10 @@ def configure_tenuo(
     async def tenuo_error_handler(request: Request, exc: TenuoError):
         """Handle TenuoError exceptions with canonical wire codes."""
         if error_handler is not None:
-            custom = error_handler(exc)
+            if _is_async_callable(error_handler):
+                custom = error_handler(exc)
+            else:
+                custom = await run_in_threadpool(error_handler, exc)
             if inspect.isawaitable(custom):
                 custom = await custom
             if isinstance(custom, Response):

@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   public paths; only FastAPI's built-in docs handlers are implicitly exempt,
   not application routes at the same URLs. Checks include routes registered
   by startup hooks. `error_handler`, also never called before, now receives
-  each `TenuoError` and can return the response.
+  each `TenuoError` and can return the response. Sync error handlers run in
+  the framework's thread pool; async handlers are awaited. Strict validation
+  requires ASGI lifespan/startup to be enabled.
 
 - **`tenuo.process`: run the command the warrant authorized.** `run` checks a
   structured call (`subcommand`, `flags`, `paths`, `cwd`, with `cwd` and

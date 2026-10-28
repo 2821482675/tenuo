@@ -173,6 +173,9 @@ configure_tenuo(
 - A public root mount uses `exempt=["/"]`; Starlette's empty root-mount path (`""`) is accepted as an alias.
 - FastAPI's built-in OpenAPI and docs handlers are always exempt, including custom docs URLs. Application routes at those same URLs still need a guard or an explicit exemption.
 - The check runs after startup hooks and the lifespan setup complete, before requests are served. Routes added later while the app is serving are not checked.
+- Strict validation requires ASGI lifespan/startup to be enabled. With `uvicorn --lifespan off` the startup check does not run, so `strict=True` cannot detect unguarded routes.
+
+Synchronous `error_handler` callbacks run in the framework's worker thread pool so blocking I/O does not stall the event loop. Async callbacks are awaited normally, as are awaitables returned by sync callbacks.
 
 ### `TenuoGuard`
 
