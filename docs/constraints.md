@@ -756,14 +756,20 @@ run_command(bound, GIT, "git log --oneline", cwd="/workspace/repo")
 run_command(bound, GIT, "git status && rm -rf ~", cwd="/workspace/repo")      # AuthorizationDenied
 ```
 
-- `cwd` and each entry of `paths` (joined to `cwd`) are resolved with
-  `realpath` before the check, so a symlink cannot lead outside the `Subpath`.
-- argv is exactly the checked values, with paths after `--`. The environment
-  is fixed by the `Program`; nothing is inherited.
-- The `GIT` profile stops repository config and `.gitattributes` from running
-  programs (`core.fsmonitor`, pagers, external diff, textconv, filters) and
-  turns off network transports. Keep `.git/` out of the agent's file tools,
-  since settings there still apply.
+- `cwd` and each entry of `paths` (joined to `cwd`, defaulting to `"."` when
+  omitted) are resolved with `realpath` before the check, so a symlink cannot
+  lead outside the `Subpath`. Because `realpath` resolves paths before `execve`
+  rather than pinning file descriptors, the directory ancestry of `cwd` and
+  `paths` must not be writable by concurrent untrusted processes.
+- argv is exactly the checked values, with program-forced safety flags after
+  caller flags and paths after `--`. The environment is fixed by the `Program`;
+  nothing is inherited.
+- The `GIT` profile (requires Git 2.40+) stops repository config and
+  `.gitattributes` from running programs (`core.fsmonitor`, pagers, external
+  diff, textconv, filters), treats pathspecs literally
+  (`GIT_LITERAL_PATHSPECS=1`), and turns off network transports
+  (`GIT_ALLOW_PROTOCOL=""`). Keep `.git/` out of the agent's file tools, since
+  settings there still apply.
 - Delegation narrows each field: a smaller `OneOf` of subcommands, a smaller
   `Subset` of flags, a deeper `Subpath`.
 - Other programs: `Program(name="rg", env={...})`. The profile only blocks

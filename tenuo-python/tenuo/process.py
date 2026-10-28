@@ -6,12 +6,16 @@ expands braces, globs and ``~`` after the check, and the program reads its own
 config. ``run`` closes that gap for one program at a time:
 
 1. The request is structured: ``subcommand``, ``flags``, ``paths`` and ``cwd``.
-2. ``cwd`` and each entry of ``paths`` (joined to ``cwd``) are resolved with
-   ``realpath`` before the check, so a symlink inside an allowed directory
-   cannot point the process elsewhere.
+2. ``cwd`` and each entry of ``paths`` (joined to ``cwd``, defaulting to
+   ``"."`` when omitted) are resolved with ``realpath`` before the check, so a
+   symlink inside an allowed directory cannot point the process elsewhere.
+   Because ``realpath`` resolves paths before ``execve`` rather than pinning
+   file descriptors, the directory ancestry of ``cwd`` and ``paths`` must not
+   be writable by concurrent untrusted processes during execution.
 3. The warrant is checked against those values with ordinary constraints.
 4. Exactly those resolved values become argv, executed without a shell, with a
-   fixed environment. Paths go after ``--`` so they are never read as options.
+   fixed environment. Program-forced safety flags are placed after caller flags,
+   and paths go after ``--`` so they are never read as options.
 
 Example::
 
@@ -40,7 +44,9 @@ cannot be passed through exactly.
 
 from __future__ import annotations
 
+import functools
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -50,6 +56,25 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from .exceptions import AuthorizationDenied, ConfigurationError
 
 __all__ = ["GIT", "Program", "run", "run_command"]
+
+
+@functools.lru_cache(maxsize=16)
+def _check_version(binary: str, min_version: Tuple[int, int]) -> None:
+    try:
+        out = subprocess.run(
+            [binary, "--version"],
+            env={},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=10,
+            check=True,
+        ).stdout.decode("utf-8", errors="replace")
+    except Exception as exc:
+        raise ConfigurationError(f"failed to check version of {binary!r}: {exc}") from None
+    match = re.search(r"(\d+)\.(\d+)", out)
+    if not match or (int(match.group(1)), int(match.group(2))) < min_version:
+        req = f"{min_version[0]}.{min_version[1]}"
+        raise ConfigurationError(f"{binary!r} must be version {req} or newer (got {out.strip()!r})")
 
 
 @dataclass(frozen=True)
@@ -63,8 +88,9 @@ class Program:
             first run, then resolved with ``realpath``.
         env: The complete environment for the process. Nothing is inherited.
         subcommands: Whether the first word after the program is a subcommand.
-        forced_flags: Flags always added after a subcommand, for options that
-            turn off code-running features of that subcommand.
+        forced_flags: Flags always added after caller flags for a subcommand,
+            for options that turn off code-running features of that subcommand.
+        min_version: Minimum ``(major, minor)`` version required by the profile.
     """
 
     name: str
@@ -72,12 +98,16 @@ class Program:
     env: Mapping[str, str] = field(default_factory=dict)
     subcommands: bool = False
     forced_flags: Mapping[str, Tuple[str, ...]] = field(default_factory=dict)
+    min_version: Optional[Tuple[int, int]] = None
 
     def resolve(self) -> str:
         path = self.binary or shutil.which(self.name)
         if not path or not os.path.isabs(path):
             raise ConfigurationError(f"{self.name}: no absolute binary path (found {path!r})")
-        return os.path.realpath(path)
+        real = os.path.realpath(path)
+        if self.min_version is not None:
+            _check_version(real, self.min_version)
+        return real
 
 
 # Repository config and attributes can make read-only git commands run
@@ -90,6 +120,7 @@ class Program:
 _GIT_CONFIG = {
     "core.fsmonitor": "false",
     "core.hooksPath": "/dev/null",
+    "core.attributesFile": "/dev/null",
     "core.pager": "cat",
     "core.sshCommand": "false",
     "core.editor": "false",
@@ -102,10 +133,13 @@ _NO_DRIVERS = ("--no-ext-diff", "--no-textconv")
 GIT = Program(
     name="git",
     subcommands=True,
+    min_version=(2, 40),
     env={
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_ATTR_SOURCE": _EMPTY_TREE,
+        "GIT_LITERAL_PATHSPECS": "1",
+        "GIT_ALLOW_PROTOCOL": "",
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_CONFIG_COUNT": str(len(_GIT_CONFIG)),
         **{f"GIT_CONFIG_KEY_{i}": key for i, key in enumerate(_GIT_CONFIG)},
@@ -149,11 +183,11 @@ def run(
     tool = tool or program.name
     if os.name != "posix":
         raise ConfigurationError("tenuo.process runs on POSIX systems only")
-    flags, paths = list(flags), list(paths)
+    flags, paths = list(flags), list(paths) or ["."]
 
     words = [subcommand or "", *flags, *paths, cwd]
-    if any(not isinstance(w, str) or "\0" in w for w in words):
-        raise _deny(tool, "arguments must be strings without NUL bytes")
+    if any(not isinstance(w, str) or "\0" in w or "\\" in w for w in words):
+        raise _deny(tool, "arguments must be strings without NUL bytes or backslashes")
     if any(not f.startswith("-") or f == "--" for f in flags):
         raise _deny(tool, "flags must start with '-'")
     if any(p.startswith("-") for p in paths):
@@ -166,6 +200,8 @@ def run(
 
     real_cwd = os.path.realpath(cwd)
     real_paths = [os.path.realpath(os.path.join(real_cwd, p)) for p in paths]
+    if "\\" in real_cwd or any("\\" in p for p in real_paths):
+        raise _deny(tool, "resolved paths must not contain backslashes")
     request: Dict[str, Any] = {"flags": flags, "paths": real_paths, "cwd": real_cwd}
     if program.subcommands:
         request["subcommand"] = subcommand
@@ -174,8 +210,9 @@ def run(
     if not result:
         raise _deny(tool, result.reason or "not authorized")
 
-    head = [subcommand, *program.forced_flags.get(subcommand, ())] if subcommand else []
-    argv = [program.resolve(), *head, *flags, "--", *real_paths]
+    head = [subcommand] if subcommand else []
+    forced = list(program.forced_flags.get(subcommand, ())) if subcommand else []
+    argv = [program.resolve(), *head, *flags, *forced, "--", *real_paths]
     return subprocess.run(
         argv,
         cwd=real_cwd,

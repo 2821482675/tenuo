@@ -7,7 +7,7 @@ import subprocess
 import pytest
 
 from tenuo import OneOf, SigningKey, Subpath, Subset, Warrant
-from tenuo.exceptions import AuthorizationDenied
+from tenuo.exceptions import AuthorizationDenied, ConfigurationError
 from tenuo.process import GIT, Program, run, run_command
 
 pytestmark = pytest.mark.skipif(os.name != "posix" or shutil.which("git") is None, reason="POSIX with git only")
@@ -133,6 +133,16 @@ def test_delegated_warrant_is_narrower_and_cannot_widen(warrant, repo):
         warrant_chain=[warrant],
     )
     assert out.returncode == 0
+    # Omitting `paths` defaults to `"."` (`[str(repo)]`), which is outside the narrowed Subset.
+    with pytest.raises(AuthorizationDenied):
+        run(
+            child.bind(REVIEWER),
+            GIT,
+            cwd=str(repo),
+            subcommand="diff",
+            trusted_roots=[ROOT.public_key],
+            warrant_chain=[warrant],
+        )
     with pytest.raises(AuthorizationDenied):
         run(
             child.bind(REVIEWER),
@@ -183,20 +193,92 @@ def test_command_string_runs_the_parsed_call(warrant, repo):
 
 def test_repository_config_cannot_run_programs(warrant, repo):
     marker = repo.parent / "ran"
+    alt_attr = repo / "alt.attributes"
+    alt_attr.write_text("*.py diff=x filter=y\n")
     git(repo, "config", "core.fsmonitor", f"touch {marker}.fsmonitor; false")
     git(repo, "config", "core.pager", f"touch {marker}.pager; cat")
+    git(repo, "config", "core.attributesFile", str(alt_attr))
     git(repo, "config", "diff.x.textconv", f"touch {marker}.textconv; cat")
+    git(repo, "config", "diff.external", f"touch {marker}.extdiff; cat")
     git(repo, "config", "filter.y.clean", f"touch {marker}.clean; cat")
+    git(repo, "config", "protocol.file.allow", "always")
     (repo / ".gitattributes").write_text("*.py diff=x filter=y\n")
     (repo / "app.py").write_text("print('changed')\n")
 
     for subcommand in ("status", "diff", "log"):
         assert git_run(warrant, repo, subcommand=subcommand).returncode == 0
+
+    # Forced flags (--no-ext-diff, --no-textconv) come after caller flags, so
+    # even a warrant that permits --ext-diff or --textconv cannot re-enable them.
+    w_driver_flags = (
+        Warrant.mint_builder()
+        .capability(
+            "git",
+            subcommand=OneOf(["diff"]),
+            flags=Subset(["--ext-diff", "--textconv"]),
+            paths=Subpath(str(repo)),
+            cwd=Subpath(str(repo)),
+        )
+        .holder(AGENT.public_key)
+        .ttl(60)
+        .mint(ROOT)
+    )
+    assert (
+        run(
+            w_driver_flags.bind(AGENT),
+            GIT,
+            cwd=str(repo),
+            subcommand="diff",
+            flags=["--ext-diff", "--textconv"],
+            trusted_roots=[ROOT.public_key],
+        ).returncode
+        == 0
+    )
     assert sorted(p.name for p in repo.parent.glob("ran.*")) == []
 
     # Control: the same repository runs the planted fsmonitor under a plain git call.
     subprocess.run(["git", "status"], cwd=repo, capture_output=True, check=False)
     assert (repo.parent / "ran.fsmonitor").exists()
+
+
+def test_literal_pathspecs_and_backslash_rejection(repo):
+    (repo / "app.py").write_text("print('changed')\n")
+    w = (
+        Warrant.mint_builder()
+        .capability(
+            "git",
+            subcommand=OneOf(["diff"]),
+            flags=Subset(["--name-only"]),
+            paths=Subset([str(repo / "a*.py")]),
+            cwd=Subpath(str(repo)),
+        )
+        .holder(AGENT.public_key)
+        .ttl(60)
+        .mint(ROOT)
+    )
+    # GIT_LITERAL_PATHSPECS=1 prevents `a*.py` from matching `app.py`.
+    out = run(
+        w.bind(AGENT),
+        GIT,
+        cwd=str(repo),
+        subcommand="diff",
+        flags=["--name-only"],
+        paths=["a*.py"],
+        trusted_roots=[ROOT.public_key],
+    )
+    assert out.stdout.decode().strip() == ""
+
+    with pytest.raises(AuthorizationDenied):
+        run(w.bind(AGENT), GIT, cwd=str(repo), subcommand="diff", paths=["a\\b.py"], trusted_roots=[ROOT.public_key])
+
+
+def test_min_version_check_fails_closed(tmp_path):
+    fake_git = tmp_path / "git"
+    fake_git.write_text("#!/bin/sh\necho 'git version 2.39.0'\n")
+    fake_git.chmod(0o755)
+    old_git = Program(name="git", binary=str(fake_git), subcommands=True, min_version=(2, 40))
+    with pytest.raises(ConfigurationError, match="2.40"):
+        old_git.resolve()
 
 
 def test_program_without_subcommands(tmp_path):
