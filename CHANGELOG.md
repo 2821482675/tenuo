@@ -61,6 +61,17 @@ Two checks are stricter, and some calls that used to pass now fail:
 
 ### Fixed
 
+- **FastAPI: `SecureAPIRouter` guards direct and included HTTP routes.**
+  `add_api_route()` and plain included routers no longer run without a warrant.
+  Nested and inclusion-level guards keep their authority. Lazy additions are
+  checked before dispatch, including mounts and plain Starlette routes that
+  do not run FastAPI dependencies. Unsupported route types are refused.
+- **FastAPI: inferred tool names cannot silently share authority.** Colliding
+  path names and ambiguous method groups need an explicit `tool=`. Aliases of
+  one route object under different inferred permissions need explicit
+  `TenuoGuard` dependencies or distinct routes. Only GET/HEAD automatically
+  share inferred read authority; PUT/PATCH retain their shared update name.
+
 - **WASM builders reject malformed Shlex and approval gates.** Invalid command
   lists, unsupported Shlex options, and malformed nested approval constraints
   fail warrant creation instead of being silently omitted. Shlex remains a
