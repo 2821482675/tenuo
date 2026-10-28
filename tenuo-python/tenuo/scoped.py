@@ -616,9 +616,10 @@ class GrantScope:
 
             builder.capability(tool, merged_constraints)
 
-        # Apply TTL
+        # Apply TTL with atomic core-side clamping. Computing parent remaining
+        # here would race the clock read used to build the child.
         if self.ttl:
-            builder.ttl(self.ttl)
+            builder._ttl_capped_to_parent(self.ttl)
 
         # Build child warrant
         try:

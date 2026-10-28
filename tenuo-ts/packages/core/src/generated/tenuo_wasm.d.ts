@@ -323,6 +323,11 @@ export function parse_connect_token(token: string): any;
 export function parse_strict_json(json_text: string): void;
 
 /**
+ * Diagnose all capability-constraint failures without authorizing the call.
+ */
+export function sdkDiagnoseConstraints(wire: string, tool: string, args_json: any): any;
+
+/**
  * Decode and check an approval envelope. Not authorization.
  */
 export function sdkInspectApproval(envelope: any): any;

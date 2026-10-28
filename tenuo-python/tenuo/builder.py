@@ -463,6 +463,11 @@ class GrantBuilder:
         self._rust_builder.with_ttl(seconds)
         return self
 
+    def _ttl_capped_to_parent(self, seconds: int) -> "GrantBuilder":
+        """Set TTL with atomic parent-expiry clamping in the Rust core."""
+        self._rust_builder.with_ttl_capped_to_parent(seconds)
+        return self
+
     def holder(self, public_key: Any = _NOT_SET) -> Union["GrantBuilder", Optional[PublicKey]]:
         """Get or set the authorized holder.
 
