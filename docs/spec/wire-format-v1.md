@@ -579,6 +579,7 @@ pub enum Constraint {
     /// Shell command safety -- extension constraint (shell word rules)
     Shlex {
         allow: Vec<String>,             // Allowed binary names or paths (literal, no globs)
+        within: Option<String>,         // Optional lexical path boundary (Subpath root)
     },
     
     /// Unknown constraint type (deserialized but not understood)
@@ -842,6 +843,7 @@ take precedence.
 | Field | Rule |
 |-------|------|
 | `allow` | Child must be subset of parent (fewer binaries allowed). Entries are literal strings, no globs. |
+| `within` | Optional absolute path root. Child may add `within` when parent has `None`, or narrow `within` to a subdirectory of the parent's root (per `Subpath` attenuation). Child MUST NOT remove or widen `within`. |
 
 **Shlex evaluation model:** One tokenizer, implemented in the Rust core and used by every SDK. The decisions in `tests/vectors/shlex.json` are normative. Verifiers that do not implement Shlex MUST reject warrants containing it (fail closed via Unknown variant).
 
@@ -852,6 +854,7 @@ A command matches only when all of the following hold:
    `#` is an ordinary word character, never a comment, so a shell that does not recognize comments cannot run an operator hidden after `#`. Both `ls #; rm` and `ls foo#; rm` contain the operator `;` and are rejected, while `ls -la # note` has no operators and is allowed. A comma, bracket, brace, or other non-operator character stays in the word, so `./ls,evil` is one command name.
 3. The first token is the binary. Any binary token containing `..` is rejected so symlinks cannot combine with `..` to escape a pinned path. The binary token must equal an entry of `allow` literally: a bare entry such as `ls` matches the word `ls` only (not `/usr/bin/ls`, `./ls`, or `/tmp/attacker/ls`), and a path entry such as `/usr/bin/ls` matches `/usr/bin/ls` only. Entries are literal strings, no globs.
 4. No token is an unquoted operator. A quoted or escaped operator character is a literal argument: `echo ";"`, `ls "foo; bar"`, and `find . -exec rm {} \;` match when the binary is allowlisted. `find -exec` still runs that argument; tool semantics are outside this check.
+5. When `within` is set (an absolute path root), every argument token after the binary must stay inside `within` under lexical `Subpath` normalization: relative paths are resolved against `within` and must not ascend above it with `..`, absolute paths must stay inside `within` at every `..` step and at the final path, `~` expansion tokens are rejected, and option tokens with attached paths (`--opt=path`, `-f/path`, `-I../path`) have their path checked against `within`.
 
 Tabs are whitespace. `*` and `?` are literal arguments to this check; a shell that later runs the command may still expand them. Bash brace expansion is not POSIX word splitting: this check keeps `{a,b,c}` as one word, and a bash host may still expand it.
 

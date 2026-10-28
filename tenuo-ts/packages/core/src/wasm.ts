@@ -367,7 +367,7 @@ type Generated = {
     args: unknown,
   ): { approval_required: boolean; tool: string; error?: string };
   parse_strict_json(jsonText: string): void;
-  shlex_inspect(allow: string[], command: string): ShlexCheck;
+  shlex_inspect(allow: string[], command: string, within?: string): ShlexCheck;
 };
 
 /** Decision from the core Shlex check. The same object Python `Shlex.check` returns. */
@@ -552,8 +552,12 @@ export function parseStrictJson(text: string): unknown {
  * literally, and any command word containing `..` is rejected. The reason is
  * the same string the warrant uses.
  */
-export function checkShlex(allow: readonly string[], command: string): ShlexCheck {
-  return loadWasm().shlex_inspect([...allow], command);
+export function checkShlex(
+  allow: readonly string[],
+  command: string,
+  within?: string,
+): ShlexCheck {
+  return loadWasm().shlex_inspect([...allow], command, within);
 }
 
 /**

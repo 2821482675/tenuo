@@ -123,9 +123,14 @@ export type UrlSafeConstraint = {
   readonly denyDomains?: readonly string[];
 };
 
+export interface ShlexOptions {
+  readonly within?: string;
+}
+
 export type ShlexConstraint = {
   readonly kind: "shlex";
   readonly allow: readonly string[];
+  readonly within?: string;
 };
 
 export type ContainsConstraint = {

@@ -30,10 +30,14 @@ pub fn init_panic_hook() {
 /// `allowed`, `reason`, `tokens`, `operators`, `expansion`, `controls`, and
 /// `binary_allowed`.
 #[wasm_bindgen]
-pub fn shlex_inspect(allow: JsValue, command: &str) -> Result<JsValue, JsError> {
+pub fn shlex_inspect(
+    allow: JsValue,
+    command: &str,
+    within: Option<String>,
+) -> Result<JsValue, JsError> {
     let allow: Vec<String> = serde_wasm_bindgen::from_value(allow)
         .map_err(|err| JsError::new(&format!("allow must be a list of strings: {err}")))?;
-    let report = tenuo::shell_words::check(&allow, command);
+    let report = tenuo::shell_words::check_within(&allow, within.as_deref(), command);
     serde_wasm_bindgen::to_value(&report).map_err(|err| JsError::new(&err.to_string()))
 }
 
@@ -122,9 +126,10 @@ fn constraint_to_readable(constraint: &Constraint) -> JsonValue {
                 json!({ "url_safe": JsonValue::Object(obj) })
             }
         }
-        Constraint::Shlex(sh) => {
-            json!({ "shlex": { "allow": &sh.allow } })
-        }
+        Constraint::Shlex(sh) => match &sh.within {
+            Some(within) => json!({ "shlex": { "allow": &sh.allow, "within": within } }),
+            None => json!({ "shlex": { "allow": &sh.allow } }),
+        },
         Constraint::Unknown { type_id, .. } => json!({ "unknown": format!("type_id={}", type_id) }),
         _ => json!({ "unknown": "future_variant" }),
     }
@@ -298,7 +303,8 @@ fn json_to_constraint(val: &JsonValue) -> Option<Constraint> {
     if let Some(sh) = obj.get("shlex").and_then(|v| v.as_object()) {
         if let Some(arr) = sh.get("allow").and_then(|v| v.as_array()) {
             let allow: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
-            return Some(Constraint::Shlex(Shlex { allow }));
+            let within = sh.get("within").and_then(|v| v.as_str()).map(String::from);
+            return Some(Constraint::Shlex(Shlex { allow, within }));
         }
     }
     None
@@ -1928,11 +1934,18 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                                 let allow: Vec<String> = arr.iter()
                                     .filter_map(|a| a.as_str().map(|s| s.to_string()))
                                     .collect();
+                                let within = inner
+                                    .get("within")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
                                 if !allow.is_empty() {
-                                    constraint_set.insert(
-                                        field.clone(),
-                                        Constraint::Shlex(Shlex { allow }),
-                                    );
+                                    let sh = match within {
+                                        Some(root) => Shlex::with_within(allow, root).ok(),
+                                        None => Some(Shlex::new(allow)),
+                                    };
+                                    if let Some(sh) = sh {
+                                        constraint_set.insert(field.clone(), Constraint::Shlex(sh));
+                                    }
                                 }
                             }
                         }
@@ -2046,11 +2059,21 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                                     let cmds: Vec<String> = arr.iter()
                                         .filter_map(|v| v.as_str().map(|s| s.to_string()))
                                         .collect();
+                                    let within = obj
+                                        .get("within")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
                                     if !cmds.is_empty() {
-                                        constraint_set.insert(
-                                            field.clone(),
-                                            Constraint::Shlex(Shlex { allow: cmds }),
-                                        );
+                                        let sh = match within {
+                                            Some(root) => Shlex::with_within(cmds, root).ok(),
+                                            None => Some(Shlex::new(cmds)),
+                                        };
+                                        if let Some(sh) = sh {
+                                            constraint_set.insert(
+                                                field.clone(),
+                                                Constraint::Shlex(sh),
+                                            );
+                                        }
                                     }
                                 }
                             }

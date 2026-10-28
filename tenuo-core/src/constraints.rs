@@ -3432,6 +3432,11 @@ impl From<UrlSafe> for Constraint {
 pub struct Shlex {
     /// Allowed binary names or full paths. Literal strings only (no globs).
     pub allow: Vec<String>,
+    /// When set, every argument token that denotes a path must resolve, with
+    /// `.`/`..` normalized, to a location inside this root. Lexical only, like
+    /// [`Subpath`]: no filesystem access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within: Option<String>,
 }
 
 impl Shlex {
@@ -3439,24 +3444,64 @@ impl Shlex {
     pub fn new(allow: Vec<impl Into<String>>) -> Self {
         Self {
             allow: allow.into_iter().map(Into::into).collect(),
+            within: None,
         }
+    }
+
+    /// Create a new Shlex constraint with a binary allowlist and lexical path boundary.
+    pub fn with_within(allow: Vec<impl Into<String>>, within: impl Into<String>) -> Result<Self> {
+        let within = within.into();
+        if within.contains('\0') {
+            return Err(Error::InvalidPath {
+                path: within,
+                reason: "within root must not contain null bytes".to_string(),
+            });
+        }
+        let subpath = Subpath::new(within)?;
+        Ok(Self {
+            allow: allow.into_iter().map(Into::into).collect(),
+            within: Some(subpath.root),
+        })
+    }
+
+    /// Validate that `within` (when present) is a valid absolute path root.
+    pub fn validate(&self) -> Result<()> {
+        if let Some(ref root) = self.within {
+            if root.contains('\0') {
+                return Err(Error::InvalidPath {
+                    path: root.clone(),
+                    reason: "within root must not contain null bytes".to_string(),
+                });
+            }
+            Subpath::new(root)?;
+        }
+        Ok(())
     }
 
     /// Whether `value` is a single allowlisted command with no shell operators.
     ///
     /// Non-strings, parse errors, control characters, and `$` / backticks
-    /// return `Ok(false)`. See [`crate::shell_words::command_allowed`].
+    /// return `Ok(false)`. See [`crate::shell_words::command_allowed_within`].
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
+        self.validate()?;
         let Some(cmd) = value.as_str() else {
             return Ok(false);
         };
-        Ok(crate::shell_words::command_allowed(&self.allow, cmd))
+        Ok(crate::shell_words::command_allowed_within(
+            &self.allow,
+            self.within.as_deref(),
+            cmd,
+        ))
     }
 
     /// Validate that `child` is a valid attenuation (child is more restrictive).
     ///
-    /// Pure set operation: child `allow` must be a subset of parent `allow`.
+    /// Child `allow` must be a subset of parent `allow`, and `within` may be
+    /// added or narrowed to a subdirectory of the parent's `within`, never
+    /// removed or widened.
     pub fn validate_attenuation(&self, child: &Shlex) -> Result<()> {
+        self.validate()?;
+        child.validate()?;
         for bin in &child.allow {
             if !self.allow.contains(bin) {
                 return Err(Error::MonotonicityViolation(format!(
@@ -3466,13 +3511,30 @@ impl Shlex {
             }
         }
 
+        match (&self.within, &child.within) {
+            (None, None) | (None, Some(_)) => {}
+            (Some(_), None) => {
+                return Err(Error::MonotonicityViolation(
+                    "child cannot remove parent Shlex 'within' path boundary".to_string(),
+                ));
+            }
+            (Some(parent_root), Some(child_root)) => {
+                let parent_subpath = Subpath::new(parent_root)?;
+                let child_subpath = Subpath::new(child_root)?;
+                parent_subpath.validate_attenuation(&child_subpath)?;
+            }
+        }
+
         Ok(())
     }
 }
 
 impl std::fmt::Display for Shlex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Shlex(allow={:?})", self.allow)
+        match &self.within {
+            Some(within) => write!(f, "Shlex(allow={:?}, within={:?})", self.allow, within),
+            None => write!(f, "Shlex(allow={:?})", self.allow),
+        }
     }
 }
 
@@ -6695,7 +6757,10 @@ mod tests {
     #[test]
     fn test_shlex_empty_allow_list() {
         // Empty allow = nothing matches
-        let sh = Shlex { allow: vec![] };
+        let sh = Shlex {
+            allow: vec![],
+            within: None,
+        };
         assert!(!sh
             .matches(&ConstraintValue::String("npm install".into()))
             .unwrap());
@@ -6714,6 +6779,52 @@ mod tests {
     }
 
     #[test]
+    fn test_shlex_within_containment_and_attenuation() {
+        let sh = Shlex::with_within(vec!["cat", "grep"], "/work").unwrap();
+        assert!(sh
+            .matches(&ConstraintValue::String("cat notes.txt".into()))
+            .unwrap());
+        assert!(sh
+            .matches(&ConstraintValue::String("cat /work/sub/a.txt".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String("cat /etc/hostname".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String("cat ../secret".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String("cat ~/.ssh/id_rsa".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String("grep -f/etc/x notes.txt".into()))
+            .unwrap());
+        assert!(sh
+            .matches(&ConstraintValue::String(
+                "grep -f/work/p.txt notes.txt".into()
+            ))
+            .unwrap());
+
+        // Attenuation: None -> Some("/work") -> Some("/work/sub")
+        let unbounded = Shlex::new(vec!["cat", "grep"]);
+        assert!(unbounded.validate_attenuation(&sh).is_ok());
+        assert!(sh.validate_attenuation(&unbounded).is_err());
+
+        let narrower = Shlex::with_within(vec!["cat"], "/work/sub").unwrap();
+        assert!(sh.validate_attenuation(&narrower).is_ok());
+        assert!(narrower.validate_attenuation(&sh).is_err());
+
+        // Shlex with within -> Exact
+        let parent = Constraint::Shlex(sh);
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new("cat /work/sub/a.txt")))
+            .is_ok());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new("cat /etc/hostname")))
+            .is_err());
+    }
+
+    #[test]
     fn test_shlex_shared_vectors() {
         #[derive(serde::Deserialize)]
         struct Suite {
@@ -6723,13 +6834,18 @@ mod tests {
         struct Case {
             name: String,
             allow: Vec<String>,
+            #[serde(default)]
+            within: Option<String>,
             command: String,
             matches: bool,
         }
         let suite: Suite =
             serde_json::from_str(include_str!("../../tests/vectors/shlex.json")).unwrap();
         for case in suite.cases {
-            let sh = Shlex::new(case.allow);
+            let sh = match case.within {
+                Some(within) => Shlex::with_within(case.allow, within).unwrap(),
+                None => Shlex::new(case.allow),
+            };
             let got = sh
                 .matches(&ConstraintValue::String(case.command.clone()))
                 .unwrap();

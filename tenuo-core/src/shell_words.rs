@@ -231,11 +231,127 @@ fn denied(reason: impl Into<String>, extras: ShlexCheck) -> ShlexCheck {
     }
 }
 
+fn path_within_root(subpath: &crate::constraints::Subpath, token: &str) -> bool {
+    if token.contains('\0')
+        || token.starts_with('~')
+        || token.contains(":~")
+        || token.contains("=~")
+    {
+        return false;
+    }
+    let is_windows_abs = token.len() >= 3
+        && token.as_bytes()[0].is_ascii_alphabetic()
+        && token.as_bytes()[1] == b':'
+        && matches!(token.as_bytes()[2], b'/' | b'\\');
+    if token.starts_with('/') || is_windows_abs {
+        // Reject any `..` step that visits or leaves a location outside `subpath`
+        // so symlinks outside the root cannot combine with `..` to land inside.
+        if token.split(['/', '\\']).any(|c| c == "..") {
+            let mut comps: Vec<&str> = Vec::new();
+            let (prefix, rest) = if let Some(s) = token.strip_prefix('/') {
+                ("/", s)
+            } else {
+                (&token[..3], &token[3..])
+            };
+            for comp in rest.split(['/', '\\']) {
+                match comp {
+                    "" | "." => continue,
+                    ".." => {
+                        let before = if comps.is_empty() {
+                            prefix.to_string()
+                        } else {
+                            format!("{}{}", prefix, comps.join("/"))
+                        };
+                        if !subpath.contains_path(&before).unwrap_or(false) {
+                            return false;
+                        }
+                        if comps.pop().is_none() {
+                            return false;
+                        }
+                        let after = if comps.is_empty() {
+                            prefix.to_string()
+                        } else {
+                            format!("{}{}", prefix, comps.join("/"))
+                        };
+                        if !subpath.contains_path(&after).unwrap_or(false) {
+                            return false;
+                        }
+                    }
+                    _ => comps.push(comp),
+                }
+            }
+        }
+        return subpath.contains_path(token).unwrap_or(false);
+    }
+
+    // Relative path: resolve against `subpath.root` and reject any `..` step
+    // that ascends above the relative origin.
+    let mut depth: usize = 0;
+    for comp in token.split(['/', '\\']) {
+        match comp {
+            "" | "." => continue,
+            ".." => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+            }
+            _ => depth += 1,
+        }
+    }
+    let joined = format!("{}/{}", subpath.root.trim_end_matches('/'), token);
+    subpath.contains_path(&joined).unwrap_or(false)
+}
+
+fn argument_within_root(
+    subpath: &crate::constraints::Subpath,
+    arg: &str,
+    after_double_dash: bool,
+) -> bool {
+    if after_double_dash || !arg.starts_with('-') || arg == "-" {
+        return if arg == "-" && !after_double_dash {
+            true
+        } else {
+            path_within_root(subpath, arg)
+        };
+    }
+    if let Some((_, val)) = arg.split_once('=') {
+        return path_within_root(subpath, val);
+    }
+    if arg.contains('~') {
+        return false;
+    }
+    if !arg.contains('/') && !arg.contains('\\') && !arg.contains("..") {
+        return true;
+    }
+    if arg.starts_with("--") {
+        return false;
+    }
+    // Single-dash option with an attached path (e.g. `-f/work/x`, `-I../secret`, `-I./sub`).
+    // Require exactly one ASCII alphanumeric short-option character before `/` or `.` so
+    // bundled flags like `-xvf/etc/passwd` fail closed instead of looking relative.
+    let rest = &arg[1..];
+    let Some(idx) = rest.find(['/', '\\', '.']) else {
+        return false;
+    };
+    let prefix = &rest[..idx];
+    if prefix.len() != 1 || !prefix.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return false;
+    }
+    path_within_root(subpath, &rest[idx..])
+}
+
 /// Decide whether `command` is one allowlisted binary and literal arguments.
 ///
 /// `$` and backticks are rejected anywhere in the raw string, including
 /// inside single quotes, double quotes, and backslash escapes.
 pub fn check(allow: &[String], command: &str) -> ShlexCheck {
+    check_within(allow, None, command)
+}
+
+/// Decide whether `command` is one allowlisted binary, literal arguments, and
+/// (when `within` is set) only names paths inside `within`.
+pub fn check_within(allow: &[String], within: Option<&str>, command: &str) -> ShlexCheck {
     let blank = ShlexCheck {
         allowed: false,
         reason: String::new(),
@@ -244,6 +360,18 @@ pub fn check(allow: &[String], command: &str) -> ShlexCheck {
         expansion: Vec::new(),
         controls: Vec::new(),
         binary_allowed: false,
+    };
+    let subpath = match within {
+        Some(root) => {
+            if root.contains('\0') {
+                return denied("within root must be an absolute path", blank);
+            }
+            match crate::constraints::Subpath::new(root) {
+                Ok(sp) => Some(sp),
+                Err(_) => return denied("within root must be an absolute path", blank),
+            }
+        }
+        None => None,
     };
     if command.is_empty() {
         return denied("empty command", blank);
@@ -302,6 +430,26 @@ pub fn check(allow: &[String], command: &str) -> ShlexCheck {
             },
         );
     }
+    if let Some(ref subpath) = subpath {
+        let mut after_double_dash = false;
+        for word in &words[1..] {
+            if !after_double_dash && word == "--" {
+                after_double_dash = true;
+                continue;
+            }
+            if !argument_within_root(subpath, word, after_double_dash) {
+                return denied(
+                    format!("path '{word}' is outside '{}'", subpath.root),
+                    ShlexCheck {
+                        tokens: words,
+                        operators,
+                        binary_allowed: true,
+                        ..blank
+                    },
+                );
+            }
+        }
+    }
     ShlexCheck {
         allowed: true,
         reason: "allowed".to_string(),
@@ -316,6 +464,11 @@ pub fn check(allow: &[String], command: &str) -> ShlexCheck {
 /// Whether [`check`] allows the command.
 pub fn command_allowed(allow: &[String], command: &str) -> bool {
     check(allow, command).allowed
+}
+
+/// Whether [`check_within`] allows the command.
+pub fn command_allowed_within(allow: &[String], within: Option<&str>, command: &str) -> bool {
+    check_within(allow, within, command).allowed
 }
 
 #[cfg(test)]
@@ -423,6 +576,79 @@ mod tests {
         assert!(!command_allowed(&pinned, "ls -la"));
         assert!(!command_allowed(&pinned, "/usr/bin/../bin/ls -la"));
         assert!(!command_allowed(&pinned, "/tmp/l/../../usr/bin/ls -la"));
+    }
+
+    #[test]
+    fn within_bounds_argument_paths_lexically() {
+        let allow = vec!["cat".to_string(), "grep".to_string(), "tar".to_string()];
+        let within = Some("/work");
+        assert!(command_allowed_within(&allow, within, "cat notes.txt"));
+        assert!(command_allowed_within(
+            &allow,
+            within,
+            "cat /work/sub/a.txt"
+        ));
+        assert!(command_allowed_within(
+            &allow,
+            within,
+            "cat \"/work/my notes.txt\""
+        ));
+        assert!(command_allowed_within(
+            &allow,
+            within,
+            "cat sub/../notes.txt"
+        ));
+        assert!(command_allowed_within(
+            &allow,
+            within,
+            "grep -n pattern notes.txt"
+        ));
+        assert!(command_allowed_within(
+            &allow,
+            within,
+            "grep -f/work/patterns.txt notes.txt"
+        ));
+        assert!(command_allowed_within(
+            &allow,
+            within,
+            "grep --file=/work/patterns.txt notes.txt"
+        ));
+
+        assert!(!command_allowed_within(&allow, within, "cat /etc/hostname"));
+        assert!(!command_allowed_within(&allow, within, "cat ../secret"));
+        assert!(!command_allowed_within(&allow, within, "cat ../work/a.txt"));
+        assert!(!command_allowed_within(
+            &allow,
+            within,
+            "cat /tmp/l/../../work/a.txt"
+        ));
+        assert!(!command_allowed_within(&allow, within, "cat ~/.ssh/id_rsa"));
+        assert!(!command_allowed_within(
+            &allow,
+            within,
+            "grep -f/etc/x notes.txt"
+        ));
+        assert!(!command_allowed_within(
+            &allow,
+            within,
+            "grep -I../secret notes.txt"
+        ));
+        assert!(!command_allowed_within(
+            &allow,
+            within,
+            "grep --file=/etc/x notes.txt"
+        ));
+        assert!(!command_allowed_within(&allow, within, "tar -xvf/etc/x"));
+        assert!(!command_allowed_within(
+            &allow,
+            within,
+            "cat -- /etc/passwd"
+        ));
+        assert!(!command_allowed_within(&allow, within, "cat -- ../secret"));
+
+        let denied = check_within(&allow, within, "cat /etc/hostname");
+        assert!(!denied.allowed);
+        assert_eq!(denied.reason, "path '/etc/hostname' is outside '/work'");
     }
 
     #[test]

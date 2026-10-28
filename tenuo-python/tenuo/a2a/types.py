@@ -114,10 +114,14 @@ def _serialize_constraint(constraint: Any) -> Dict[str, Any]:
             allow = getattr(constraint, "allow", None)
             if allow is None:
                 allow = getattr(constraint, "allowed_bins", None)
-            return {
+            within = getattr(constraint, "within", None)
+            out: Dict[str, Any] = {
                 "type": "Shlex",
                 "allow": list(allow) if allow is not None else None,
             }
+            if within is not None:
+                out["within"] = within
+            return out
 
     # Last resort: wrap in generic format
     return {"type": str(type(constraint).__name__), "value": str(constraint)}

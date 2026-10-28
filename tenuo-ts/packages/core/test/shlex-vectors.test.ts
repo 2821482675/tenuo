@@ -11,6 +11,7 @@ import { checkShlex, createTenuo, shlex } from "../src/index.ts";
 interface ShlexCase {
   name: string;
   allow: string[];
+  within?: string;
   command: string;
   matches: boolean;
 }
@@ -28,7 +29,10 @@ describe("shlex shared vectors", () => {
         { execute: async (args: Record<string, unknown>) => args },
         { capability: "run", allow: {} },
       );
-      const session = tenuo.session({ allow: { run: { cmd: shlex(case_.allow) } } });
+      const constraint = case_.within
+        ? shlex(case_.allow, { within: case_.within })
+        : shlex(case_.allow);
+      const session = tenuo.session({ allow: { run: { cmd: constraint } } });
       const call = tool.execute({ cmd: case_.command }, { session });
       if (case_.matches) {
         await expect(call, case_.name).resolves.toEqual({ cmd: case_.command });
@@ -52,5 +56,9 @@ describe("shlex shared vectors", () => {
     const literal = checkShlex(["echo"], 'echo ";"');
     expect(literal.allowed).toBe(true);
     expect(literal.tokens).toEqual(["echo", ";"]);
+
+    const outside = checkShlex(["cat"], "cat /etc/hostname", "/work");
+    expect(outside.allowed).toBe(false);
+    expect(outside.reason).toBe("path '/etc/hostname' is outside '/work'");
   });
 });

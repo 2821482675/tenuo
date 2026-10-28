@@ -1033,8 +1033,39 @@ class TestShlexCoreTokenizer:
         path = Path(__file__).resolve().parents[3] / "tests" / "vectors" / "shlex.json"
         suite = json.loads(path.read_text())
         for case in suite["cases"]:
-            constraint = Shlex(allow=case["allow"])
+            constraint = Shlex(allow=case["allow"], within=case.get("within"))
             assert constraint.matches(case["command"]) is case["matches"], case["name"]
+
+    def test_within_bounds_paths_and_attenuates(self):
+        from tenuo.explain_constraint import explain_constraint
+
+        constraint = Shlex(allow=["cat", "grep"], within="/work")
+        assert constraint.within == "/work"
+        assert repr(constraint) == "Shlex(allow=['cat', 'grep'], within='/work')"
+        assert constraint.matches("cat notes.txt")
+        assert constraint.matches("cat /work/sub/a.txt")
+        assert not constraint.matches("cat /etc/hostname")
+        assert not constraint.matches("cat ../secret")
+        assert not constraint.matches("cat ~/.ssh/id_rsa")
+        assert not constraint.matches("grep -f/etc/x notes.txt")
+        assert constraint.matches("grep -f/work/patterns.txt notes.txt")
+
+        report = explain_constraint(constraint, "cat /etc/hostname")
+        assert report.safe is False
+        assert report.reason == "path '/etc/hostname' is outside '/work'"
+
+        unbounded = Shlex(allow=["cat", "grep"])
+        unbounded.validate_attenuation(constraint)
+        with pytest.raises(Exception):
+            constraint.validate_attenuation(unbounded)
+
+        narrower = Shlex(allow=["cat"], within="/work/sub")
+        constraint.validate_attenuation(narrower)
+        with pytest.raises(Exception):
+            narrower.validate_attenuation(constraint)
+
+        with pytest.raises(ValueError, match="absolute path"):
+            Shlex(allow=["cat"], within="relative/path")
 
     def test_unquoted_operator_run_is_rejected(self):
         """`<>` is one operator token. The old exact-token list did not name it."""

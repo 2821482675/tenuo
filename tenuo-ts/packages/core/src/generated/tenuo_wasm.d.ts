@@ -405,7 +405,7 @@ export function sdkVerifyReceiptChain(wire: string, roots: any): any;
  * `allowed`, `reason`, `tokens`, `operators`, `expansion`, `controls`, and
  * `binary_allowed`.
  */
-export function shlex_inspect(allow: any, command: string): any;
+export function shlex_inspect(allow: any, command: string, within?: string | null): any;
 
 /**
  * Create a Proof-of-Possession signature for a warrant
