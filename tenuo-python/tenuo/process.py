@@ -119,6 +119,9 @@ class Program:
     def resolve(self) -> str:
         return self._resolved_binary
 
+    def _execution_env(self, binary: str, cwd: str) -> Dict[str, str]:
+        return dict(self.env)
+
     @functools.cached_property
     def _resolved_binary(self) -> str:
         path = self.binary or shutil.which(self.name)
@@ -155,7 +158,32 @@ _GIT_CONFIG = {
 _EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 _NO_DRIVERS = ("--no-ext-diff", "--no-textconv")
 
-GIT = Program(
+
+class _GitProgram(Program):
+    def _execution_env(self, binary: str, cwd: str) -> Dict[str, str]:
+        env = dict(self.env)
+        # This read-only builtin computes the empty-tree ID using this repo's
+        # object format. Never assume SHA-1 or read attributes from the worktree.
+        try:
+            result = subprocess.run(
+                [binary, "hash-object", "-t", "tree", "--stdin"],
+                cwd=cwd,
+                env=env,
+                input=b"",
+                capture_output=True,
+                timeout=10,
+                check=True,
+            )
+            tree = result.stdout.decode("ascii").strip()
+            if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", tree) is None:
+                raise ValueError("invalid empty-tree ID")
+        except Exception as exc:
+            raise ConfigurationError(f"cannot determine Git attribute source: {exc}") from None
+        env["GIT_ATTR_SOURCE"] = tree
+        return env
+
+
+GIT = _GitProgram(
     name="git",
     subcommands=True,
     min_version=(2, 41),
@@ -190,6 +218,7 @@ def run(
     tool: Optional[str] = None,
     trusted_roots: Optional[List[Any]] = None,
     warrant_chain: Optional[List[Any]] = None,
+    approvals: Optional[List[Any]] = None,
     timeout: float = 60,
 ) -> "subprocess.CompletedProcess[bytes]":
     """Check the warrant against this exact call, then run it.
@@ -198,6 +227,9 @@ def run(
     checked with arguments ``subcommand`` (only when ``program.subcommands``),
     ``flags``, ``paths`` and ``cwd``. Constrain all of them; unnamed arguments
     are denied.
+
+    Pass collected SignedApproval objects via ``approvals`` when the warrant
+    requires approval. They are verified against this exact resolved request.
 
     Returns the completed process with captured stdout and stderr. A non-zero
     exit is returned, not raised.
@@ -234,17 +266,21 @@ def run(
     if program.subcommands:
         request["subcommand"] = subcommand
 
-    result = bound_warrant.validate(tool, request, trusted_roots=trusted_roots, warrant_chain=warrant_chain)
+    result = bound_warrant.validate(
+        tool, request, approvals=approvals, trusted_roots=trusted_roots, warrant_chain=warrant_chain
+    )
     if not result:
         raise _deny(tool, result.reason or "not authorized")
 
     head = [subcommand] if subcommand else []
     forced = list(program.forced_flags.get(subcommand, ())) if subcommand else []
-    argv = [program.resolve(), *head, *flags, *forced, "--", *real_paths]
+    binary = program.resolve()
+    env = program._execution_env(binary, real_cwd)
+    argv = [binary, *head, *flags, *forced, "--", *real_paths]
     return subprocess.run(
         argv,
         cwd=real_cwd,
-        env=dict(program.env),
+        env=env,
         stdin=subprocess.DEVNULL,
         capture_output=True,
         timeout=timeout,

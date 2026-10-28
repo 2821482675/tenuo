@@ -795,6 +795,7 @@ run_command(bound, GIT, "git status && rm -rf ~", cwd="/workspace/repo")      # 
   caller flags and paths after `--`. The environment is fixed by the `Program`;
   nothing is inherited.
 - The `GIT` profile supports `status`, `diff`, and `log` and requires Git 2.41+.
+  SHA-1 and SHA-256 repositories use their own empty-tree attribute source.
   This is the executor's supported grammar; the warrant must still authorize
   every operation and argument. It stops repository config and
   `.gitattributes` from running programs (`core.fsmonitor`, pagers, external
@@ -814,6 +815,11 @@ control. Agents supply the request, not the profile. `run_command` uses the
 shared core tokenizer's successful decision; no second shell parser or shell
 expansion runs between authorization and execution. Program profiles define
 execution semantics, while authorization continues to come from the warrant.
+
+For approval-gated calls, pass collected signed approvals with
+`run(..., approvals=[signed_approval])` (also supported by `run_command`).
+Approvals cover the resolved request, including absolute paths and working
+directory, and are verified by the ordinary warrant authorization path.
 
 ---
 
