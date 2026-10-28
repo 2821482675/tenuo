@@ -536,13 +536,15 @@ Nested values are converted the same way at every depth, so a dataclass inside
 a dict signs as the dict the worker receives. Tenuo fails closed when the wire
 form could be ambiguous or converter-dependent. This includes unordered
 `set`/`frozenset` values, bare nested `bytes` or `datetime` values, non-finite
-floats, colliding JSON dictionary keys, and arbitrary classes. Typed Pydantic
-fields for values such as `bytes` and `datetime` are supported because the
-Pydantic schema defines their JSON representation. Models with excluded or
-conditionally excluded fields, custom serializers, secret fields, or overridden
-dump methods are refused because their signed view could omit or rewrite a value
-the activity receives. Pass unsafe values as separate supported arguments or
-replace them with an explicitly ordered, JSON-compatible representation.
+floats, integers outside the signed 64-bit core range, converter-dependent
+dictionary keys such as `None`, colliding JSON dictionary keys, and arbitrary
+classes. Typed Pydantic fields for values such as `bytes` and `datetime` are
+supported because the Pydantic schema defines their JSON representation. Models
+with colliding serialization aliases, excluded or conditionally excluded fields,
+custom serializers, secret fields, or overridden dump methods are refused
+because their signed view could omit or rewrite a value the activity receives.
+Pass unsafe values as separate supported arguments or replace them with an
+explicitly ordered, JSON-compatible representation.
 
 This matching is defined for Temporal's default JSON converter and the default
 `pydantic_data_converter`. A customized data converter must preserve the same

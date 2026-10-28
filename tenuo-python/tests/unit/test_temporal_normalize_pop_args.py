@@ -67,6 +67,15 @@ class TestNormalizePopArgValuePrimitives:
 
     def test_int_unchanged(self):
         assert _normalize_pop_arg_value(42, "field") == 42
+        assert _normalize_pop_arg_value(-(2**63), "field") == -(2**63)
+        assert _normalize_pop_arg_value(2**63 - 1, "field") == 2**63 - 1
+
+    @pytest.mark.parametrize("value", [-(2**63) - 1, 2**63, 2**63 + 1])
+    def test_int_outside_signed_core_range_is_refused(self, value):
+        with pytest.raises(TenuoArgNormalizationError, match="signed 64-bit"):
+            _normalize_pop_arg_value(value, "field")
+        with pytest.raises(TenuoArgNormalizationError, match="signed 64-bit"):
+            _normalize_pop_arg_value({"nested": value}, "field")
 
     def test_float_unchanged(self):
         assert _normalize_pop_arg_value(3.14, "field") == 3.14
@@ -564,6 +573,29 @@ class TestSignedFormCoversWhatTheActivityReceives:
         with pytest.raises(SignatureInvalid):
             authorizer.authorize_one(warrant, "publish", literal, bytes(signature), [])
 
+    def test_core_rejects_integer_overflow_instead_of_rounding_to_float(self):
+        from tenuo import AnyValue, SigningKey, Warrant
+        from tenuo.exceptions import ValidationError
+
+        issuer = SigningKey.generate()
+        holder = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .holder(holder.public_key)
+            .capability("publish", payload=AnyValue())
+            .ttl(60)
+            .mint(issuer)
+        )
+
+        for value in (-(2**63) - 1, 2**63, 2**63 + 1):
+            with pytest.raises(ValidationError, match="signed 64-bit"):
+                warrant.sign(
+                    holder,
+                    "publish",
+                    {"payload": value},
+                    int(time.time()),
+                )
+
     def test_nested_dataclass_signs_like_the_dict_the_worker_receives(self):
         @dataclasses.dataclass
         class Spec:
@@ -625,13 +657,69 @@ class TestSignedFormCoversWhatTheActivityReceives:
             _normalize_pop_arg_value({"ctx": nested}, "tool_ctx")
 
     def test_dict_keys_sign_as_json_transport_writes_them(self):
-        sent = {True: "a", False: "b", None: "c", 2: "d", 1.5: "e"}
+        sent = {True: "a", False: "b", 2: "d", 1.5: "e"}
         received = json.loads(json.dumps(sent))
         assert _normalize_pop_arg_value(sent, "c") == _normalize_pop_arg_value(received, "c")
+        with pytest.raises(TenuoArgNormalizationError, match="None dictionary key"):
+            _normalize_pop_arg_value({None: "converter-dependent"}, "c")
         with pytest.raises(TenuoArgNormalizationError, match="dict key"):
             _normalize_pop_arg_value({(1, 2): "x"}, "c")
         with pytest.raises(TenuoArgNormalizationError, match="both encode"):
             _normalize_pop_arg_value({1: "numeric", "1": "text"}, "c")
+
+    def test_none_dict_key_differs_between_supported_temporal_converters(self):
+        converter_module = pytest.importorskip("temporalio.contrib.pydantic")
+
+        value = {None: "x"}
+        standard = json.loads(json.dumps(value))
+        payload = converter_module.PydanticJSONPlainPayloadConverter().to_payload(value)
+        assert payload is not None
+        pydantic_value = json.loads(payload.data)
+        assert standard == {"null": "x"}
+        assert pydantic_value == {"None": "x"}
+
+    def test_colliding_pydantic_serialization_aliases_are_refused(self):
+        pydantic = pytest.importorskip("pydantic")
+
+        class Ctx(pydantic.BaseModel):
+            destination: str
+            marker: str = pydantic.Field("internal", serialization_alias="destination")
+
+        original = Ctx(destination="internal", marker="masked")
+        substituted = Ctx(destination="external", marker="masked")
+        serializer = Ctx.__pydantic_serializer__
+        assert serializer.to_python(original, mode="json", by_alias=True) == serializer.to_python(
+            substituted, mode="json", by_alias=True
+        )
+        for value in (original, substituted):
+            with pytest.raises(TenuoArgNormalizationError, match="serialized name"):
+                _normalize_pop_arg_value(value, "c")
+
+    @pytest.mark.parametrize("collision", ["extra", "computed"])
+    def test_alias_collisions_with_extras_and_computed_fields_are_refused(self, collision):
+        pydantic = pytest.importorskip("pydantic")
+
+        if collision == "extra":
+
+            class Ctx(pydantic.BaseModel):
+                model_config = pydantic.ConfigDict(extra="allow")
+                destination: str = pydantic.Field(serialization_alias="wire")
+
+            value = Ctx(destination="external", wire="extra")
+        else:
+
+            class Ctx(pydantic.BaseModel):
+                destination: str
+
+                @pydantic.computed_field(alias="destination")
+                @property
+                def marker(self) -> str:
+                    return "computed"
+
+            value = Ctx(destination="external")
+
+        with pytest.raises(TenuoArgNormalizationError, match="serialized name"):
+            _normalize_pop_arg_value(value, "c")
 
     def test_conditional_exclusion_is_refused(self):
         pydantic = pytest.importorskip("pydantic")

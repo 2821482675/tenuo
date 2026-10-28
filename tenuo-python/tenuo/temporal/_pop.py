@@ -191,6 +191,8 @@ def _args_to_dict_by_fn(
 # string impersonate an object while retaining the same PoP.
 
 _POP_NORMALIZE_MAX_DEPTH = 32
+_POP_INT_MIN = -(2**63)
+_POP_INT_MAX = 2**63 - 1
 
 
 def _is_pydantic_model(value: Any) -> bool:
@@ -251,6 +253,7 @@ def _check_model_is_signable(model: Any, field_name: str) -> None:
     serializers = serializers or bool(getattr(config, "json_encoders", None))
     overridden = _overridden_dump_method(cls, base)
     secrets = sorted(name for name in fields if _is_secret(getattr(model, name, None)))
+    name_collision = _pydantic_serialized_name_collision(model, fields)
     why = (
         f"excluded field(s) {', '.join(excluded)}"
         if excluded
@@ -260,6 +263,8 @@ def _check_model_is_signable(model: Any, field_name: str) -> None:
         if overridden
         else f"secret field(s) {', '.join(secrets)}"
         if secrets
+        else name_collision
+        if name_collision
         else _core_schema_hides_values(getattr(cls, "__pydantic_core_schema__", None))
     )
     if why:
@@ -268,6 +273,56 @@ def _check_model_is_signable(model: Any, field_name: str) -> None:
             + _MODEL_UNSIGNABLE.format(why=why)
             + " See docs/temporal-reference.md: 'Structured activity arguments'."
         )
+
+
+def _pydantic_serialized_name_collision(
+    model: Any,
+    fields: Dict[str, Any],
+) -> Optional[str]:
+    """Describe a Pydantic v2 output-name collision, if any.
+
+    Pydantic core can emit duplicate JSON object keys for colliding aliases and
+    extras. Converting that output to a Python dict silently keeps one value,
+    which is not an injective PoP representation.
+    """
+    if not hasattr(type(model), "model_fields"):
+        return None  # Pydantic v1's supported dump uses field names.
+
+    owners: Dict[str, str] = {}
+
+    def add(serialized_name: Any, owner: str) -> Optional[str]:
+        if not isinstance(serialized_name, str):
+            return f"a non-string serialized name for {owner}"
+        previous = owners.get(serialized_name)
+        if previous is not None and previous != owner:
+            return f"serialized name {serialized_name!r} is shared by {previous} and {owner}"
+        owners[serialized_name] = owner
+        return None
+
+    for name, info in fields.items():
+        alias = getattr(info, "serialization_alias", None)
+        collision = add(
+            name if alias is None else alias,
+            f"field {name!r}",
+        )
+        if collision:
+            return collision
+
+    computed = getattr(type(model), "model_computed_fields", None) or {}
+    for name, info in computed.items():
+        alias = getattr(info, "alias", None)
+        collision = add(
+            name if alias is None else alias,
+            f"computed field {name!r}",
+        )
+        if collision:
+            return collision
+
+    for name in getattr(model, "__pydantic_extra__", None) or {}:
+        collision = add(name, f"extra field {name!r}")
+        if collision:
+            return collision
+    return None
 
 
 def _core_schema_hides_values(schema: Any) -> Optional[str]:
@@ -344,12 +399,18 @@ def _check_signable_tree(value: Any, field_name: str, depth: int = 0) -> None:
 
 
 def _json_key(key: Any, field_name: str) -> str:
-    """A dict key as JSON transport writes it: True as "true", None as "null"."""
+    """Return an unambiguous key shared by supported JSON converters."""
     if isinstance(key, str):
         return key
+    if key is None:
+        raise TenuoArgNormalizationError(
+            f"Activity argument '{field_name}' has a None dictionary key whose "
+            "wire name differs between Temporal's JSON converters. Use an "
+            "explicit string key."
+        )
     if isinstance(key, float) and not math.isfinite(key):
         raise TenuoArgNormalizationError(f"Activity argument '{field_name}' has a non-finite float dictionary key")
-    if key is None or isinstance(key, (bool, int, float)):
+    if isinstance(key, (bool, int, float)):
         return json.dumps(key)
     raise TenuoArgNormalizationError(
         f"Activity argument '{field_name}' has a dict key of type {type(key).__name__}; "
@@ -370,7 +431,13 @@ def _jsonable(value: Any, field_name: str, depth: int = 0) -> Any:
             f"({_POP_NORMALIZE_MAX_DEPTH}) for PoP normalization. "
             f"See docs/temporal-reference.md: 'Structured activity arguments'."
         )
-    if value is None or isinstance(value, (str, int, bool)):
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    if isinstance(value, int):
+        if not _POP_INT_MIN <= value <= _POP_INT_MAX:
+            raise TenuoArgNormalizationError(
+                f"Activity argument '{field_name}' contains integer {value} outside Tenuo's signed 64-bit range"
+            )
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
@@ -456,7 +523,13 @@ def _normalize_pop_arg_value(value: Any, field_name: str, depth: int = 0) -> Any
             f"See docs/temporal-reference.md: 'Structured activity arguments'."
         )
 
-    if value is None or isinstance(value, (str, int, bool)):
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    if isinstance(value, int):
+        if not _POP_INT_MIN <= value <= _POP_INT_MAX:
+            raise TenuoArgNormalizationError(
+                f"Activity argument '{field_name}' contains integer {value} outside Tenuo's signed 64-bit range"
+            )
         return value
     if isinstance(value, float):
         if not math.isfinite(value):

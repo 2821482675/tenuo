@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dataclasses, dictionaries, and lists are signed by PoP as typed,
   JSON-compatible values. The signed representation matches Temporal's default
   Pydantic converter, including serialization aliases, and rejects lossy custom
-  serialization, unordered collections, and converter-dependent nested values.
+  serialization, alias collisions, unordered collections, out-of-range
+  integers, and converter-dependent nested values or dictionary keys.
   `tenuo.temporal.framework_args("tool_ctx")` declares a framework-owned
   argument as an any-value constraint so it remains signed and recorded in
   receipts.
@@ -41,6 +42,9 @@ Two checks are stricter, and some calls that used to pass now fail:
   containing the same JSON had the same signed form. They now remain objects or
   lists through core canonicalization, and models that could hide fields from
   the signed form fail closed.
+- **Python rejects integers outside the core's signed 64-bit argument range.**
+  They previously fell through to floating-point conversion, where distinct
+  large integers could produce the same PoP input.
 
 - **Warrants have exactly one valid encoding.** The decoder accepted an
   envelope whose signature array header claimed three elements but held two,
