@@ -2,10 +2,13 @@ export type {
   ApprovalGateInspection,
   ApprovalRequirement,
   ApprovalRequirementStatus,
+  ConstraintDiagnostics,
+  ConstraintViolationKind,
 } from "./wasm.ts";
 
 export {
   approvalRequirement,
+  diagnoseConstraints,
   evaluateApprovalGates,
   inspectApprovalGate,
   parseStrictJson,

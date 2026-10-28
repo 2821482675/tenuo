@@ -174,7 +174,9 @@ from tenuo import Pattern
 # Suffix wildcard - matches paths starting with /data/
 Pattern("/data/*")
 
-# Prefix wildcard - matches emails ending with @company.com
+# Prefix wildcard - matches any string ending with @company.com
+# Not for recipient fields: * also matches "," ";" "<" and "@", so
+# "eve@evil.com,bob@company.com" matches. Use an anchored Regex there.
 Pattern("*@company.com")
 
 # Middle wildcard - matches specific file in any subdirectory
@@ -1761,7 +1763,8 @@ tools:
 
       environment:
         from: literal        # Static value
-        value: "production"
+        path: ""
+        default: "production"
 
 routes:
   - pattern: "/api/v1/clusters/{cluster}/scale"
@@ -1858,7 +1861,7 @@ routes:
 |-------|------|---------|-------------|
 | `warrant_header` | string | `X-Tenuo-Warrant` | HTTP header containing base64-encoded warrant or WarrantStack |
 | `pop_header` | string | `X-Tenuo-PoP` | HTTP header containing base64-encoded PoP signature |
-| `clock_tolerance_secs` | int | `30` | Seconds of tolerance for expiration checks |
+| `clock_tolerance_secs` | int | `30` | Future-issued timestamp tolerance; expiry is strict |
 | `trusted_roots` | list | `[]` | Hex-encoded public keys of trusted control planes |
 | `debug_mode` | bool | `false` | Enable detailed deny reasons in response headers |
 
@@ -1881,7 +1884,7 @@ routes:
   - pattern: "/api/v1/admin/{action}"
     method: ["POST"]
     tool: "admin_action"
-    extra_constraints:
+    constraints:
       admin_key:
         from: header
         path: "X-Admin-Key"

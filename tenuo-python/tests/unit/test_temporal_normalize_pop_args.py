@@ -282,9 +282,46 @@ class TestNormalizeArgsForPop:
 
 
 def _make_mock_warrant(capabilities: dict) -> object:
-    """Build a minimal mock warrant object with .capabilities dict."""
+    """Build a minimal mock warrant exposing core-style diagnostics."""
     class MockWarrant:
-        pass
+        def diagnose_constraints(self, tool_name, args):
+            tool_cap = capabilities.get(tool_name)
+            if not isinstance(tool_cap, dict):
+                return {
+                    "closed_world": False,
+                    "violations": [{
+                        "field": "tool",
+                        "kind": "tool_not_authorized",
+                        "reason": "tool not authorized",
+                    }],
+                }
+
+            allow_unknown = tool_cap.get("_allow_unknown", False)
+            declared = set(tool_cap) - {"_allow_unknown"}
+            actual = set(args)
+            violations = []
+            if declared and not allow_unknown:
+                violations.extend(
+                    {
+                        "field": field,
+                        "kind": "unknown_field",
+                        "reason": "unknown field not allowed (zero-trust mode)",
+                    }
+                    for field in sorted(actual - declared)
+                )
+            violations.extend(
+                {
+                    "field": field,
+                    "kind": "missing_required",
+                    "reason": "missing required argument",
+                }
+                for field in sorted(declared - actual)
+            )
+            return {
+                "closed_world": bool(declared and not allow_unknown),
+                "violations": violations,
+            }
+
     w = MockWarrant()
     w.capabilities = capabilities
     return w
@@ -312,6 +349,9 @@ class TestPrevalidateArgsAgainstWarrant:
         # Must preserve the core error phrase for substring-match compatibility.
         assert "unknown field not allowed (zero-trust mode)" in msg
         assert "extra_field" in msg
+        assert "prefer Wildcard()" in msg
+        assert "_allow_unknown=True" in msg
+        assert "broad opt-out from closed-world checking" in msg
 
     def test_multiple_unknown_fields_all_listed(self):
         warrant = _make_mock_warrant({"score_risk": {"application_id": None}})
@@ -348,6 +388,8 @@ class TestPrevalidateArgsAgainstWarrant:
         assert "credit_json" in msg
         assert "kyc_json" in msg
         assert "missing" in msg.lower()
+        assert "Provide every argument declared by the warrant capability" in msg
+        assert "_allow_unknown=True" not in msg
 
     def test_mixed_unknown_and_missing_both_reported(self):
         warrant = _make_mock_warrant({
@@ -378,6 +420,25 @@ class TestPrevalidateArgsAgainstWarrant:
         _prevalidate_args_against_warrant(
             warrant, "score_risk", {"application_id": "X", "extra": "fine"}
         )
+
+    def test_allow_unknown_capability_permits_extra_fields(self):
+        """The pre-validator honors core's per-capability allow-unknown bit."""
+        warrant = _make_mock_warrant({
+            "score_risk": {"application_id": None, "_allow_unknown": True}
+        })
+
+        _prevalidate_args_against_warrant(
+            warrant, "score_risk", {"application_id": "X", "extra": "fine"}
+        )
+
+    def test_allow_unknown_capability_still_requires_declared_fields(self):
+        warrant = _make_mock_warrant({"score_risk": {"application_id": None}})
+        warrant.allows_unknown_fields = lambda tool: tool == "score_risk"
+
+        with pytest.raises(TenuoPreValidationError, match="application_id"):
+            _prevalidate_args_against_warrant(
+                warrant, "score_risk", {"extra": "fine"}
+            )
 
     def test_no_capabilities_attr_is_noop(self):
         """Warrant with no .capabilities attribute — fall through gracefully."""

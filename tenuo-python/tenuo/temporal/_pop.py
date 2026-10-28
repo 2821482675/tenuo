@@ -472,22 +472,32 @@ def _prevalidate_args_against_warrant(
     capability is in allow-unknown mode, this function is a no-op.
     """
     try:
-        caps = getattr(warrant, "capabilities", None)
-        if not isinstance(caps, dict):
+        diagnose_constraints = getattr(warrant, "diagnose_constraints", None)
+        if not callable(diagnose_constraints):
             return
-        tool_cap = caps.get(tool_name)
-        if not isinstance(tool_cap, dict):
+        diagnostics = diagnose_constraints(tool_name, args_dict)
+        if not isinstance(diagnostics, dict):
             return
-        if not tool_cap:
+        violations = diagnostics.get("violations")
+        if not isinstance(violations, list):
             return
     except Exception:
         return
 
-    declared_fields = set(tool_cap.keys())
-    actual_fields = set(args_dict.keys())
-
-    unknown = sorted(actual_fields - declared_fields)
-    missing = sorted(declared_fields - actual_fields)
+    unknown = [
+        item["field"]
+        for item in violations
+        if isinstance(item, dict)
+        and item.get("kind") == "unknown_field"
+        and isinstance(item.get("field"), str)
+    ]
+    missing = [
+        item["field"]
+        for item in violations
+        if isinstance(item, dict)
+        and item.get("kind") == "missing_required"
+        and isinstance(item.get("field"), str)
+    ]
 
     if not unknown and not missing:
         return
@@ -502,11 +512,23 @@ def _prevalidate_args_against_warrant(
         fields_str = ", ".join(missing)
         parts.append(f"missing required fields: {fields_str}")
 
+    guidance: List[str] = []
+    if unknown:
+        guidance.append(
+            "Declare each expected argument in the warrant capability; prefer "
+            "Wildcard() for known fields that do not need a value constraint. "
+            "If the capability intentionally accepts every extra field, set "
+            "_allow_unknown=True (a broad opt-out from closed-world checking)."
+        )
+    if missing:
+        guidance.append("Provide every argument declared by the warrant capability.")
+
     raise TenuoPreValidationError(
         f"Warrant pre-validation failed for activity '{tool_name}'. "
         + "; ".join(parts)
-        + ". Declare all argument names in the warrant capability or use "
-        "Wildcard() for fields that don't need structural constraints. "
+        + ". "
+        + " ".join(guidance)
+        + " "
         "See docs/temporal.md: 'Zero-trust closed-world rule'."
     )
 

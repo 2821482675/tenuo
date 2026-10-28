@@ -523,7 +523,7 @@ impl SdkContext {
             if ttl == 0 {
                 return Err(JsError::new("narrow options: ttlSeconds must be positive"));
             }
-            builder = builder.ttl(Duration::from_secs(u64::from(ttl)));
+            builder = builder.ttl_capped_to_parent(Duration::from_secs(u64::from(ttl)));
         }
         let next_holder = match &options.holder {
             Some(hex) => Some(parse_public_key_hex(hex)?),
@@ -877,6 +877,23 @@ pub fn sdk_inspect_warrant(wire: &str) -> Result<JsValue, JsError> {
     init_panic_hook();
     let warrant = parse_warrant(wire)?;
     Ok(inspect_js(&warrant))
+}
+
+/// Diagnose all capability-constraint failures without authorizing the call.
+#[wasm_bindgen(js_name = sdkDiagnoseConstraints)]
+pub fn sdk_diagnose_constraints(
+    wire: &str,
+    tool: &str,
+    args_json: JsValue,
+) -> Result<JsValue, JsError> {
+    init_panic_hook();
+    let warrant = parse_warrant(wire)?;
+    let args = canonical_args(&args_json).map_err(|e| JsError::new(&e))?;
+    let constraints = constraint_view(&args);
+    let diagnostics = warrant
+        .diagnose_constraints(tool, &constraints)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    Ok(to_js_value(&diagnostics))
 }
 
 #[wasm_bindgen(js_name = sdkInspectParts)]

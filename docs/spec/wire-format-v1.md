@@ -584,14 +584,16 @@ pub enum Constraint {
     /// Unknown constraint type (deserialized but not understood)
     Unknown {
         type_id: u8,
-        payload: Vec<u8>,
+        payload: Vec<u8>,  // CBOR encoding of the unknown value
     },
 }
 ```
 
 **Wire type IDs and serialization (standard 1–127):**
 
-All constraints serialize as `[type_id, value]` tuples. The `value` is the serde serialization of the constraint struct.
+All constraints serialize as exactly two-element `[type_id, value]` tuples. The
+`value` is the serde serialization of the constraint struct. Verifiers MUST reject
+missing or trailing tuple elements rather than silently ignoring them.
 
 | ID | Type | Value Shape | Notes |
 |----|------|-------------|-------|
@@ -1874,14 +1876,15 @@ See [Appendix A](#appendix-a-error-code-reference) for the complete error code l
 ### 20.4 Clock Skew and Time Validation
 
 **Time comparisons:**
-- Use clock tolerance (±30s for TTL, ±60s default for PoP) to handle legitimate skew
+- Use clock tolerance for future-issued timestamps (30s by default) and PoP
+  (±60s by default); do not extend `expires_at`
 - Reject warrants with `issued_at` far in the future (recommend: >5 minutes)
 - Log excessive clock skew for monitoring
 
 **Timestamp validation order:**
 1. Check `issued_at` is not too far in future
 2. Check `expires_at > issued_at`
-3. Check current time is within `[issued_at, expires_at]` ± tolerance
+3. Check `issued_at <= current time + tolerance` and `current time < expires_at`
 
 ### 20.5 Constraint Validation
 

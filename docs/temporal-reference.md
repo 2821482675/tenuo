@@ -697,7 +697,8 @@ namespace. Capabilities that name neither field behave exactly as before.
 Verification checks PoP using multiple aligned time windows around the verifier's clock:
 
 - `pop_window_secs=30`, `pop_max_windows=5`: ~±60 seconds effective skew tolerance.
-- `clock_tolerance_secs=30`: applied to warrant lifetime/expiry, separate from PoP bucketing.
+- `clock_tolerance_secs=30`: accepts slightly future-issued warrants and approvals;
+  warrant and approval expiry remain strict. This is separate from PoP bucketing.
 
 Workflow-side signing uses deterministic timestamps for Temporal replay; workers verify against their wall clock.
 
@@ -743,6 +744,36 @@ signing authority.
 ### Temporal activity retries and PoP time-drift
 
 PoP is signed at `workflow.now()` when the Activity is first scheduled. Temporal retries reuse that signature from the original `ACTIVITY_TASK_SCHEDULED` event. The first attempt accepts about ±60 s (`pop_max_windows=5`). Retries use `retry_pop_max_windows`, which defaults to **40**: 20 windows of 30 s on the past side, about 10 minutes. Temporal's default backoff (1 s, doubling, capped at 100 s) waits about 7 minutes across ten retries that fail immediately, and that fits. Queue time and attempt runtime use the rest of the window.
+
+### Idempotent downstream side effects
+
+An Activity can commit a side effect at an external service and then fail before
+reporting completion to Temporal. The retry must be allowed to run, so Tenuo's
+PoP replay protection is not a substitute for receiver-side idempotency. Use
+`current_idempotency_key()` inside the Activity and send it as the downstream
+service's idempotency or operation key:
+
+```python
+from temporalio import activity
+from tenuo.temporal import current_idempotency_key
+
+@activity.defn
+async def charge_card(request: ChargeRequest) -> ChargeResult:
+    return await payments.charge(
+        request,
+        idempotency_key=current_idempotency_key(),
+    )
+```
+
+The opaque, versioned key is derived from the warrant ID, Temporal workflow run
+ID, and Activity ID. It is stable across retry attempts of the same scheduled
+Activity, but changes when any of those three identities changes. The attempt
+number is deliberately excluded. Calling the helper outside an authorized
+Activity running behind `TenuoWorkerInterceptor` raises `TenuoContextError`.
+The helper is available to async Activities and synchronous Activities using
+Temporal's thread-pool executor. Python `ContextVar` state does not cross a
+`ProcessPoolExecutor` boundary, so process-pool Activities must pass an
+idempotency key explicitly as part of their input instead.
 
 | Retry pattern | Recommended approach |
 |---------------|---------------------|
