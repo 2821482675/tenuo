@@ -4,6 +4,7 @@ export const memory: WebAssembly.Memory;
 export const __wbg_sdkcontext_free: (a: number, b: number) => void;
 export const __wbg_sdksession_free: (a: number, b: number) => void;
 export const parse_strict_json: (a: number, b: number) => [number, number];
+export const sdkDiagnoseConstraints: (a: number, b: number, c: number, d: number, e: any) => [number, number, number];
 export const sdkInspectParts: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const sdkInspectWarrant: (a: number, b: number) => [number, number, number];
 export const sdkProtocolLimits: () => [number, number, number];
@@ -59,7 +60,7 @@ export const verify_approval_set: (a: number, b: number, c: number, d: number, e
 export const verify_signed_approval: (a: number, b: number) => any;
 export const verify_srl: (a: number, b: number, c: number, d: number) => any;
 export const init_panic_hook: () => void;
-export const sdkInspectApproval: (a: number, b: number) => [number, number, number];
+export const sdkInspectApproval: (a: any) => [number, number, number];
 export const sdkInspectRevocationList: (a: number, b: number) => [number, number, number];
 export const sdkSignApprovalForRequest: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
 export const sdkSignRevocationListVersioned: (a: any, b: number, c: number, d: number) => [number, number, number, number];

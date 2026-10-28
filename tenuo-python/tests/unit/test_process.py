@@ -30,11 +30,11 @@ def repo(tmp_path):
     return repo
 
 
-def capability(repo, subcommands=("status", "diff", "log", "add", "commit")):
+def capability(repo, subcommands=("status", "diff", "log", "add", "commit"), paths=None):
     return dict(
         subcommand=OneOf(list(subcommands)),
         flags=Subset(["--short", "--stat", "--oneline"]),
-        paths=Subset([".", "app.py"]),
+        paths=paths if paths is not None else Subpath(str(repo)),
         cwd=Subpath(str(repo)),
     )
 
@@ -78,6 +78,16 @@ def test_cwd_is_checked_after_resolving_symlinks(warrant, repo):
         git_run(warrant, repo, subcommand="status", cwd=str(repo / "escape"))
 
 
+def test_paths_are_checked_after_resolving_symlinks(warrant, repo):
+    outside = repo.parent / "secret.txt"
+    outside.write_text("secret\n")
+    (repo / "leak.py").symlink_to(outside)
+    with pytest.raises(AuthorizationDenied):
+        git_run(warrant, repo, subcommand="diff", paths=["leak.py"])
+    with pytest.raises(AuthorizationDenied):
+        git_run(warrant, repo, subcommand="diff", paths=["../secret.txt"])
+
+
 @pytest.mark.parametrize(
     "call",
     [
@@ -100,7 +110,14 @@ def test_wrong_holder_cannot_run(warrant, repo):
 def test_delegated_warrant_is_narrower_and_cannot_widen(warrant, repo):
     child = (
         warrant.grant_builder()
-        .capability("git", **capability(repo, subcommands=("status", "diff")))
+        .capability(
+            "git",
+            **capability(
+                repo,
+                subcommands=("status", "diff"),
+                paths=Subset([str(repo / "app.py")]),
+            ),
+        )
         .holder(REVIEWER.public_key)
         .ttl(300)
         .grant(AGENT)
@@ -111,10 +128,21 @@ def test_delegated_warrant_is_narrower_and_cannot_widen(warrant, repo):
         cwd=str(repo),
         subcommand="diff",
         flags=["--stat"],
+        paths=["app.py"],
         trusted_roots=[ROOT.public_key],
         warrant_chain=[warrant],
     )
     assert out.returncode == 0
+    with pytest.raises(AuthorizationDenied):
+        run(
+            child.bind(REVIEWER),
+            GIT,
+            cwd=str(repo),
+            subcommand="diff",
+            paths=["other.py"],
+            trusted_roots=[ROOT.public_key],
+            warrant_chain=[warrant],
+        )
     with pytest.raises(AuthorizationDenied):
         run(
             child.bind(REVIEWER),
@@ -172,17 +200,19 @@ def test_repository_config_cannot_run_programs(warrant, repo):
 
 
 def test_program_without_subcommands(tmp_path):
-    (tmp_path / "a.txt").write_text("")
+    tmp_path = tmp_path.resolve()
+    target = tmp_path / "a.txt"
+    target.write_text("")
     ls = Program(name="ls")
     w = (
         Warrant.mint_builder()
-        .capability("ls", flags=Subset(["-1"]), paths=Subset(["a.txt", "-rf"]), cwd=Subpath(str(tmp_path)))
+        .capability("ls", flags=Subset(["-1"]), paths=Subpath(str(tmp_path)), cwd=Subpath(str(tmp_path)))
         .holder(AGENT.public_key)
         .ttl(60)
         .mint(ROOT)
     )
     out = run(w.bind(AGENT), ls, cwd=str(tmp_path), flags=["-1"], paths=["a.txt"], trusted_roots=[ROOT.public_key])
-    assert out.stdout.decode() == "a.txt\n"
+    assert out.stdout.decode() == f"{target}\n"
     with pytest.raises(AuthorizationDenied):
         run(w.bind(AGENT), ls, cwd=str(tmp_path), subcommand="x", trusted_roots=[ROOT.public_key])
     with pytest.raises(AuthorizationDenied):

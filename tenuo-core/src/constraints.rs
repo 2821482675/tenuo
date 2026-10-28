@@ -207,6 +207,7 @@ pub enum Constraint {
 
     /// Unknown constraint type (deserialized but not understood).
     /// Used for forward compatibility. Always fails authorization.
+    /// `payload` contains the CBOR encoding of the unknown value.
     Unknown { type_id: u8, payload: Vec<u8> },
 }
 
@@ -295,8 +296,16 @@ impl Serialize for Constraint {
                 tup.serialize_element(v)?;
             }
             Constraint::Unknown { type_id, payload } => {
+                let mut reader = std::io::Cursor::new(payload.as_slice());
+                let value: ciborium::value::Value =
+                    ciborium::de::from_reader(&mut reader).map_err(serde::ser::Error::custom)?;
+                if reader.position() != payload.len() as u64 {
+                    return Err(serde::ser::Error::custom(
+                        "unknown constraint payload contains trailing CBOR data",
+                    ));
+                }
                 tup.serialize_element(type_id)?;
-                tup.serialize_element(&serde_bytes::Bytes::new(payload))?;
+                tup.serialize_element(&value)?;
             }
         }
 
@@ -304,7 +313,10 @@ impl Serialize for Constraint {
     }
 }
 
-// Custom Deserialize: reads [type_id, value] array format
+// Custom Deserialize: reads [type_id, value] array format.
+// Every payload struct denies unknown fields: a member this version does not know
+// may restrict the constraint, so dropping it would fail open (wire-format-v1.md,
+// "Fail closed"). Unknown type IDs still decode to `Unknown` and deny at evaluation.
 impl<'de> serde::Deserialize<'de> for Constraint {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -443,14 +455,22 @@ impl<'de> serde::Deserialize<'de> for Constraint {
                     }
                     // Unknown type ID (ID 6 reserved for future IntRange with i64 bounds)
                     _ => {
-                        // Try to read value as raw bytes for preservation
-                        let payload: Vec<u8> = seq
-                            .next_element::<serde_bytes::ByteBuf>()?
-                            .map(|b| b.into_vec())
-                            .unwrap_or_default();
+                        // Preserve any future payload shape as encoded CBOR. This
+                        // lets older verifiers fail authorization without making
+                        // warrants containing new constraint types undecodable.
+                        let value: ciborium::value::Value = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        let mut payload = Vec::new();
+                        ciborium::ser::into_writer(&value, &mut payload)
+                            .map_err(A::Error::custom)?;
                         Constraint::Unknown { type_id, payload }
                     }
                 };
+
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(A::Error::invalid_length(3, &self));
+                }
 
                 Ok(constraint)
             }
@@ -743,23 +763,65 @@ impl Constraint {
             // CEL follows conjunction rule
             (Constraint::Cel(parent), Constraint::Cel(child)) => parent.validate_attenuation(child),
 
-            // Subpath can narrow to Subpath (narrower root) or Exact
+            // Subpath can narrow to Subpath (narrower root), Subset (all paths contained), or Exact
             (Constraint::Subpath(parent), Constraint::Subpath(child)) => {
                 parent.validate_attenuation(child)
             }
+            (Constraint::Subpath(parent), Constraint::Subset(child_subset)) => {
+                for item in &child_subset.allowed {
+                    match item.as_str() {
+                        Some(path_str) => {
+                            if !parent.contains_path(path_str)? {
+                                return Err(Error::PathNotContained {
+                                    path: path_str.to_string(),
+                                    root: parent.root.clone(),
+                                });
+                            }
+                        }
+                        None => {
+                            return Err(Error::IncompatibleConstraintTypes {
+                                parent_type: "Subpath".to_string(),
+                                child_type: "Subset (non-string)".to_string(),
+                            });
+                        }
+                    }
+                }
+                Ok(())
+            }
             (Constraint::Subpath(parent), Constraint::Exact(child_exact)) => {
-                match child_exact.value.as_str() {
-                    Some(path_str) => {
+                match &child_exact.value {
+                    ConstraintValue::String(path_str) => {
                         if parent.contains_path(path_str)? {
                             Ok(())
                         } else {
                             Err(Error::PathNotContained {
-                                path: path_str.to_string(),
+                                path: path_str.clone(),
                                 root: parent.root.clone(),
                             })
                         }
                     }
-                    None => Err(Error::IncompatibleConstraintTypes {
+                    ConstraintValue::List(items) => {
+                        for item in items {
+                            match item.as_str() {
+                                Some(path_str) => {
+                                    if !parent.contains_path(path_str)? {
+                                        return Err(Error::PathNotContained {
+                                            path: path_str.to_string(),
+                                            root: parent.root.clone(),
+                                        });
+                                    }
+                                }
+                                None => {
+                                    return Err(Error::IncompatibleConstraintTypes {
+                                        parent_type: "Subpath".to_string(),
+                                        child_type: "Exact (non-string list item)".to_string(),
+                                    });
+                                }
+                            }
+                        }
+                        Ok(())
+                    }
+                    _ => Err(Error::IncompatibleConstraintTypes {
                         parent_type: "Subpath".to_string(),
                         child_type: "Exact (non-string)".to_string(),
                     }),
@@ -1022,6 +1084,7 @@ impl From<Wildcard> for Constraint {
 
 /// Glob-style pattern constraint.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Pattern {
     pub pattern: String,
     #[serde(skip)]
@@ -1203,6 +1266,7 @@ impl From<Pattern> for Constraint {
 
 /// Regular expression constraint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RegexConstraint {
     pub pattern: String,
     #[serde(skip)]
@@ -1272,6 +1336,7 @@ impl From<RegexConstraint> for Constraint {
 
 /// Exact value constraint (works for any value type).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Exact {
     pub value: ConstraintValue,
 }
@@ -1302,6 +1367,7 @@ impl From<Exact> for Constraint {
 
 /// One-of constraint (value must be in allowed set).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct OneOf {
     pub values: Vec<ConstraintValue>,
 }
@@ -1386,6 +1452,7 @@ impl From<OneOf> for Constraint {
 /// Child can exclude MORE values (grow the exclusion set).
 /// This shrinks the effective allowed set, maintaining monotonicity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct NotOneOf {
     /// Values to exclude.
     pub excluded: Vec<ConstraintValue>,
@@ -1445,6 +1512,32 @@ impl From<NotOneOf> for Constraint {
 // Range Constraint
 // ============================================================================
 
+fn deserialize_finite_optional_f64<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<f64>::deserialize(deserializer)?;
+    if value.is_some_and(|bound| !bound.is_finite()) {
+        return Err(serde::de::Error::custom("range bound must be finite"));
+    }
+    Ok(value)
+}
+
+fn serialize_finite_optional_f64<S>(
+    value: &Option<f64>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    if value.is_some_and(|bound| !bound.is_finite()) {
+        return Err(serde::ser::Error::custom("range bound must be finite"));
+    }
+    value.serialize(serializer)
+}
+
 /// Numeric range constraint.
 ///
 /// **Precision Warning**: Bounds are stored as `f64`. Integers larger than 2^53
@@ -1455,8 +1548,19 @@ impl From<NotOneOf> for Constraint {
 ///
 /// Wire type ID: 3
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Range {
+    #[serde(
+        default,
+        deserialize_with = "deserialize_finite_optional_f64",
+        serialize_with = "serialize_finite_optional_f64"
+    )]
     pub min: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_finite_optional_f64",
+        serialize_with = "serialize_finite_optional_f64"
+    )]
     pub max: Option<f64>,
     pub min_inclusive: bool,
     pub max_inclusive: bool,
@@ -1466,17 +1570,16 @@ impl Range {
     /// Create a new range constraint with inclusive bounds.
     ///
     /// # Errors
-    /// Returns `InvalidRange` if min or max is NaN (NaN causes non-deterministic serialization).
+    /// Returns `InvalidRange` if min or max is not finite.
     pub fn new(min: Option<f64>, max: Option<f64>) -> Result<Self> {
-        // NaN values cause non-deterministic serialization and comparison issues
         if let Some(m) = min {
-            if m.is_nan() {
-                return Err(Error::InvalidRange("min cannot be NaN".to_string()));
+            if !m.is_finite() {
+                return Err(Error::InvalidRange("min must be finite".to_string()));
             }
         }
         if let Some(m) = max {
-            if m.is_nan() {
-                return Err(Error::InvalidRange("max cannot be NaN".to_string()));
+            if !m.is_finite() {
+                return Err(Error::InvalidRange("max must be finite".to_string()));
             }
         }
         Ok(Self {
@@ -1490,7 +1593,7 @@ impl Range {
     /// Create a range with only a maximum value.
     ///
     /// # Errors
-    /// Returns `InvalidRange` if max is NaN.
+    /// Returns `InvalidRange` if max is not finite.
     pub fn max(max: f64) -> Result<Self> {
         Self::new(None, Some(max))
     }
@@ -1498,7 +1601,7 @@ impl Range {
     /// Create a range with only a minimum value.
     ///
     /// # Errors
-    /// Returns `InvalidRange` if min is NaN.
+    /// Returns `InvalidRange` if min is not finite.
     pub fn min(min: f64) -> Result<Self> {
         Self::new(Some(min), None)
     }
@@ -1506,7 +1609,7 @@ impl Range {
     /// Create a range between min and max.
     ///
     /// # Errors
-    /// Returns `InvalidRange` if min or max is NaN.
+    /// Returns `InvalidRange` if min or max is not finite.
     pub fn between(min: f64, max: f64) -> Result<Self> {
         Self::new(Some(min), Some(max))
     }
@@ -2220,6 +2323,7 @@ impl From<UrlPattern> for Constraint {
 /// [17, { "root": "/data", "case_sensitive": true }]
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Subpath {
     /// Root directory path (must be absolute).
     pub root: String,
@@ -2432,11 +2536,23 @@ impl Subpath {
 
     /// Check if a value satisfies the Subpath constraint.
     ///
-    /// The value must be a string containing an absolute path.
+    /// The value must be a string containing an absolute path, or a list of
+    /// strings where every element is an absolute path contained within `root`.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
-        match value.as_str() {
-            Some(path_str) => self.contains_path(path_str),
-            None => Ok(false),
+        match value {
+            ConstraintValue::String(path_str) => self.contains_path(path_str),
+            ConstraintValue::List(list) => {
+                for item in list {
+                    let Some(path_str) = item.as_str() else {
+                        return Ok(false);
+                    };
+                    if !self.contains_path(path_str)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
         }
     }
 
@@ -2523,7 +2639,11 @@ impl From<Subpath> for Constraint {
 /// 2. Attacker-controlled domains can resolve to internal IPs (DNS rebinding)
 /// 3. Stateless validation enables caching and cross-language compatibility
 ///
-/// For DNS-aware validation, use `url_jail` at the execution layer.
+/// `UrlSafe` therefore protects literal IPs and URL/host policy, but is not by
+/// itself a complete defense against DNS rebinding. The HTTP execution layer
+/// must validate every resolved address (including redirects) and connect to
+/// that validated address without resolving the hostname again. For Python,
+/// `url_jail` is one execution-layer option.
 ///
 /// # Example
 ///
@@ -2546,6 +2666,7 @@ impl From<Subpath> for Constraint {
 /// [18, { "schemes": ["http", "https"], "block_private": true, ... }]
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct UrlSafe {
     /// Allowed URL schemes. Default: ["http", "https"]
     #[serde(default = "default_schemes")]
@@ -2662,6 +2783,85 @@ const INTERNAL_TLDS: &[&str] = &[
 ];
 
 impl UrlSafe {
+    fn canonical_domain_pattern(pattern: &str) -> Result<String> {
+        use url::Host;
+
+        if pattern.is_empty() {
+            return Err(Error::InvalidUrl {
+                url: pattern.to_string(),
+                reason: "domain pattern must not be empty".to_string(),
+            });
+        }
+
+        let (wildcard, host_pattern) = match pattern.strip_prefix("*.") {
+            Some(suffix) => (true, suffix),
+            None => (false, pattern),
+        };
+        if host_pattern.is_empty() || host_pattern.contains('*') {
+            return Err(Error::InvalidUrl {
+                url: pattern.to_string(),
+                reason: "domain pattern must be a host name or *.host name".to_string(),
+            });
+        }
+
+        let host = Host::parse(host_pattern).map_err(|error| Error::InvalidUrl {
+            url: pattern.to_string(),
+            reason: format!("invalid domain pattern: {error}"),
+        })?;
+        let canonical = match host {
+            Host::Domain(domain) if !wildcard || !domain.starts_with('.') => domain,
+            _ if wildcard => {
+                return Err(Error::InvalidUrl {
+                    url: pattern.to_string(),
+                    reason: "wildcards require a domain name suffix".to_string(),
+                });
+            }
+            host => host.to_string(),
+        }
+        .to_lowercase();
+        // Host::parse percent-decodes domains. Re-check the canonical value so
+        // an encoded `*` cannot become wildcard syntax after raw validation.
+        if canonical.contains('*') {
+            return Err(Error::InvalidUrl {
+                url: pattern.to_string(),
+                reason: "domain pattern must be a host name or *.host name".to_string(),
+            });
+        }
+        Ok(if wildcard {
+            format!("*.{canonical}")
+        } else {
+            canonical
+        })
+    }
+
+    /// Return whether every host matched by `candidate` is also matched by
+    /// `covering`. Both patterns are canonicalized before comparison.
+    fn domain_pattern_covers(covering: &str, candidate: &str) -> Result<bool> {
+        let covering = Self::canonical_domain_pattern(covering)?;
+        let candidate = Self::canonical_domain_pattern(candidate)?;
+
+        let Some(covering_suffix) = covering.strip_prefix("*.") else {
+            return Ok(covering == candidate);
+        };
+        let candidate_suffix = candidate.strip_prefix("*.").unwrap_or(&candidate);
+
+        Ok(candidate_suffix == covering_suffix
+            || candidate_suffix.ends_with(&format!(".{covering_suffix}")))
+    }
+
+    /// Validate domain allow- and deny-list configuration.
+    pub fn validate(&self) -> Result<()> {
+        for pattern in self
+            .allow_domains
+            .iter()
+            .flatten()
+            .chain(self.deny_domains.iter().flatten())
+        {
+            Self::canonical_domain_pattern(pattern)?;
+        }
+        Ok(())
+    }
+
     /// Create a new UrlSafe constraint with secure defaults.
     ///
     /// Blocks private IPs, loopback, metadata endpoints, and dangerous schemes.
@@ -2704,6 +2904,8 @@ impl UrlSafe {
     /// into a policy oracle.
     pub fn rejection_reason(&self, url: &str) -> Result<Option<UrlSafeRejection>> {
         use url::Url;
+
+        self.validate()?;
 
         // Reject null bytes
         if url.contains('\0') {
@@ -2779,12 +2981,12 @@ impl UrlSafe {
             if self.looks_like_ambiguous_ip(&host) {
                 return Ok(Some(UrlSafeRejection::AmbiguousIp));
             }
+        }
 
-            // Check domain allowlist (hostnames only — IPs use block_* flags)
-            if let Some(ref domains) = self.allow_domains {
-                if !self.check_domain_allowed(&host, domains) {
-                    return Ok(Some(UrlSafeRejection::DomainAllowList));
-                }
+        // An allowlist constrains every host, including public IP literals.
+        if let Some(ref domains) = self.allow_domains {
+            if !self.check_domain_allowed(&host, domains) {
+                return Ok(Some(UrlSafeRejection::DomainAllowList));
             }
         }
 
@@ -3019,7 +3221,9 @@ impl UrlSafe {
     /// Check if hostname matches domain allowlist.
     fn check_domain_allowed(&self, host: &str, domains: &[String]) -> bool {
         for pattern in domains {
-            let pattern = pattern.to_lowercase();
+            let Ok(pattern) = Self::canonical_domain_pattern(pattern) else {
+                continue;
+            };
             if pattern.starts_with("*.") {
                 // Wildcard subdomain: *.example.com matches sub.example.com
                 let suffix = &pattern[1..]; // .example.com
@@ -3085,6 +3289,12 @@ impl UrlSafe {
     ///
     /// A child UrlSafe is valid if it is at least as restrictive as the parent.
     pub fn validate_attenuation(&self, child: &UrlSafe) -> Result<()> {
+        // Attenuation is only meaningful for well-formed policies. Validate
+        // here as well as at authorization time so malformed wire-decoded Rust
+        // values cannot be delegated and fail later in a surprising place.
+        self.validate()?;
+        child.validate()?;
+
         // Child schemes must be subset of parent
         for scheme in &child.schemes {
             if !self
@@ -3160,19 +3370,10 @@ impl UrlSafe {
                 Some(child_domains) => {
                     // Each child domain must be covered by a parent domain pattern
                     for cd in child_domains {
-                        if !parent_domains.iter().any(|pd| {
-                            let pd = pd.to_lowercase();
-                            let cd = cd.to_lowercase();
-                            // Exact match
-                            if pd == cd {
-                                return true;
-                            }
-                            // Parent wildcard covers child exact
-                            if pd.starts_with("*.") && cd.ends_with(&pd[1..]) {
-                                return true;
-                            }
-                            false
-                        }) {
+                        let covered = parent_domains.iter().try_fold(false, |covered, pd| {
+                            Ok::<_, Error>(covered || Self::domain_pattern_covers(pd, cd)?)
+                        })?;
+                        if !covered {
                             return Err(Error::MonotonicityViolation(format!(
                                 "child domain '{}' not covered by parent allowlist",
                                 cd
@@ -3193,8 +3394,12 @@ impl UrlSafe {
                 }
                 Some(child_denied) => {
                     for pd in parent_denied {
-                        let pd_lower = pd.to_lowercase();
-                        if !child_denied.iter().any(|cd| cd.to_lowercase() == pd_lower) {
+                        // A child may preserve a parent denial with an equivalent
+                        // canonical spelling or a broader wildcard denial.
+                        let preserved = child_denied.iter().try_fold(false, |preserved, cd| {
+                            Ok::<_, Error>(preserved || Self::domain_pattern_covers(cd, pd)?)
+                        })?;
+                        if !preserved {
                             return Err(Error::MonotonicityViolation(format!(
                                 "child removes denied domain '{}' from parent",
                                 pd
@@ -3292,6 +3497,7 @@ const SHELL_DANGEROUS_CHARS: &[char] = &[
 /// [128, { "allow": ["npm", "docker"] }]
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Shlex {
     /// Allowed binary names or full paths. Literal strings only (no globs).
     pub allow: Vec<String>,
@@ -3408,6 +3614,7 @@ fn urlencoding_decode(s: &str) -> String {
 
 /// Constraint that a list value must contain specified values.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Contains {
     /// Values that must be present in the list.
     pub required: Vec<ConstraintValue>,
@@ -3457,6 +3664,7 @@ impl From<Contains> for Constraint {
 
 /// Constraint that a list value must be a subset of allowed values.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Subset {
     /// Allowed values (superset).
     pub allowed: Vec<ConstraintValue>,
@@ -3506,6 +3714,7 @@ impl From<Subset> for Constraint {
 
 /// All constraints must match (AND).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct All {
     pub constraints: Vec<Constraint>,
 }
@@ -3572,6 +3781,7 @@ impl From<All> for Constraint {
 ///
 /// Prefer the [`AnyOf`] alias in new code; it matches Python and TypeScript.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Any {
     pub constraints: Vec<Constraint>,
 }
@@ -3628,6 +3838,7 @@ impl From<Any> for Constraint {
 
 /// Negation of a constraint.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Not {
     pub constraint: Box<Constraint>,
 }
@@ -3719,6 +3930,7 @@ impl From<Not> for Constraint {
 /// CelConstraint::new("'admin' in roles")
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct CelConstraint {
     /// The CEL expression as a string.
     pub expression: String,
@@ -3893,6 +4105,73 @@ impl From<CelConstraint> for Constraint {
 // Constraint Set
 // ============================================================================
 
+/// Stable category for a constraint diagnostic.
+///
+/// Diagnostics are non-authoritative explanations. Authorization continues to
+/// use [`ConstraintSet::matches`], which consumes the same diagnostic result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConstraintViolationKind {
+    /// The warrant does not authorize the requested tool.
+    ToolNotAuthorized,
+    /// Closed-world checking rejected an undeclared argument field.
+    UnknownField,
+    /// A field declared by the capability was absent.
+    MissingRequired,
+    /// A supplied value did not satisfy its declared constraint.
+    ConstraintMismatch,
+}
+
+impl ConstraintViolationKind {
+    /// Stable machine-readable name used by SDK bindings.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ToolNotAuthorized => "tool_not_authorized",
+            Self::UnknownField => "unknown_field",
+            Self::MissingRequired => "missing_required",
+            Self::ConstraintMismatch => "constraint_mismatch",
+        }
+    }
+}
+
+/// One field-level constraint diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConstraintViolation {
+    /// Argument field, or `"tool"` for a tool-level denial.
+    pub field: String,
+    /// Stable machine-readable category.
+    pub kind: ConstraintViolationKind,
+    /// Human-readable explanation. Callers should branch on [`Self::kind`].
+    pub reason: String,
+}
+
+/// Structured, deterministic result of non-authoritative constraint preflight.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConstraintDiagnostics {
+    /// Whether the evaluated constraint set rejects undeclared fields.
+    pub closed_world: bool,
+    /// All violations, ordered deterministically by category and field name.
+    pub violations: Vec<ConstraintViolation>,
+}
+
+impl ConstraintDiagnostics {
+    /// True when no constraint violations were found.
+    pub fn is_satisfied(&self) -> bool {
+        self.violations.is_empty()
+    }
+
+    pub(crate) fn tool_not_authorized(tool: &str) -> Self {
+        Self {
+            closed_world: false,
+            violations: vec![ConstraintViolation {
+                field: "tool".to_string(),
+                kind: ConstraintViolationKind::ToolNotAuthorized,
+                reason: format!("warrant does not authorize tool '{tool}'"),
+            }],
+        }
+    }
+}
+
 /// Helper for serde skip_serializing_if
 fn is_false(b: &bool) -> bool {
     !*b
@@ -3915,6 +4194,7 @@ fn is_false(b: &bool) -> bool {
 /// Use `Wildcard` constraint to allow any value for a specific field while
 /// still operating in closed-world mode for other fields.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct ConstraintSet {
     constraints: BTreeMap<String, Constraint>,
     /// When true, arguments not listed in constraints are allowed.
@@ -3974,36 +4254,77 @@ impl ConstraintSet {
     /// - If any constraint exists and `allow_unknown=false`: unknown arguments rejected
     /// - If any constraint exists and `allow_unknown=true`: unknown arguments allowed
     pub fn matches(&self, args: &HashMap<String, ConstraintValue>) -> Result<()> {
-        // Zero-trust: if constraints exist and allow_unknown is false,
-        // reject any arguments not explicitly constrained
-        if !self.constraints.is_empty() && !self.allow_unknown {
-            for key in args.keys() {
-                if !self.constraints.contains_key(key) {
-                    return Err(Error::ConstraintNotSatisfied {
-                        field: key.clone(),
-                        reason: "unknown field not allowed (zero-trust mode)".to_string(),
-                    });
-                }
-            }
-        }
-
-        // Check all defined constraints are satisfied
-        for (field, constraint) in &self.constraints {
-            let value = args
-                .get(field)
-                .ok_or_else(|| Error::ConstraintNotSatisfied {
-                    field: field.clone(),
-                    reason: "missing required argument".to_string(),
-                })?;
-
-            if !constraint.matches(value)? {
-                return Err(Error::ConstraintNotSatisfied {
-                    field: field.clone(),
-                    reason: "value does not match constraint".to_string(),
-                });
-            }
+        let diagnostics = self.diagnose(args)?;
+        if let Some(violation) = diagnostics.violations.into_iter().next() {
+            return Err(Error::ConstraintNotSatisfied {
+                field: violation.field,
+                reason: violation.reason,
+            });
         }
         Ok(())
+    }
+
+    /// Diagnose all constraint failures without performing authorization.
+    ///
+    /// This is intended for developer-facing preflight and error rendering.
+    /// It does not verify signatures, expiry, revocation, approvals, or PoP and
+    /// must never be treated as an authorization verdict.
+    ///
+    /// Results contain field names but never argument values. Unknown fields
+    /// are reported first in lexical order, followed by declared fields in the
+    /// constraint set's canonical order.
+    pub fn diagnose(
+        &self,
+        args: &HashMap<String, ConstraintValue>,
+    ) -> Result<ConstraintDiagnostics> {
+        let closed_world = !self.constraints.is_empty() && !self.allow_unknown;
+        let mut violations = Vec::new();
+
+        if closed_world {
+            let mut unknown_fields: Vec<_> = args
+                .keys()
+                .filter(|field| !self.constraints.contains_key(*field))
+                .cloned()
+                .collect();
+            unknown_fields.sort();
+            violations.extend(unknown_fields.into_iter().map(|field| ConstraintViolation {
+                field,
+                kind: ConstraintViolationKind::UnknownField,
+                reason: "unknown field not allowed (zero-trust mode)".to_string(),
+            }));
+        }
+
+        for (field, constraint) in &self.constraints {
+            let Some(value) = args.get(field) else {
+                violations.push(ConstraintViolation {
+                    field: field.clone(),
+                    kind: ConstraintViolationKind::MissingRequired,
+                    reason: "missing required argument".to_string(),
+                });
+                continue;
+            };
+
+            match constraint.matches(value) {
+                Ok(true) => {}
+                Ok(false) | Err(Error::InvalidIpAddress { .. }) | Err(Error::InvalidUrl { .. }) => {
+                    // Invalid runtime IP/URL strings are ordinary mismatches,
+                    // not diagnostic-system failures. Normalize them here so
+                    // diagnostics can collect every violation without leaking
+                    // argument values carried by the parsing error.
+                    violations.push(ConstraintViolation {
+                        field: field.clone(),
+                        kind: ConstraintViolationKind::ConstraintMismatch,
+                        reason: "value does not match constraint".to_string(),
+                    });
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        Ok(ConstraintDiagnostics {
+            closed_world,
+            violations,
+        })
     }
 
     /// Validate that `child` is a valid attenuation of this constraint set.
@@ -4265,16 +4586,16 @@ mod tests {
     }
 
     #[test]
-    fn test_range_rejects_nan() {
+    fn test_range_rejects_non_finite_bounds() {
         // NaN in min
         let result = Range::min(f64::NAN);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("NaN"));
+        assert!(result.unwrap_err().to_string().contains("finite"));
 
         // NaN in max
         let result = Range::max(f64::NAN);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("NaN"));
+        assert!(result.unwrap_err().to_string().contains("finite"));
 
         // NaN in between
         let result = Range::between(f64::NAN, 100.0);
@@ -4288,9 +4609,17 @@ mod tests {
         assert!(Range::min(0.0).is_ok());
         assert!(Range::between(0.0, 100.0).is_ok());
 
-        // Infinity is allowed (it's a valid f64)
-        assert!(Range::max(f64::INFINITY).is_ok());
-        assert!(Range::min(f64::NEG_INFINITY).is_ok());
+        assert!(Range::max(f64::INFINITY).is_err());
+        assert!(Range::min(f64::NEG_INFINITY).is_err());
+
+        // Public fields cannot bypass the invariant during serialization.
+        let invalid = Range {
+            min: Some(f64::INFINITY),
+            max: None,
+            min_inclusive: true,
+            max_inclusive: true,
+        };
+        assert!(serde_json::to_string(&invalid).is_err());
     }
 
     #[test]
@@ -5162,25 +5491,29 @@ mod tests {
     #[test]
     fn test_unknown_constraint_type_id() {
         // Manually construct CBOR for unknown type ID 200
-        // [200, <bytes>] - Unknown expects raw bytes as payload
-        let payload_bytes: Vec<u8> = vec![1, 2, 3, 4];
+        let payload_value = ciborium::value::Value::Map(vec![(
+            ciborium::value::Value::Text("future".to_string()),
+            ciborium::value::Value::Bool(true),
+        )]);
+        let mut encoded_payload = Vec::new();
+        ciborium::ser::into_writer(&payload_value, &mut encoded_payload).unwrap();
         let mut bytes = Vec::new();
-        ciborium::ser::into_writer(
-            &(200u8, serde_bytes::Bytes::new(&payload_bytes)),
-            &mut bytes,
-        )
-        .unwrap();
+        ciborium::ser::into_writer(&(200u8, &payload_value), &mut bytes).unwrap();
 
         let constraint: Constraint = ciborium::de::from_reader(&bytes[..]).unwrap();
 
-        match constraint {
+        match &constraint {
             Constraint::Unknown { type_id, payload } => {
-                assert_eq!(type_id, 200);
-                assert_eq!(payload, payload_bytes);
+                assert_eq!(*type_id, 200);
+                assert_eq!(payload, &encoded_payload);
                 // Unknown constraints always fail authorization (verified in other tests)
             }
             _ => panic!("Expected Unknown variant, got {:?}", constraint),
         }
+
+        let mut round_trip = Vec::new();
+        ciborium::ser::into_writer(&constraint, &mut round_trip).unwrap();
+        assert_eq!(round_trip, bytes);
     }
 
     #[test]
@@ -5483,7 +5816,7 @@ mod tests {
         // We do not validate against it because... what were we talking about?
         let unknown = Constraint::Unknown {
             type_id: 55,
-            payload: vec![0, 1, 2, 3],
+            payload: vec![0xa0], // A valid single CBOR item: {}.
         };
 
         // Unknown constraints always fail matching
@@ -5616,6 +5949,115 @@ mod tests {
     }
 
     #[test]
+    fn test_constraint_diagnostics_reports_all_failures_deterministically() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("amount", Range::new(Some(0.0), Some(100.0)).unwrap());
+        cs.insert("currency", Exact::new("USD"));
+        cs.insert("memo", Wildcard::new());
+
+        let mut args = HashMap::new();
+        args.insert("amount".to_string(), ConstraintValue::Float(300.0));
+        args.insert("z_extra".to_string(), ConstraintValue::Boolean(true));
+        args.insert("a_extra".to_string(), ConstraintValue::Boolean(true));
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        assert!(diagnostics.closed_world);
+        assert!(!diagnostics.is_satisfied());
+        assert_eq!(
+            diagnostics
+                .violations
+                .iter()
+                .map(|violation| (violation.field.as_str(), violation.kind.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("a_extra", "unknown_field"),
+                ("z_extra", "unknown_field"),
+                ("amount", "constraint_mismatch"),
+                ("currency", "missing_required"),
+                ("memo", "missing_required"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_constraint_diagnostics_honors_allow_unknown_and_wildcard() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("payload", Wildcard::new());
+        cs.set_allow_unknown(true);
+
+        let mut args = HashMap::new();
+        args.insert(
+            "payload".to_string(),
+            ConstraintValue::String("anything".into()),
+        );
+        args.insert("extra".to_string(), ConstraintValue::Integer(1));
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        assert!(!diagnostics.closed_world);
+        assert!(diagnostics.is_satisfied());
+        assert!(cs.matches(&args).is_ok());
+    }
+
+    #[test]
+    fn test_constraint_diagnostics_and_matches_share_first_failure() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("required", Exact::new("value"));
+
+        let mut args = HashMap::new();
+        args.insert("extra".to_string(), ConstraintValue::Integer(1));
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        let first = diagnostics.violations.first().unwrap();
+        let error = cs.matches(&args).unwrap_err();
+        match error {
+            Error::ConstraintNotSatisfied { field, reason } => {
+                assert_eq!(field, first.field);
+                assert_eq!(reason, first.reason);
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn test_constraint_diagnostics_redacts_and_collects_invalid_network_values() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("ip", Cidr::new("10.0.0.0/8").unwrap());
+        cs.insert("url", UrlPattern::new("https://*.example.com/*").unwrap());
+        cs.insert("required", Exact::new("present"));
+
+        let invalid_ip = "secret-invalid-ip";
+        let invalid_url = "secret invalid url";
+        let mut args = HashMap::new();
+        args.insert(
+            "ip".to_string(),
+            ConstraintValue::String(invalid_ip.to_string()),
+        );
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String(invalid_url.to_string()),
+        );
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        assert_eq!(diagnostics.violations.len(), 3);
+        assert_eq!(
+            diagnostics
+                .violations
+                .iter()
+                .map(|violation| (violation.field.as_str(), violation.kind.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("ip", "constraint_mismatch"),
+                ("required", "missing_required"),
+                ("url", "constraint_mismatch"),
+            ]
+        );
+        let rendered = format!("{diagnostics:?}");
+        assert!(!rendered.contains(invalid_ip));
+        assert!(!rendered.contains(invalid_url));
+        assert!(cs.matches(&args).is_err());
+    }
+
+    #[test]
     fn test_zero_trust_attenuation_allow_unknown_not_inherited() {
         // Parent has allow_unknown=true, child doesn't specify
         // Child should default to allow_unknown=false (closed world)
@@ -5737,6 +6179,36 @@ mod tests {
         assert!(sp.matches(&"/data/file.txt".into()).unwrap());
         assert!(!sp.matches(&"/etc/passwd".into()).unwrap());
         assert!(!sp.matches(&123.into()).unwrap()); // Non-string returns false
+
+        // List of paths: every item must be a contained string
+        let ok_list = ConstraintValue::List(vec![
+            ConstraintValue::String("/data/a.txt".into()),
+            ConstraintValue::String("/data/sub/b.txt".into()),
+        ]);
+        assert!(sp.matches(&ok_list).unwrap());
+
+        let bad_list = ConstraintValue::List(vec![
+            ConstraintValue::String("/data/a.txt".into()),
+            ConstraintValue::String("/etc/passwd".into()),
+        ]);
+        assert!(!sp.matches(&bad_list).unwrap());
+
+        let non_str_list = ConstraintValue::List(vec![ConstraintValue::Integer(1)]);
+        assert!(!sp.matches(&non_str_list).unwrap());
+
+        // Subpath -> Subset and Subpath -> Exact(List) attenuation
+        let parent = Constraint::Subpath(sp);
+        let child_subset = Constraint::Subset(Subset::new(["/data/a.txt", "/data/b.txt"]));
+        assert!(parent.validate_attenuation(&child_subset).is_ok());
+
+        let bad_subset = Constraint::Subset(Subset::new(["/data/a.txt", "/etc/passwd"]));
+        assert!(parent.validate_attenuation(&bad_subset).is_err());
+
+        let child_exact_list = Constraint::Exact(Exact::new(ok_list));
+        assert!(parent.validate_attenuation(&child_exact_list).is_ok());
+
+        let bad_exact_list = Constraint::Exact(Exact::new(bad_list));
+        assert!(parent.validate_attenuation(&bad_exact_list).is_err());
     }
 
     // -------------------------------------------------------------------------
@@ -5831,6 +6303,40 @@ mod tests {
         assert!(us.is_safe("https://api.github.com/repos").unwrap());
         assert!(us.is_safe("https://sub.example.com/path").unwrap());
         assert!(!us.is_safe("https://other.com/").unwrap());
+        assert!(!us.is_safe("https://8.8.8.8/").unwrap());
+
+        let exact_ip = UrlSafe::with_domains(vec!["8.8.8.8"]);
+        assert!(exact_ip.is_safe("https://8.8.8.8/").unwrap());
+        assert!(!exact_ip.is_safe("https://1.1.1.1/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_rejects_invalid_domain_patterns() {
+        for pattern in [
+            "",
+            "*",
+            "*.",
+            "*..example.com",
+            "foo.*.com",
+            "https://example.com",
+        ] {
+            let us = UrlSafe::with_domains(vec![pattern]);
+            assert!(
+                us.validate().is_err(),
+                "accepted invalid pattern {pattern:?}"
+            );
+            assert!(
+                us.is_safe("https://example.com/").is_err(),
+                "evaluated invalid pattern {pattern:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_url_safe_accepts_hosts_supported_by_url_parser() {
+        let us = UrlSafe::with_domains(vec!["_service.internal"]);
+        assert!(us.validate().is_ok());
+        assert!(us.is_safe("https://_service.internal/").unwrap());
     }
 
     #[test]
@@ -5994,6 +6500,69 @@ mod tests {
             ..UrlSafe::new()
         };
         assert!(parent.validate_attenuation(&child_bad2).is_err());
+    }
+
+    #[test]
+    fn test_url_safe_attenuation_canonicalizes_domain_patterns() {
+        let parent = UrlSafe::with_domains(vec!["bücher.example", "*.example.com"]);
+
+        // IDNs are compared using the same canonical form as URL matching.
+        let idn_child = UrlSafe::with_domains(vec!["xn--bcher-kva.example"]);
+        assert!(parent.validate_attenuation(&idn_child).is_ok());
+
+        // Runtime wildcard semantics include both the base domain and nested
+        // wildcard policies, so attenuation must recognize both as subsets.
+        let base_child = UrlSafe::with_domains(vec!["example.com"]);
+        assert!(parent.validate_attenuation(&base_child).is_ok());
+        let nested_child = UrlSafe::with_domains(vec!["*.api.example.com"]);
+        assert!(parent.validate_attenuation(&nested_child).is_ok());
+    }
+
+    #[test]
+    fn test_url_safe_attenuation_rejects_malformed_policies() {
+        let malformed_parent = UrlSafe::with_domains(vec!["foo.*.example.com"]);
+        let valid = UrlSafe::with_domains(vec!["api.example.com"]);
+        assert!(malformed_parent.validate_attenuation(&valid).is_err());
+
+        let malformed_child = UrlSafe::with_domains(vec!["https://example.com"]);
+        assert!(valid.validate_attenuation(&malformed_child).is_err());
+
+        // Host parsing percent-decodes domains, so encoded wildcards must be
+        // rejected after canonicalization as well as in the raw input.
+        for pattern in ["%2A.example.com", "*.%2A.example.com"] {
+            let encoded_wildcard = UrlSafe::with_domains(vec![pattern]);
+            assert!(encoded_wildcard.validate().is_err());
+            assert!(encoded_wildcard.validate_attenuation(&valid).is_err());
+        }
+    }
+
+    #[test]
+    fn test_url_safe_deny_attenuation_uses_semantic_coverage() {
+        let idn_parent = UrlSafe {
+            deny_domains: Some(vec!["bücher.example".to_string()]),
+            ..UrlSafe::new()
+        };
+        let idn_child = UrlSafe {
+            deny_domains: Some(vec!["xn--bcher-kva.example".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(idn_parent.validate_attenuation(&idn_child).is_ok());
+
+        let parent = UrlSafe {
+            deny_domains: Some(vec!["*.api.example.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        let broader_child = UrlSafe {
+            deny_domains: Some(vec!["*.example.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(parent.validate_attenuation(&broader_child).is_ok());
+
+        let narrower_child = UrlSafe {
+            deny_domains: Some(vec!["*.v1.api.example.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(parent.validate_attenuation(&narrower_child).is_err());
     }
 
     // ========================================================================

@@ -174,7 +174,9 @@ from tenuo import Pattern
 # Suffix wildcard - matches paths starting with /data/
 Pattern("/data/*")
 
-# Prefix wildcard - matches emails ending with @company.com
+# Prefix wildcard - matches any string ending with @company.com
+# Not for recipient fields: * also matches "," ";" "<" and "@", so
+# "eve@evil.com,bob@company.com" matches. Use an anchored Regex there.
 Pattern("*@company.com")
 
 # Middle wildcard - matches specific file in any subdirectory
@@ -607,7 +609,7 @@ child = UrlSafe(block_private=False)  # FAILS
 > [!NOTE]
 > **DNS Resolution**
 >
-> This constraint does NOT perform DNS resolution. This is intentional - DNS resolution is I/O that can block, fail, or be manipulated (DNS rebinding). For DNS-aware validation, use `url_jail` at the execution layer.
+> This constraint does NOT perform DNS resolution. This is intentional - DNS resolution is I/O that can block, fail, or be manipulated (DNS rebinding). `UrlSafe` protects literal IPs and URL/host policy, but the HTTP execution layer must still validate every resolved address (including redirects) and connect to that validated address without resolving the hostname again. For Python, `url_jail` is one execution-layer option.
 
 > [!IMPORTANT]
 > **IPv6 Address Handling**
@@ -741,7 +743,7 @@ warrant = (Warrant.mint_builder()
     .capability("git",
         subcommand=OneOf(["status", "diff", "log"]),
         flags=Subset(["--short", "--stat", "--oneline"]),
-        paths=Subset(["."]),
+        paths=Subpath("/workspace/repo"),
         cwd=Subpath("/workspace/repo"))
     .holder(agent_key.public_key).ttl(1800).mint(issuer_key))
 bound = warrant.bind(agent_key)
@@ -754,8 +756,8 @@ run_command(bound, GIT, "git log --oneline", cwd="/workspace/repo")
 run_command(bound, GIT, "git status && rm -rf ~", cwd="/workspace/repo")      # AuthorizationDenied
 ```
 
-- `cwd` is resolved with `realpath` before the check, so a symlink cannot lead
-  outside the `Subpath`.
+- `cwd` and each entry of `paths` (joined to `cwd`) are resolved with
+  `realpath` before the check, so a symlink cannot lead outside the `Subpath`.
 - argv is exactly the checked values, with paths after `--`. The environment
   is fixed by the `Program`; nothing is inherited.
 - The `GIT` profile stops repository config and `.gitattributes` from running
@@ -1804,7 +1806,8 @@ tools:
 
       environment:
         from: literal        # Static value
-        value: "production"
+        path: ""
+        default: "production"
 
 routes:
   - pattern: "/api/v1/clusters/{cluster}/scale"
@@ -1901,7 +1904,7 @@ routes:
 |-------|------|---------|-------------|
 | `warrant_header` | string | `X-Tenuo-Warrant` | HTTP header containing base64-encoded warrant or WarrantStack |
 | `pop_header` | string | `X-Tenuo-PoP` | HTTP header containing base64-encoded PoP signature |
-| `clock_tolerance_secs` | int | `30` | Seconds of tolerance for expiration checks |
+| `clock_tolerance_secs` | int | `30` | Future-issued timestamp tolerance; expiry is strict |
 | `trusted_roots` | list | `[]` | Hex-encoded public keys of trusted control planes |
 | `debug_mode` | bool | `false` | Enable detailed deny reasons in response headers |
 
@@ -1924,7 +1927,7 @@ routes:
   - pattern: "/api/v1/admin/{action}"
     method: ["POST"]
     tool: "admin_action"
-    extra_constraints:
+    constraints:
       admin_key:
         from: header
         path: "X-Admin-Key"

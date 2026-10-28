@@ -6,11 +6,12 @@ expands braces, globs and ``~`` after the check, and the program reads its own
 config. ``run`` closes that gap for one program at a time:
 
 1. The request is structured: ``subcommand``, ``flags``, ``paths`` and ``cwd``.
-2. ``cwd`` is resolved with ``realpath`` before the check, so a symlink inside
-   an allowed directory cannot point the process elsewhere.
+2. ``cwd`` and each entry of ``paths`` (joined to ``cwd``) are resolved with
+   ``realpath`` before the check, so a symlink inside an allowed directory
+   cannot point the process elsewhere.
 3. The warrant is checked against those values with ordinary constraints.
-4. Exactly those values become argv, executed without a shell, with a fixed
-   environment. Paths go after ``--`` so they are never read as options.
+4. Exactly those resolved values become argv, executed without a shell, with a
+   fixed environment. Paths go after ``--`` so they are never read as options.
 
 Example::
 
@@ -21,7 +22,7 @@ Example::
         .capability("git",
             subcommand=OneOf(["status", "diff", "log"]),
             flags=Subset(["--short", "--stat", "--oneline"]),
-            paths=Subset(["."]),
+            paths=Subpath("/workspace/repo"),
             cwd=Subpath("/workspace/repo"))
         .holder(agent_key.public_key).ttl(1800).mint(issuer_key))
 
@@ -163,7 +164,9 @@ def run(
     elif subcommand is not None:
         raise _deny(tool, f"{program.name} takes no subcommand")
 
-    request: Dict[str, Any] = {"flags": flags, "paths": paths, "cwd": os.path.realpath(cwd)}
+    real_cwd = os.path.realpath(cwd)
+    real_paths = [os.path.realpath(os.path.join(real_cwd, p)) for p in paths]
+    request: Dict[str, Any] = {"flags": flags, "paths": real_paths, "cwd": real_cwd}
     if program.subcommands:
         request["subcommand"] = subcommand
 
@@ -172,10 +175,10 @@ def run(
         raise _deny(tool, result.reason or "not authorized")
 
     head = [subcommand, *program.forced_flags.get(subcommand, ())] if subcommand else []
-    argv = [program.resolve(), *head, *flags, "--", *paths]
+    argv = [program.resolve(), *head, *flags, "--", *real_paths]
     return subprocess.run(
         argv,
-        cwd=request["cwd"],
+        cwd=real_cwd,
         env=dict(program.env),
         stdin=subprocess.DEVNULL,
         capture_output=True,
@@ -201,10 +204,16 @@ def run_command(
     (``--max-count=5``, not ``-n 5``).
     """
     tool = kwargs.get("tool") or program.name
+    from .constraints import Shlex
+
+    if not Shlex(allow=[program.name]).matches(command):
+        raise _deny(tool, "command rejected by Shlex syntax check")
     try:
         words = shlex.split(command)
     except ValueError as exc:
         raise _deny(tool, f"cannot parse command: {exc}") from None
+    if any("{" in w or "}" in w for w in words):
+        raise _deny(tool, "brace expansion is not allowed")
     if not words or words[0] != program.name:
         raise _deny(tool, f"command must start with {program.name!r}")
     words = words[1:]
