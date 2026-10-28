@@ -35,7 +35,7 @@ use crate::warrant::{
 use crate::wire;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PySequence, PyTuple};
+use pyo3::types::{PyDict, PyList, PySequence, PyTuple};
 use pyo3::IntoPyObjectExt;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -477,6 +477,16 @@ pub(crate) fn to_py_err(e: crate::error::Error) -> PyErr {
             }
             Err(e) => py_validation_err(e.to_string()),
         }
+    })
+}
+
+/// Seconds to a chrono tolerance without panicking: chrono's range is
+/// narrower than i64 seconds, so out-of-range values saturate.
+fn clock_tolerance_from_secs(seconds: i64) -> chrono::Duration {
+    chrono::Duration::try_seconds(seconds).unwrap_or(if seconds < 0 {
+        chrono::Duration::zero()
+    } else {
+        chrono::Duration::MAX
     })
 }
 
@@ -1785,20 +1795,20 @@ impl PyUrlSafe {
         block_metadata: bool,
         block_reserved: bool,
         block_internal_tlds: bool,
-    ) -> Self {
-        Self {
-            inner: UrlSafe {
-                schemes: allow_schemes.unwrap_or_else(|| vec!["http".into(), "https".into()]),
-                allow_domains,
-                deny_domains,
-                allow_ports,
-                block_private,
-                block_loopback,
-                block_metadata,
-                block_reserved,
-                block_internal_tlds,
-            },
-        }
+    ) -> PyResult<Self> {
+        let inner = UrlSafe {
+            schemes: allow_schemes.unwrap_or_else(|| vec!["http".into(), "https".into()]),
+            allow_domains,
+            deny_domains,
+            allow_ports,
+            block_private,
+            block_loopback,
+            block_metadata,
+            block_reserved,
+            block_internal_tlds,
+        };
+        inner.validate().map_err(to_py_err)?;
+        Ok(Self { inner })
     }
 
     /// Check if a URL is safe to fetch.
@@ -1807,7 +1817,9 @@ impl PyUrlSafe {
     ///     url: URL string to check.
     ///
     /// Returns:
-    ///     True if the URL passes all SSRF checks, False otherwise.
+    ///     True if the URL passes stateless URL and literal-IP checks, False
+    ///     otherwise. Hostname DNS results must also be validated and pinned
+    ///     by the HTTP execution layer to prevent DNS rebinding.
     fn is_safe(&self, url: &str) -> PyResult<bool> {
         self.inner.is_safe(url).map_err(to_py_err)
     }
@@ -1818,7 +1830,8 @@ impl PyUrlSafe {
     ///     url: URL string to check.
     ///
     /// Returns:
-    ///     True if the URL passes all SSRF checks, False otherwise.
+    ///     True if the URL passes stateless URL and literal-IP checks, False
+    ///     otherwise. See ``is_safe`` for the DNS-rebinding limitation.
     fn matches(&self, url: &str) -> PyResult<bool> {
         self.is_safe(url)
     }
@@ -3448,6 +3461,15 @@ impl PyAttenuationBuilder {
         self.inner.set_ttl(Duration::from_secs(seconds));
     }
 
+    /// Set a TTL, atomically capped at the parent's expiry.
+    ///
+    /// High-level scoping helpers use this to avoid a wall-clock race between
+    /// inspecting the parent's remaining lifetime and building the child.
+    fn with_ttl_capped_to_parent(&mut self, seconds: u64) {
+        self.inner
+            .set_ttl_capped_to_parent(Duration::from_secs(seconds));
+    }
+
     /// Set the authorized holder for the child warrant.
     fn with_holder(&mut self, holder: &PyPublicKey) {
         self.inner.set_holder(holder.inner.clone());
@@ -4304,6 +4326,45 @@ impl PyWarrant {
         }
     }
 
+    /// Diagnose all constraint failures (DIAGNOSTIC USE ONLY).
+    ///
+    /// Returns a dictionary containing ``closed_world`` and a deterministic
+    /// ``violations`` list. Each violation has stable ``kind`` and ``field``
+    /// values plus a human-readable ``reason``. Argument values are never
+    /// included. This does not perform authorization or any cryptographic,
+    /// temporal, revocation, approval, or PoP check.
+    fn diagnose_constraints<'py>(
+        &self,
+        py: Python<'py>,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        let diagnostics = self
+            .inner
+            .diagnose_constraints(tool, &rust_args)
+            .map_err(to_py_err)?;
+        let result = PyDict::new(py);
+        result.set_item("closed_world", diagnostics.closed_world)?;
+
+        let violations = PyList::empty(py);
+        for violation in diagnostics.violations {
+            let item = PyDict::new(py);
+            item.set_item("field", violation.field)?;
+            item.set_item("kind", violation.kind.as_str())?;
+            item.set_item("reason", violation.reason)?;
+            violations.append(item)?;
+        }
+        result.set_item("violations", violations)?;
+        Ok(result)
+    }
+
     // ========================================================================
     // INTROSPECTION METHODS
     // Use these to inspect warrant metadata. Safe for any use.
@@ -4590,6 +4651,43 @@ impl PyCompiledMcpConfig {
         self.inner.validate()
     }
 
+    /// Extraction rules for a tool, or ``None`` if the tool is not configured.
+    ///
+    /// Each rule is a dict with ``field`` (constraint name), ``source``
+    /// (``"body"``, ``"literal"``, ...), ``path`` (dot notation) and
+    /// ``default`` (``None`` when the rule has none). ``MCPVerifier`` uses it
+    /// to check that every argument is read by some rule.
+    fn tool_rules(&self, py: Python<'_>, tool_name: &str) -> PyResult<Option<Py<PyAny>>> {
+        let Some(tool) = self.inner.tools.get(tool_name) else {
+            return Ok(None);
+        };
+        let json_loads = py.import("json")?.getattr("loads")?;
+        let mut fields: Vec<&String> = tool.extraction_rules.rules.keys().collect();
+        fields.sort();
+        let list = pyo3::types::PyList::empty(py);
+        for field in fields {
+            let rule = &tool.extraction_rules.rules[field].rule;
+            let entry = PyDict::new(py);
+            entry.set_item("field", field)?;
+            let source = serde_json::to_value(&rule.from)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            entry.set_item("source", source)?;
+            entry.set_item("path", &rule.path)?;
+            match &rule.default {
+                Some(value) => {
+                    let text = serde_json::to_string(value)
+                        .map_err(|e| py_validation_err(format!("Invalid default: {}", e)))?;
+                    entry.set_item("default", json_loads.call1((text,))?)?;
+                }
+                None => entry.set_item("default", py.None())?,
+            }
+            list.append(entry)?;
+        }
+        Ok(Some(list.into_any().unbind()))
+    }
+
     /// Extract constraints from an MCP tool call.
     ///
     /// Args:
@@ -4620,6 +4718,25 @@ impl PyCompiledMcpConfig {
             .extract_constraints(tool_name, &args_value)
             .map_err(|e| py_validation_err(e.to_string()))?;
 
+        // Preserve which values came from defaults.  The Python MCP adapter
+        // needs this to pass exactly the values that were authorized to the
+        // tool; path presence alone is insufficient for wildcard/index paths.
+        let mut defaulted_fields: Vec<String> = result
+            .traces
+            .iter()
+            .filter(|trace| {
+                trace.result.is_none()
+                    && self
+                        .inner
+                        .tools
+                        .get(tool_name)
+                        .and_then(|tool| tool.extraction_rules.rules.get(&trace.field))
+                        .is_some_and(|rule| rule.rule.default.is_some())
+            })
+            .map(|trace| trace.field.clone())
+            .collect();
+        defaulted_fields.sort();
+
         // Convert extracted constraints to Python dict
         let dict = PyDict::new(py);
         for (key, value) in result.constraints {
@@ -4633,6 +4750,7 @@ impl PyCompiledMcpConfig {
             warrant_base64: result.warrant_base64,
             signature_base64: result.signature_base64,
             approvals_base64: result.approvals_base64,
+            defaulted_fields,
         })
     }
 }
@@ -4650,6 +4768,9 @@ pub struct PyExtractionResult {
     signature_base64: Option<String>,
     #[pyo3(get)]
     approvals_base64: Vec<String>,
+    /// Constraint fields whose configured default supplied the extracted value.
+    #[pyo3(get)]
+    defaulted_fields: Vec<String>,
 }
 
 #[pymethods]
@@ -5572,7 +5693,7 @@ fn py_srl_commitment_digest(srl_bytes: &[u8]) -> [u8; 32] {
 ///   - Signature validity (verify-before-deserialize pattern)
 ///   - Approver is in the required set
 ///   - Request hash matches the expected value
-///   - Expiration with configurable clock tolerance
+///   - Strict expiration and configurable tolerance for future-approved timestamps
 ///   - Duplicate detection (one approval per approver key)
 ///   - DoS protection (max 2× approver count)
 ///   - Threshold satisfaction (m-of-n)
@@ -5582,7 +5703,8 @@ fn py_srl_commitment_digest(srl_bytes: &[u8]) -> [u8; 32] {
 ///     approvals: List of SignedApproval objects to verify
 ///     trusted_approvers: Public keys of accepted approvers
 ///     threshold: Minimum number of valid approvals required (default 1)
-///     clock_tolerance_secs: Tolerance for clock skew on expiration (default 30)
+///     clock_tolerance_secs: Tolerance for an approver whose clock runs ahead, applied to
+///         approved_at (default 30). Expiry itself is strict.
 ///
 /// Returns:
 ///     List of verified ApprovalPayload objects (one per valid approval)
@@ -5628,6 +5750,7 @@ fn py_verify_approvals(
         NotTrusted,
         Duplicate,
         Expired,
+        NotYetValid,
         HashMismatch,
     }
 
@@ -5637,7 +5760,8 @@ fn py_verify_approvals(
     let mut rejections: Vec<Rejection> = Vec::new();
 
     for approval in &approvals {
-        let payload = match approval.inner.verify() {
+        // Signature and structure here; the time checks below give precise reasons.
+        let payload = match approval.inner.verify_with_skew(u64::MAX) {
             Ok(p) => p,
             Err(_) => {
                 rejections.push(Rejection::InvalidSignature);
@@ -5659,8 +5783,14 @@ fn py_verify_approvals(
             continue;
         }
 
-        if payload.expires_at + clock_tolerance_secs < now {
+        // Expiry is strict, as for warrants at authorization. The tolerance
+        // only covers an approver whose clock runs ahead.
+        if now >= payload.expires_at {
             rejections.push(Rejection::Expired);
+            continue;
+        }
+        if payload.approved_at > now.saturating_add(clock_tolerance_secs) {
+            rejections.push(Rejection::NotYetValid);
             continue;
         }
 
@@ -5683,7 +5813,8 @@ fn py_verify_approvals(
             Rejection::InvalidSignature => "invalid signature on approval",
             Rejection::NotTrusted => "approver not in trusted set",
             Rejection::Duplicate => "duplicate approval from same approver",
-            Rejection::Expired => "approval expired (beyond clock tolerance)",
+            Rejection::Expired => "approval expired",
+            Rejection::NotYetValid => "approval dated in the future beyond clock tolerance",
             Rejection::HashMismatch => {
                 "request hash mismatch (approval was signed for a different request)"
             }
@@ -5695,7 +5826,7 @@ fn py_verify_approvals(
 
     // m-of-n: include rejection summary for diagnostics
     let mut parts = Vec::new();
-    let counts: [(usize, &str); 5] = [
+    let counts: [(usize, &str); 6] = [
         (
             rejections
                 .iter()
@@ -5723,6 +5854,13 @@ fn py_verify_approvals(
                 .filter(|r| matches!(r, Rejection::Expired))
                 .count(),
             "expired",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::NotYetValid))
+                .count(),
+            "dated in the future",
         ),
         (
             rejections
@@ -6150,7 +6288,7 @@ impl PyAuthorizer {
     ///
     /// Args:
     ///     trusted_roots: List of trusted root public keys. At least one required.
-    ///     clock_tolerance_secs: Clock tolerance in seconds (default: 30)
+    ///     clock_tolerance_secs: Tolerance for future-issued timestamps in seconds (default: 30)
     ///     pop_window_secs: PoP window size in seconds (default: 30)
     ///     pop_max_windows: Number of PoP windows to accept (default: 4)
     ///
@@ -6185,7 +6323,7 @@ impl PyAuthorizer {
         }
 
         let mut authorizer = RustAuthorizer::new()
-            .with_clock_tolerance(chrono::Duration::seconds(clock_tolerance_secs))
+            .with_clock_tolerance(clock_tolerance_from_secs(clock_tolerance_secs))
             .with_pop_window(pop_window_secs, pop_max_windows);
 
         let mut root_bytes = Vec::new();
@@ -6252,13 +6390,13 @@ impl PyAuthorizer {
         Ok(())
     }
 
-    /// Set the clock tolerance for expiration checks.
+    /// Set the clock tolerance for future-issued timestamps. Expiry remains strict.
     ///
     /// Args:
     ///     seconds: Clock tolerance in seconds
     fn set_clock_tolerance(&mut self, seconds: i64) {
         self.inner
-            .set_clock_tolerance(chrono::Duration::seconds(seconds));
+            .set_clock_tolerance(clock_tolerance_from_secs(seconds));
     }
 
     /// Set the PoP window configuration.

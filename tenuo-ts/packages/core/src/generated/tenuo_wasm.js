@@ -970,14 +970,32 @@ function parse_strict_json(json_text) {
 exports.parse_strict_json = parse_strict_json;
 
 /**
+ * Diagnose all capability-constraint failures without authorizing the call.
+ * @param {string} wire
+ * @param {string} tool
+ * @param {any} args_json
+ * @returns {any}
+ */
+function sdkDiagnoseConstraints(wire, tool, args_json) {
+    const ptr0 = passStringToWasm0(wire, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.sdkDiagnoseConstraints(ptr0, len0, ptr1, len1, args_json);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.sdkDiagnoseConstraints = sdkDiagnoseConstraints;
+
+/**
  * Decode and check an approval envelope. Not authorization.
- * @param {string} envelope
+ * @param {any} envelope
  * @returns {any}
  */
 function sdkInspectApproval(envelope) {
-    const ptr0 = passStringToWasm0(envelope, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.sdkInspectApproval(ptr0, len0);
+    const ret = wasm.sdkInspectApproval(envelope);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
