@@ -21,7 +21,6 @@ Usage:
 """
 
 import base64
-import contextlib
 import inspect
 import logging
 import types
@@ -126,7 +125,7 @@ def configure_tenuo(
             or through ``SecureAPIRouter``, router or app dependencies. Plain
             Starlette routes and mounts cannot carry a guard, so they fail too.
             ``require_warrant`` only checks that headers are present and does
-            not count. Checked once, when the app starts.
+            not count. Checked after startup hooks, before serving requests.
         exempt: Paths ``strict`` skips, matched exactly (a mount by its mount
             path). The app's OpenAPI and docs routes are always exempt; add
             public routes such as ``/health`` here.
@@ -158,6 +157,7 @@ def configure_tenuo(
 
     if hasattr(app, "state"):
         app.state.tenuo_config = _config
+        app.state.tenuo_strict_enabled = strict
 
     if strict:
         _install_strict_route_check(app, exempt)
@@ -217,23 +217,34 @@ def _has_tenuo_guard(dependant: Any) -> bool:
     return False
 
 
+def _is_builtin_docs_route(app: Any, route: Any) -> bool:
+    """Exempt FastAPI's docs handlers, not arbitrary routes at the same URLs."""
+    endpoint = getattr(route, "endpoint", None)
+    name = getattr(endpoint, "__name__", "")
+    urls = {
+        "openapi": getattr(app, "openapi_url", None),
+        "swagger_ui_html": getattr(app, "docs_url", None),
+        "swagger_ui_redirect": getattr(app, "swagger_ui_oauth2_redirect_url", None),
+        "redoc_html": getattr(app, "redoc_url", None),
+    }
+    methods = set(getattr(route, "methods", None) or ())
+    return (
+        getattr(endpoint, "__module__", None) == FastAPI.__module__
+        and getattr(endpoint, "__qualname__", None) == f"FastAPI.setup.<locals>.{name}"
+        and urls.get(name) is not None
+        and getattr(route, "path", None) == urls[name]
+        and "GET" in methods
+        and methods <= {"GET", "HEAD"}
+    )
+
+
 def _unguarded_routes(app: Any, exempt: Iterable[str]) -> List[str]:
     """Describe each non-exempt route without a TenuoGuard, e.g. ``"GET /items"``."""
     skip = set(exempt)
-    skip.update(
-        url
-        for url in (
-            getattr(app, "openapi_url", None),
-            getattr(app, "docs_url", None),
-            getattr(app, "redoc_url", None),
-            getattr(app, "swagger_ui_oauth2_redirect_url", None),
-        )
-        if url
-    )
     found: List[Tuple[str, str]] = []
     for route in _iter_app_routes(app):
         path = getattr(route, "path", None) or repr(route)
-        if path in skip:
+        if path in skip or _is_builtin_docs_route(app, route):
             continue
         dependant = getattr(route, "dependant", None)
         if dependant is not None and _has_tenuo_guard(dependant):
@@ -247,30 +258,47 @@ def _unguarded_routes(app: Any, exempt: Iterable[str]) -> List[str]:
     return [f"{label} {path}" for path, label in sorted(found)]
 
 
+class _StrictRouteCheckMiddleware:
+    """Validate the final route table before ASGI startup completes.
+
+    Checking the completion message includes all app and included-router
+    startup hooks, even routers included after ``configure_tenuo``. Raising
+    here lets the router unwind its lifespans and report startup failure.
+    HTTP and websocket requests pass through unchanged.
+    """
+
+    def __init__(self, app: Any, tenuo_app: Any) -> None:
+        self.app = app
+        self.tenuo_app = tenuo_app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "lifespan":
+            await self.app(scope, receive, send)
+            return
+
+        async def checked_send(message: Any) -> None:
+            if message["type"] == "lifespan.startup.complete" and self.tenuo_app.state.tenuo_strict_enabled:
+                unguarded = _unguarded_routes(self.tenuo_app, self.tenuo_app.state.tenuo_strict_exempt)
+            else:
+                unguarded = []
+            if unguarded:
+                raise ConfigurationError(
+                    "strict=True: these routes have no TenuoGuard (add one, use SecureAPIRouter, "
+                    "or list the path in exempt=): " + "; ".join(unguarded)
+                )
+            await send(message)
+
+        await self.app(scope, receive, checked_send)
+
+
 def _install_strict_route_check(app: Any, exempt: Iterable[str]) -> None:
     """Fail app startup while any non-exempt route lacks a TenuoGuard."""
-    router = getattr(app, "router", None)
-    if router is None or not hasattr(router, "lifespan_context"):
+    if not isinstance(app, FastAPI):
         raise ConfigurationError("strict=True needs a FastAPI app")
-    if getattr(app.state, "tenuo_strict_installed", False):
-        app.state.tenuo_strict_exempt = list(exempt)
-        return
-    app.state.tenuo_strict_installed = True
     app.state.tenuo_strict_exempt = list(exempt)
-    original = router.lifespan_context
-
-    @contextlib.asynccontextmanager
-    async def _strict_lifespan(lifespan_app: Any) -> Any:
-        unguarded = _unguarded_routes(app, app.state.tenuo_strict_exempt)
-        if unguarded:
-            raise ConfigurationError(
-                "strict=True: these routes have no TenuoGuard (add one, use SecureAPIRouter, "
-                "or list the path in exempt=): " + "; ".join(unguarded)
-            )
-        async with original(lifespan_app) as state:
-            yield state
-
-    router.lifespan_context = _strict_lifespan
+    if not getattr(app.state, "tenuo_strict_installed", False):
+        app.add_middleware(_StrictRouteCheckMiddleware, tenuo_app=app)
+        app.state.tenuo_strict_installed = True
 
 
 def get_tenuo_config() -> Dict[str, Any]:

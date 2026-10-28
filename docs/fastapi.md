@@ -170,8 +170,8 @@ configure_tenuo(
 - A route counts as guarded when `TenuoGuard` is anywhere in its dependency tree: on the route, through `SecureAPIRouter`, or in router or app `dependencies=`.
 - `require_warrant` only checks that the headers are present, so it does not count.
 - Plain Starlette routes, mounts (`StaticFiles`, sub-apps) and websocket routes without a guard fail too; list their paths in `exempt` if they are public.
-- The OpenAPI and docs routes (`/openapi.json`, `/docs`, `/docs/oauth2-redirect`, `/redoc`) are always exempt.
-- The check runs once at startup, so routes added after the app starts are not checked.
+- FastAPI's built-in OpenAPI and docs handlers are always exempt, including custom docs URLs. Application routes at those same URLs still need a guard or an explicit exemption.
+- The check runs after startup hooks and the lifespan setup complete, before requests are served. Routes added later while the app is serving are not checked.
 
 ### `TenuoGuard`
 
@@ -550,4 +550,3 @@ stack_b64 = encode_warrant_stack([root, child])
 - [Security](./security)  -- Threat model, best practices
 - [API Reference](./api-reference)  -- Full Python API documentation
 - [LangChain](./langchain)  -- Tool protection for LangChain
-

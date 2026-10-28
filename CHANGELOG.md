@@ -12,8 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **FastAPI `configure_tenuo(strict=True)` now does something.** It was
   accepted since v0.1.0-beta.1 but never read. The app now refuses to start
   while any route lacks a `TenuoGuard`, listing each one. `exempt=` names
-  public paths; docs routes are always exempt. `error_handler`, also never
-  called before, now receives each `TenuoError` and can return the response.
+  public paths; only FastAPI's built-in docs handlers are implicitly exempt,
+  not application routes at the same URLs. Checks include routes registered
+  by startup hooks. `error_handler`, also never called before, now receives
+  each `TenuoError` and can return the response.
 
 - **`tenuo.process`: run the command the warrant authorized.** `run` checks a
   structured call (`subcommand`, `flags`, `paths`, `cwd`, with `cwd` and
