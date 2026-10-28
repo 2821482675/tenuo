@@ -858,7 +858,7 @@ A command matches only when all of the following hold:
 
 Tabs are whitespace. `*` and `?` are literal arguments to this check; a shell that later runs the command may still expand them. Bash brace expansion is not POSIX word splitting: this check keeps `{a,b,c}` as one word, and a bash host may still expand it.
 
-Type 128 accepts some commands older verifiers rejected (quoted and escaped operator characters) and rejects some a Python `shlex` tokenizer accepted (a `#` that does not start a word, and command names that contain commas or brackets). A mixed fleet fails closed on the stricter side.
+Type 128 accepts some commands older verifiers rejected (quoted and escaped operator characters) and rejects some that older verifiers accepted (a path such as `/tmp/attacker/ls` when `allow` only lists bare `ls`, a `#` that does not start a word, and command names that contain commas or brackets). Because type ID 128 is unchanged on the wire, older Rust verifiers in a mixed fleet still accept path-qualified binaries for bare `allow` entries; every enforcement point MUST be upgraded before relying on literal command-word matching.
 
 **Implementations MUST reject attenuations not explicitly permitted in this matrix.**
 
