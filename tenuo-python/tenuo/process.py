@@ -47,10 +47,10 @@ from __future__ import annotations
 import functools
 import os
 import re
-import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .exceptions import AuthorizationDenied, ConfigurationError
@@ -90,6 +90,8 @@ class Program:
         subcommands: Whether the first word after the program is a subcommand.
         forced_flags: Flags always added after caller flags for a subcommand,
             for options that turn off code-running features of that subcommand.
+        supported_subcommands: The operations this executor understands. This
+            is a grammar limit; the warrant must separately authorize the call.
         min_version: Minimum ``(major, minor)`` version required by the profile.
     """
 
@@ -99,8 +101,26 @@ class Program:
     subcommands: bool = False
     forced_flags: Mapping[str, Tuple[str, ...]] = field(default_factory=dict)
     min_version: Optional[Tuple[int, int]] = None
+    supported_subcommands: Optional[Tuple[str, ...]] = None
+
+    def __post_init__(self) -> None:
+        # Profiles are trusted executor configuration, not mutable agent input.
+        object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
+        object.__setattr__(
+            self,
+            "forced_flags",
+            MappingProxyType({name: tuple(flags) for name, flags in self.forced_flags.items()}),
+        )
+        if self.supported_subcommands is not None:
+            if not self.subcommands:
+                raise ConfigurationError("supported_subcommands requires subcommands=True")
+            object.__setattr__(self, "supported_subcommands", tuple(self.supported_subcommands))
 
     def resolve(self) -> str:
+        return self._resolved_binary
+
+    @functools.cached_property
+    def _resolved_binary(self) -> str:
         path = self.binary or shutil.which(self.name)
         if not path or not os.path.isabs(path):
             raise ConfigurationError(f"{self.name}: no absolute binary path (found {path!r})")
@@ -114,7 +134,7 @@ class Program:
 # programs: core.fsmonitor on status, core.pager and diff.external on log and
 # diff, textconv and clean filters on diff. Command-line config wins over the
 # repository's, and an empty tree as the attribute source ignores the
-# worktree's .gitattributes (git 2.40+). Settings in .git/ itself (such as
+# worktree's .gitattributes (git 2.41+). Settings in .git/ itself (such as
 # .git/info/attributes) still apply, so keep .git/ out of the agent's file tools.
 # Network transports are off: this profile is for local repository commands.
 _GIT_CONFIG = {
@@ -138,7 +158,8 @@ _NO_DRIVERS = ("--no-ext-diff", "--no-textconv")
 GIT = Program(
     name="git",
     subcommands=True,
-    min_version=(2, 40),
+    min_version=(2, 41),
+    supported_subcommands=("status", "diff", "log"),
     env={
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -200,6 +221,8 @@ def run(
     if program.subcommands:
         if not subcommand or subcommand.startswith("-"):
             raise _deny(tool, f"{program.name} needs a subcommand")
+        if program.supported_subcommands is not None and subcommand not in program.supported_subcommands:
+            raise _deny(tool, f"{program.name} profile does not support subcommand {subcommand!r}")
     elif subcommand is not None:
         raise _deny(tool, f"{program.name} takes no subcommand")
 
@@ -248,14 +271,10 @@ def run_command(
     tool = kwargs.get("tool") or program.name
     from .constraints import Shlex
 
-    if not Shlex(allow=[program.name]).matches(command):
+    decision = Shlex(allow=[program.name]).check(command)
+    if not decision["allowed"]:
         raise _deny(tool, "command rejected by Shlex syntax check")
-    try:
-        words = shlex.split(command)
-    except ValueError as exc:
-        raise _deny(tool, f"cannot parse command: {exc}") from None
-    if any("{" in w or "}" in w for w in words):
-        raise _deny(tool, "brace expansion is not allowed")
+    words = decision["tokens"]
     if not words or words[0] != program.name:
         raise _deny(tool, f"command must start with {program.name!r}")
     words = words[1:]

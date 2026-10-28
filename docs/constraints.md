@@ -492,7 +492,15 @@ Subpath("/data", allow_equal=False)     # Require strictly under root
 | `Subpath("/data")` | `/etc/passwd` | No |
 | `Subpath("/data")` | `data/file.txt` | No (relative path) |
 
-**Attenuation:** Child root must be contained within parent root.
+`Subpath.matches()` and warrant matching also accept a list of absolute path
+strings. Every item must match; mixed types and nested lists fail. Empty lists
+match, so executors must supply actual implicit paths when callers omit them
+(`tenuo.process` uses the working directory). `contains()` remains a scalar
+path check.
+
+**Attenuation:** Child root must be contained within parent root. A Subpath can
+also narrow to `Subset` of contained path strings or `Exact` of a contained path
+string/list. The same rules apply in Rust, Python, and TypeScript.
 
 ```python
 # Parent: /data
@@ -786,7 +794,9 @@ run_command(bound, GIT, "git status && rm -rf ~", cwd="/workspace/repo")      # 
 - argv is exactly the checked values, with program-forced safety flags after
   caller flags and paths after `--`. The environment is fixed by the `Program`;
   nothing is inherited.
-- The `GIT` profile (requires Git 2.40+) stops repository config and
+- The `GIT` profile supports `status`, `diff`, and `log` and requires Git 2.41+.
+  This is the executor's supported grammar; the warrant must still authorize
+  every operation and argument. It stops repository config and
   `.gitattributes` from running programs (`core.fsmonitor`, pagers, external
   diff, textconv, filters), treats pathspecs literally
   (`GIT_LITERAL_PATHSPECS=1`), and turns off network transports
@@ -796,6 +806,14 @@ run_command(bound, GIT, "git status && rm -rf ~", cwd="/workspace/repo")      # 
   `Subset` of flags, a deeper `Subpath`.
 - Other programs: `Program(name="rg", env={...})`. The profile only blocks
   what it names, so check the program's own options that run code.
+
+The program profile is trusted application configuration. Its environment and
+forced options are copied at construction, and its executable is resolved once
+on first use. Keep the executable and its directory ancestry under trusted
+control. Agents supply the request, not the profile. `run_command` uses the
+shared core tokenizer's successful decision; no second shell parser or shell
+expansion runs between authorization and execution. Program profiles define
+execution semantics, while authorization continues to come from the warrant.
 
 ---
 

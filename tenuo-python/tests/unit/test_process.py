@@ -3,6 +3,8 @@
 import os
 import shutil
 import subprocess
+from dataclasses import replace
+from unittest.mock import patch
 
 import pytest
 
@@ -171,7 +173,6 @@ def test_delegated_warrant_is_narrower_and_cannot_widen(warrant, repo):
     [
         "git status && rm -rf ~",
         "git status; touch pwned",
-        "git log {--output=pwned,-1}",
         "git -c core.pager=sh log",
         "bash -c 'git status'",
         "git status 'unclosed",
@@ -199,10 +200,9 @@ def test_repository_config_cannot_run_programs(warrant, repo):
     gpg_helper.write_text(f"#!/bin/sh\ntouch {marker}.gpg\nexit 1\n")
     gpg_helper.chmod(0o755)
     # Write a commit carrying a forged gpgsig header before planting config hooks.
-    tree = (
-        subprocess.run(["git", "-C", str(repo), "write-tree"], capture_output=True, text=True, check=True)
-        .stdout.strip()
-    )
+    tree = subprocess.run(
+        ["git", "-C", str(repo), "write-tree"], capture_output=True, text=True, check=True
+    ).stdout.strip()
     raw_commit = (
         f"tree {tree}\n"
         "author t <t@t> 1700000000 +0000\n"
@@ -307,11 +307,69 @@ def test_literal_pathspecs_and_backslash_rejection(repo):
 
 def test_min_version_check_fails_closed(tmp_path):
     fake_git = tmp_path / "git"
-    fake_git.write_text("#!/bin/sh\necho 'git version 2.39.0'\n")
+    fake_git.write_text("#!/bin/sh\necho 'git version 2.40.0'\n")
     fake_git.chmod(0o755)
-    old_git = Program(name="git", binary=str(fake_git), subcommands=True, min_version=(2, 40))
-    with pytest.raises(ConfigurationError, match="2.40"):
+    old_git = replace(GIT, binary=str(fake_git))
+    with pytest.raises(ConfigurationError, match="2.41"):
         old_git.resolve()
+
+
+def test_profile_rejects_an_unsupported_operation_even_with_authority(warrant, repo):
+    assert warrant.allows(
+        "git",
+        {
+            "subcommand": "add",
+            "flags": [],
+            "paths": [str(repo)],
+            "cwd": str(repo),
+        },
+    )
+    with pytest.raises(AuthorizationDenied, match="does not support"):
+        git_run(warrant, repo, subcommand="add")
+
+
+def test_command_uses_the_core_tokens_for_the_authorized_argv(warrant, repo):
+    profile = Program(name="git", binary=shutil.which("git"), subcommands=True)
+    with (
+        patch("shlex.split", side_effect=AssertionError("second parser")),
+        patch("tenuo.process.subprocess.run", return_value=subprocess.CompletedProcess([], 0, b"", b"")) as execute,
+    ):
+        run_command(
+            warrant.bind(AGENT),
+            profile,
+            "git diff --stat -- 'a; b.txt'",
+            cwd=str(repo),
+            trusted_roots=[ROOT.public_key],
+        )
+    assert execute.call_args.args[0] == [
+        profile.resolve(),
+        "diff",
+        "--stat",
+        "--",
+        str(repo / "a; b.txt"),
+    ]
+
+
+def test_command_globs_and_braces_are_literal_paths(warrant, repo):
+    out = run_command(
+        warrant.bind(AGENT),
+        GIT,
+        "git diff --stat -- 'a*.py' '{app.py,other.py}'",
+        cwd=str(repo),
+        trusted_roots=[ROOT.public_key],
+    )
+    assert out.returncode == 0 and out.stdout == b""
+
+
+def test_profile_pins_binary_resolution_and_copies_configuration():
+    env = {"SETTING": "fixed"}
+    profile = Program(name="git", env=env)
+    env["SETTING"] = "changed"
+    assert profile.env["SETTING"] == "fixed"
+    with pytest.raises(TypeError):
+        profile.env["SETTING"] = "changed"
+    with patch("shutil.which", side_effect=["/usr/bin/git", "/untrusted/git"]):
+        assert profile.resolve() == profile.resolve() == os.path.realpath("/usr/bin/git")
 
 
 def test_program_without_subcommands(tmp_path):
