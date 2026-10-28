@@ -262,7 +262,10 @@ def _unguarded_routes(app: Any, exempt: Iterable[str]) -> List[str]:
         if methods:
             label = ",".join(sorted(m for m in methods if m != "HEAD") or sorted(methods))
         else:
-            label = "WEBSOCKET" if dependant is not None else "MOUNT"
+            from starlette.routing import WebSocketRoute
+
+            original_route = getattr(route, "original_route", route)
+            label = "WEBSOCKET" if isinstance(original_route, WebSocketRoute) else "MOUNT"
         found.append((path, label))
     return [f"{label} {path}" for path, label in sorted(found)]
 

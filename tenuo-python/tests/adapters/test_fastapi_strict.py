@@ -399,12 +399,19 @@ def test_root_mount_requires_and_accepts_an_explicit_exemption(kind, exemption, 
         _start(app)
 
 
-def test_websocket_without_guard_fails_startup():
+@pytest.mark.parametrize("kind", ["fastapi", "starlette"])
+def test_websocket_without_guard_fails_startup(kind):
     app = _app(strict=True)
 
-    @app.websocket("/ws")
     async def websocket(ws: WebSocket):
         await ws.accept()
+
+    if kind == "fastapi":
+        app.add_api_websocket_route("/ws", websocket)
+    else:
+        from starlette.routing import WebSocketRoute
+
+        app.router.routes.append(WebSocketRoute("/ws", websocket))
 
     with pytest.raises(ConfigurationError, match="WEBSOCKET /ws"):
         _start(app)
