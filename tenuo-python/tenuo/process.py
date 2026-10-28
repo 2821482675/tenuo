@@ -125,6 +125,11 @@ _GIT_CONFIG = {
     "core.sshCommand": "false",
     "core.editor": "false",
     "diff.external": "",
+    "log.showSignature": "false",
+    "gpg.program": "false",
+    "gpg.openpgp.program": "false",
+    "gpg.x509.program": "false",
+    "gpg.ssh.program": "false",
     "protocol.allow": "never",
 }
 _EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"

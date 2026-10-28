@@ -195,12 +195,43 @@ def test_repository_config_cannot_run_programs(warrant, repo):
     marker = repo.parent / "ran"
     alt_attr = repo / "alt.attributes"
     alt_attr.write_text("*.py diff=x filter=y\n")
+    gpg_helper = repo.parent / "gpg_helper.sh"
+    gpg_helper.write_text(f"#!/bin/sh\ntouch {marker}.gpg\nexit 1\n")
+    gpg_helper.chmod(0o755)
+    # Write a commit carrying a forged gpgsig header before planting config hooks.
+    tree = (
+        subprocess.run(["git", "-C", str(repo), "write-tree"], capture_output=True, text=True, check=True)
+        .stdout.strip()
+    )
+    raw_commit = (
+        f"tree {tree}\n"
+        "author t <t@t> 1700000000 +0000\n"
+        "committer t <t@t> 1700000000 +0000\n"
+        "gpgsig -----BEGIN PGP SIGNATURE-----\n \n -----END PGP SIGNATURE-----\n\n"
+        "signed\n"
+    ).encode()
+    commit_oid = (
+        subprocess.run(
+            ["git", "-C", str(repo), "hash-object", "-t", "commit", "-w", "--stdin"],
+            input=raw_commit,
+            capture_output=True,
+            check=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
+    git(repo, "update-ref", "HEAD", commit_oid)
+
     git(repo, "config", "core.fsmonitor", f"touch {marker}.fsmonitor; false")
     git(repo, "config", "core.pager", f"touch {marker}.pager; cat")
     git(repo, "config", "core.attributesFile", str(alt_attr))
     git(repo, "config", "diff.x.textconv", f"touch {marker}.textconv; cat")
     git(repo, "config", "diff.external", f"touch {marker}.extdiff; cat")
     git(repo, "config", "filter.y.clean", f"touch {marker}.clean; cat")
+    git(repo, "config", "log.showSignature", "true")
+    git(repo, "config", "format.pretty", "%G? %s")
+    for key in ("gpg.program", "gpg.openpgp.program", "gpg.x509.program", "gpg.ssh.program"):
+        git(repo, "config", key, str(gpg_helper))
     git(repo, "config", "protocol.file.allow", "always")
     (repo / ".gitattributes").write_text("*.py diff=x filter=y\n")
     (repo / "app.py").write_text("print('changed')\n")
@@ -236,9 +267,11 @@ def test_repository_config_cannot_run_programs(warrant, repo):
     )
     assert sorted(p.name for p in repo.parent.glob("ran.*")) == []
 
-    # Control: the same repository runs the planted fsmonitor under a plain git call.
+    # Control: the same repository runs the planted fsmonitor and gpg helper under plain git calls.
     subprocess.run(["git", "status"], cwd=repo, capture_output=True, check=False)
+    subprocess.run(["git", "--no-pager", "log", "-1"], cwd=repo, capture_output=True, check=False)
     assert (repo.parent / "ran.fsmonitor").exists()
+    assert (repo.parent / "ran.gpg").exists()
 
 
 def test_literal_pathspecs_and_backslash_rejection(repo):
