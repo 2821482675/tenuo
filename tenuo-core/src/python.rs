@@ -1641,12 +1641,21 @@ impl PySubpath {
     /// Alias for contains() for consistency with other constraints.
     ///
     /// Args:
-    ///     path: The path to check.
+    ///     path: The path string or list of path strings to check.
     ///
     /// Returns:
-    ///     True if the path is safely contained, False otherwise.
-    fn matches(&self, path: &str) -> PyResult<bool> {
-        self.contains(path)
+    ///     True if the path(s) are safely contained, False otherwise.
+    fn matches(&self, path: &Bound<'_, PyAny>) -> PyResult<bool> {
+        if let Ok(s) = path.extract::<String>() {
+            return self.contains(&s);
+        }
+        if let Ok(list) = path.extract::<Vec<String>>() {
+            let cv = ConstraintValue::List(list.into_iter().map(ConstraintValue::String).collect());
+            return self.inner.matches(&cv).map_err(to_py_err);
+        }
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "path must be a string or list of strings",
+        ))
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.

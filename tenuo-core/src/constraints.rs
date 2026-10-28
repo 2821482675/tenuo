@@ -761,23 +761,65 @@ impl Constraint {
             // CEL follows conjunction rule
             (Constraint::Cel(parent), Constraint::Cel(child)) => parent.validate_attenuation(child),
 
-            // Subpath can narrow to Subpath (narrower root) or Exact
+            // Subpath can narrow to Subpath (narrower root), Subset (all paths contained), or Exact
             (Constraint::Subpath(parent), Constraint::Subpath(child)) => {
                 parent.validate_attenuation(child)
             }
+            (Constraint::Subpath(parent), Constraint::Subset(child_subset)) => {
+                for item in &child_subset.allowed {
+                    match item.as_str() {
+                        Some(path_str) => {
+                            if !parent.contains_path(path_str)? {
+                                return Err(Error::PathNotContained {
+                                    path: path_str.to_string(),
+                                    root: parent.root.clone(),
+                                });
+                            }
+                        }
+                        None => {
+                            return Err(Error::IncompatibleConstraintTypes {
+                                parent_type: "Subpath".to_string(),
+                                child_type: "Subset (non-string)".to_string(),
+                            });
+                        }
+                    }
+                }
+                Ok(())
+            }
             (Constraint::Subpath(parent), Constraint::Exact(child_exact)) => {
-                match child_exact.value.as_str() {
-                    Some(path_str) => {
+                match &child_exact.value {
+                    ConstraintValue::String(path_str) => {
                         if parent.contains_path(path_str)? {
                             Ok(())
                         } else {
                             Err(Error::PathNotContained {
-                                path: path_str.to_string(),
+                                path: path_str.clone(),
                                 root: parent.root.clone(),
                             })
                         }
                     }
-                    None => Err(Error::IncompatibleConstraintTypes {
+                    ConstraintValue::List(items) => {
+                        for item in items {
+                            match item.as_str() {
+                                Some(path_str) => {
+                                    if !parent.contains_path(path_str)? {
+                                        return Err(Error::PathNotContained {
+                                            path: path_str.to_string(),
+                                            root: parent.root.clone(),
+                                        });
+                                    }
+                                }
+                                None => {
+                                    return Err(Error::IncompatibleConstraintTypes {
+                                        parent_type: "Subpath".to_string(),
+                                        child_type: "Exact (non-string list item)".to_string(),
+                                    });
+                                }
+                            }
+                        }
+                        Ok(())
+                    }
+                    _ => Err(Error::IncompatibleConstraintTypes {
                         parent_type: "Subpath".to_string(),
                         child_type: "Exact (non-string)".to_string(),
                     }),
@@ -2492,11 +2534,23 @@ impl Subpath {
 
     /// Check if a value satisfies the Subpath constraint.
     ///
-    /// The value must be a string containing an absolute path.
+    /// The value must be a string containing an absolute path, or a list of
+    /// strings where every element is an absolute path contained within `root`.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
-        match value.as_str() {
-            Some(path_str) => self.contains_path(path_str),
-            None => Ok(false),
+        match value {
+            ConstraintValue::String(path_str) => self.contains_path(path_str),
+            ConstraintValue::List(list) => {
+                for item in list {
+                    let Some(path_str) = item.as_str() else {
+                        return Ok(false);
+                    };
+                    if !self.contains_path(path_str)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
         }
     }
 
@@ -6079,6 +6133,36 @@ mod tests {
         assert!(sp.matches(&"/data/file.txt".into()).unwrap());
         assert!(!sp.matches(&"/etc/passwd".into()).unwrap());
         assert!(!sp.matches(&123.into()).unwrap()); // Non-string returns false
+
+        // List of paths: every item must be a contained string
+        let ok_list = ConstraintValue::List(vec![
+            ConstraintValue::String("/data/a.txt".into()),
+            ConstraintValue::String("/data/sub/b.txt".into()),
+        ]);
+        assert!(sp.matches(&ok_list).unwrap());
+
+        let bad_list = ConstraintValue::List(vec![
+            ConstraintValue::String("/data/a.txt".into()),
+            ConstraintValue::String("/etc/passwd".into()),
+        ]);
+        assert!(!sp.matches(&bad_list).unwrap());
+
+        let non_str_list = ConstraintValue::List(vec![ConstraintValue::Integer(1)]);
+        assert!(!sp.matches(&non_str_list).unwrap());
+
+        // Subpath -> Subset and Subpath -> Exact(List) attenuation
+        let parent = Constraint::Subpath(sp);
+        let child_subset = Constraint::Subset(Subset::new(["/data/a.txt", "/data/b.txt"]));
+        assert!(parent.validate_attenuation(&child_subset).is_ok());
+
+        let bad_subset = Constraint::Subset(Subset::new(["/data/a.txt", "/etc/passwd"]));
+        assert!(parent.validate_attenuation(&bad_subset).is_err());
+
+        let child_exact_list = Constraint::Exact(Exact::new(ok_list));
+        assert!(parent.validate_attenuation(&child_exact_list).is_ok());
+
+        let bad_exact_list = Constraint::Exact(Exact::new(bad_list));
+        assert!(parent.validate_attenuation(&bad_exact_list).is_err());
     }
 
     // -------------------------------------------------------------------------
