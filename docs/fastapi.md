@@ -150,6 +150,32 @@ configure_tenuo(
 | `app` | `FastAPI` | *required* | FastAPI application instance |
 | `trusted_issuers` | `List[PublicKey]` | `None` | Trusted warrant issuers (**required in production**) |
 | `expose_error_details` | `bool` | `False` | Include detailed errors in response |
+| `strict` | `bool` | `False` | Refuse to start while any route has no `TenuoGuard` |
+| `exempt` | `Iterable[str]` | `()` | Paths `strict` skips (docs routes are always exempt) |
+| `error_handler` | `Callable[[Exception], Any]` | `None` | Called with each `TenuoError`; a returned `Response` replaces the default |
+
+#### Strict mode
+
+Every route opts in to Tenuo, so a route added without a guard is open. With `strict=True` the app checks its routes when it starts and raises `ConfigurationError` listing each route that has no `TenuoGuard`:
+
+```python
+configure_tenuo(
+    app,
+    trusted_issuers=[issuer_pubkey],
+    strict=True,
+    exempt=["/health"],  # public by design
+)
+```
+
+- A route counts as guarded when `TenuoGuard` is anywhere in its dependency tree: on the route, through `SecureAPIRouter`, or in router or app `dependencies=`.
+- `require_warrant` only checks that the headers are present, so it does not count.
+- Plain Starlette routes, mounts (`StaticFiles`, sub-apps) and websocket routes without a guard fail too; list their paths in `exempt` if they are public.
+- A public root mount uses `exempt=["/"]`; Starlette's empty root-mount path (`""`) is accepted as an alias.
+- FastAPI's built-in OpenAPI and docs handlers are always exempt, including custom docs URLs. Application routes at those same URLs still need a guard or an explicit exemption.
+- The check runs after startup hooks and the lifespan setup complete, before requests are served. Routes added later while the app is serving are not checked.
+- Strict validation requires ASGI lifespan/startup to be enabled. With `uvicorn --lifespan off` the startup check does not run, so `strict=True` cannot detect unguarded routes.
+
+Synchronous `error_handler` callbacks run in the framework's worker thread pool so blocking I/O does not stall the event loop. Async callbacks are awaited normally, as are awaitables returned by sync callbacks.
 
 ### `TenuoGuard`
 
@@ -528,4 +554,3 @@ stack_b64 = encode_warrant_stack([root, child])
 - [Security](./security)  -- Threat model, best practices
 - [API Reference](./api-reference)  -- Full Python API documentation
 - [LangChain](./langchain)  -- Tool protection for LangChain
-

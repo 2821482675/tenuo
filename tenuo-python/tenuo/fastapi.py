@@ -28,7 +28,7 @@ import typing
 import uuid
 
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Awaitable, Callable, Dict, Iterable, Iterator, List, Optional, Tuple, Union
 
 from tenuo_core import PublicKey, Warrant  # type: ignore[import-untyped]
 
@@ -36,6 +36,7 @@ from tenuo._enforcement import EnforcementResult
 from tenuo.approval import ApprovalRequired
 from tenuo.exceptions import (
     ApprovalGateTriggered,
+    ConfigurationError,
     DeserializationError,
     ErrorCode,
     InsufficientApprovals,
@@ -48,7 +49,8 @@ logger = logging.getLogger("tenuo.fastapi")
 # Use string forward refs or try import, FastAPI must be installed
 try:
     from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, status
-    from fastapi.responses import JSONResponse
+    from fastapi.concurrency import run_in_threadpool
+    from fastapi.responses import JSONResponse, Response
     from fastapi.security import APIKeyHeader
 
     FASTAPI_AVAILABLE = True
@@ -63,6 +65,8 @@ except ImportError:
     Request = Any  # type: ignore
     status = Any  # type: ignore
     JSONResponse = Any  # type: ignore
+    Response = Any  # type: ignore
+    run_in_threadpool = Any  # type: ignore
     APIKeyHeader = Any  # type: ignore
     FASTAPI_AVAILABLE = False
 
@@ -105,6 +109,7 @@ def configure_tenuo(
     trusted_issuers: Optional[List[PublicKey]] = None,
     runtime: Optional[Any] = None,
     strict: bool = False,
+    exempt: Iterable[str] = (),
     error_handler: Optional[Callable[[Exception], Any]] = None,
     expose_error_details: bool = False,
 ) -> None:
@@ -117,8 +122,18 @@ def configure_tenuo(
         runtime: Optional holder ``Runtime``. When set, inbound verify uses its
             authorizer, signed revocation list, and receipt outbox. Roots fall
             back to ``runtime.trusted_roots`` when ``trusted_issuers`` is omitted.
-        strict: If True, require all routes to have Tenuo protection
-        error_handler: Custom error handler for authorization failures
+        strict: If True, the app refuses to start (``ConfigurationError`` at
+            startup) while any route lacks a ``TenuoGuard`` dependency, directly
+            or through ``SecureAPIRouter``, router or app dependencies. Plain
+            Starlette routes and mounts cannot carry a guard, so they fail too.
+            ``require_warrant`` only checks that headers are present and does
+            not count. Checked after startup hooks, before serving requests.
+        exempt: Paths ``strict`` skips, matched exactly (a mount by its mount
+            path). The app's OpenAPI and docs routes are always exempt; add
+            public routes such as ``/health`` here.
+        error_handler: Called with each ``TenuoError`` the app handles. If it
+            returns (or awaits to) a ``Response``, that response is sent;
+            otherwise the default JSON error response is used.
         expose_error_details: If True, include constraint details in error responses.
                               SECURITY: Keep False in production to prevent information leakage.
 
@@ -144,6 +159,10 @@ def configure_tenuo(
 
     if hasattr(app, "state"):
         app.state.tenuo_config = _config
+        app.state.tenuo_strict_enabled = strict
+
+    if strict:
+        _install_strict_route_check(app, exempt)
 
     if not hasattr(app, "exception_handler"):
         return
@@ -152,6 +171,15 @@ def configure_tenuo(
     @app.exception_handler(TenuoError)
     async def tenuo_error_handler(request: Request, exc: TenuoError):
         """Handle TenuoError exceptions with canonical wire codes."""
+        if error_handler is not None:
+            if _is_async_callable(error_handler):
+                custom = error_handler(exc)
+            else:
+                custom = await run_in_threadpool(error_handler, exc)
+            if inspect.isawaitable(custom):
+                custom = await custom
+            if isinstance(custom, Response):
+                return custom
         wire_code = exc.get_wire_code()
         if wire_code in (ErrorCode.INSUFFICIENT_APPROVALS, ErrorCode.APPROVAL_GATE_TRIGGERED):
             http_status = status.HTTP_409_CONFLICT
@@ -166,6 +194,123 @@ def configure_tenuo(
                 "details": exc.details if expose_error_details else {},
             },
         )
+
+
+def _iter_app_routes(app: Any) -> Iterator[Any]:
+    """Yield every route the app serves, with prefixes and included-router deps applied.
+
+    FastAPI 0.120+ includes routers lazily, so ``app.routes`` holds router
+    references; ``iter_route_contexts`` expands them. Older versions copy
+    included routes into ``app.routes`` directly.
+    """
+    try:
+        from fastapi.routing import iter_route_contexts  # type: ignore[attr-defined]
+    except ImportError:
+        yield from app.routes
+        return
+    yield from iter_route_contexts(app.routes)
+
+
+def _has_tenuo_guard(dependant: Any) -> bool:
+    """True if a TenuoGuard appears anywhere in the dependency tree."""
+    stack = [dependant]
+    while stack:
+        dep = stack.pop()
+        if isinstance(getattr(dep, "call", None), TenuoGuard):
+            return True
+        stack.extend(getattr(dep, "dependencies", None) or [])
+    return False
+
+
+def _is_builtin_docs_route(app: Any, route: Any) -> bool:
+    """Exempt FastAPI's docs handlers, not arbitrary routes at the same URLs."""
+    endpoint = getattr(route, "endpoint", None)
+    name = getattr(endpoint, "__name__", "")
+    urls = {
+        "openapi": getattr(app, "openapi_url", None),
+        "swagger_ui_html": getattr(app, "docs_url", None),
+        "swagger_ui_redirect": getattr(app, "swagger_ui_oauth2_redirect_url", None),
+        "redoc_html": getattr(app, "redoc_url", None),
+    }
+    methods = set(getattr(route, "methods", None) or ())
+    return (
+        getattr(endpoint, "__module__", None) == FastAPI.__module__
+        and getattr(endpoint, "__qualname__", None) == f"FastAPI.setup.<locals>.{name}"
+        and urls.get(name) is not None
+        and getattr(route, "path", None) == urls[name]
+        and "GET" in methods
+        and methods <= {"GET", "HEAD"}
+    )
+
+
+def _unguarded_routes(app: Any, exempt: Iterable[str]) -> List[str]:
+    """Describe each non-exempt route without a TenuoGuard, e.g. ``"GET /items"``."""
+    skip = {"/" if path == "" else path for path in exempt}
+    found: List[Tuple[str, str]] = []
+    for route in _iter_app_routes(app):
+        path = getattr(route, "path", None)
+        if path == "":
+            path = "/"  # Starlette represents root mounts with an empty path.
+        elif path is None:
+            path = repr(route)
+        if path in skip or _is_builtin_docs_route(app, route):
+            continue
+        dependant = getattr(route, "dependant", None)
+        if dependant is not None and _has_tenuo_guard(dependant):
+            continue
+        methods = getattr(route, "methods", None)
+        if methods:
+            label = ",".join(sorted(m for m in methods if m != "HEAD") or sorted(methods))
+        else:
+            from starlette.routing import WebSocketRoute
+
+            original_route = getattr(route, "original_route", route)
+            label = "WEBSOCKET" if isinstance(original_route, WebSocketRoute) else "MOUNT"
+        found.append((path, label))
+    return [f"{label} {path}" for path, label in sorted(found)]
+
+
+class _StrictRouteCheckMiddleware:
+    """Validate the final route table before ASGI startup completes.
+
+    Checking the completion message includes all app and included-router
+    startup hooks, even routers included after ``configure_tenuo``. Raising
+    here lets the router unwind its lifespans and report startup failure.
+    HTTP and websocket requests pass through unchanged.
+    """
+
+    def __init__(self, app: Any, tenuo_app: Any) -> None:
+        self.app = app
+        self.tenuo_app = tenuo_app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "lifespan":
+            await self.app(scope, receive, send)
+            return
+
+        async def checked_send(message: Any) -> None:
+            if message["type"] == "lifespan.startup.complete" and self.tenuo_app.state.tenuo_strict_enabled:
+                unguarded = _unguarded_routes(self.tenuo_app, self.tenuo_app.state.tenuo_strict_exempt)
+            else:
+                unguarded = []
+            if unguarded:
+                raise ConfigurationError(
+                    "strict=True: these routes have no TenuoGuard (add one, use SecureAPIRouter, "
+                    "or list the path in exempt=): " + "; ".join(unguarded)
+                )
+            await send(message)
+
+        await self.app(scope, receive, checked_send)
+
+
+def _install_strict_route_check(app: Any, exempt: Iterable[str]) -> None:
+    """Fail app startup while any non-exempt route lacks a TenuoGuard."""
+    if not isinstance(app, FastAPI):
+        raise ConfigurationError("strict=True needs a FastAPI app")
+    app.state.tenuo_strict_exempt = list(exempt)
+    if not getattr(app.state, "tenuo_strict_installed", False):
+        app.add_middleware(_StrictRouteCheckMiddleware, tenuo_app=app)
+        app.state.tenuo_strict_installed = True
 
 
 def get_tenuo_config() -> Dict[str, Any]:

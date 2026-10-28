@@ -195,6 +195,7 @@ jobs:
               pytest tenuo-python/tests/adapters/test_fastapi_integration.py \
                 tenuo-python/tests/adapters/test_fastapi_delegation.py \
                 tenuo-python/tests/adapters/test_fastapi_secure_router.py \
+                tenuo-python/tests/adapters/test_fastapi_strict.py \
                 -v --tb=short
               ;;
             google_adk)
