@@ -315,20 +315,26 @@ fn path_within_root(subpath: &crate::constraints::Subpath, token: &str) -> bool 
     subpath.contains_path(&joined).unwrap_or(false)
 }
 
-fn argument_within_root(
-    subpath: &crate::constraints::Subpath,
-    arg: &str,
-    after_double_dash: bool,
-) -> bool {
-    if after_double_dash || !arg.starts_with('-') || arg == "-" {
-        return if arg == "-" && !after_double_dash {
-            true
-        } else {
-            path_within_root(subpath, arg)
-        };
+fn argument_within_root(subpath: &crate::constraints::Subpath, arg: &str) -> bool {
+    if arg == "-" || arg == "--" {
+        return true;
     }
-    if let Some((_, val)) = arg.split_once('=') {
-        return path_within_root(subpath, val);
+    if !arg.starts_with('-') {
+        return path_within_root(subpath, arg);
+    }
+    if let Some((opt, val)) = arg.split_once('=') {
+        let name = if let Some(long) = opt.strip_prefix("--") {
+            long
+        } else {
+            &opt[1..]
+        };
+        if !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return path_within_root(subpath, val);
+        }
     }
     if arg.contains('~') {
         return false;
@@ -443,13 +449,8 @@ pub fn check_within(allow: &[String], within: Option<&str>, command: &str) -> Sh
         );
     }
     if let Some(ref subpath) = subpath {
-        let mut after_double_dash = false;
         for word in &words[1..] {
-            if !after_double_dash && word == "--" {
-                after_double_dash = true;
-                continue;
-            }
-            if !argument_within_root(subpath, word, after_double_dash) {
+            if !argument_within_root(subpath, word) {
                 return denied(
                     format!("path '{word}' is outside '{}'", subpath.root),
                     ShlexCheck {
@@ -663,6 +664,21 @@ mod tests {
             "grep --file=/etc/x notes.txt"
         ));
         assert!(!command_allowed_within(&allow, within, "tar -xvf/etc/x"));
+        assert!(!command_allowed_within(
+            &allow,
+            within,
+            "tar -xvf/etc/x=archive"
+        ));
+        assert!(!command_allowed_within(
+            &allow,
+            within,
+            "grep -f../secret=patterns notes.txt"
+        ));
+        assert!(!command_allowed_within(
+            &allow,
+            within,
+            "grep -e -- -f/etc/passwd notes.txt"
+        ));
         assert!(!command_allowed_within(
             &allow,
             within,

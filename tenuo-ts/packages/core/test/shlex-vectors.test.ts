@@ -60,5 +60,9 @@ describe("shlex shared vectors", () => {
     const outside = checkShlex(["cat"], "cat /etc/hostname", "/work");
     expect(outside.allowed).toBe(false);
     expect(outside.reason).toBe("path '/etc/hostname' is outside '/work'");
+
+    expect(() =>
+      shlex(["cat"], { withn: "/work" } as unknown as { within?: string }),
+    ).toThrow(/unknown option "withn"/);
   });
 });

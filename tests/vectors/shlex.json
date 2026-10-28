@@ -45,6 +45,8 @@
     {"name": "within rejects dotdot escape", "allow": ["cat", "grep"], "within": "/work", "command": "cat ../secret", "matches": false},
     {"name": "within rejects tilde expansion", "allow": ["cat"], "within": "/work", "command": "cat ~/.ssh/id_rsa", "matches": false},
     {"name": "within rejects option-attached path outside root", "allow": ["grep"], "within": "/work", "command": "grep -f/etc/x notes.txt", "matches": false},
+    {"name": "within rejects option-attached path after double dash", "allow": ["grep"], "within": "/work", "command": "grep -e -- -f/etc/passwd notes.txt", "matches": false},
+    {"name": "within rejects option-attached path containing equals", "allow": ["grep"], "within": "/work", "command": "grep -f../secret=patterns notes.txt", "matches": false},
     {"name": "within allows option-attached path inside root", "allow": ["grep"], "within": "/work", "command": "grep -f/work/patterns.txt notes.txt", "matches": true}
   ]
 }

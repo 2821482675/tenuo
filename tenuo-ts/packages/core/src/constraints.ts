@@ -256,11 +256,12 @@ export function shlex(
   allow: readonly string[],
   options?: { readonly within?: string },
 ): ShlexConstraint {
+  rejectUnknownOptions("shlex", options, ["within"]);
   if (allow.length === 0) {
     throw new TenuoConfigurationError("tenuo.shlex() requires at least one allowed command");
   }
   if (options?.within !== undefined) {
-    if (!options.within.startsWith("/")) {
+    if (typeof options.within !== "string" || !options.within.startsWith("/")) {
       throw new TenuoConfigurationError("tenuo.shlex() within must be an absolute path");
     }
     return { kind: "shlex", allow, within: options.within };

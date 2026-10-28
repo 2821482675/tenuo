@@ -301,11 +301,20 @@ fn json_to_constraint(val: &JsonValue) -> Option<Constraint> {
         return Some(Constraint::Wildcard(Wildcard));
     }
     if let Some(sh) = obj.get("shlex").and_then(|v| v.as_object()) {
-        if let Some(arr) = sh.get("allow").and_then(|v| v.as_array()) {
-            let allow: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
-            let within = sh.get("within").and_then(|v| v.as_str()).map(String::from);
-            return Some(Constraint::Shlex(Shlex { allow, within }));
+        let arr = sh.get("allow").and_then(|v| v.as_array())?;
+        let mut allow = Vec::with_capacity(arr.len());
+        for item in arr {
+            allow.push(item.as_str()?.to_string());
         }
+        if allow.is_empty() {
+            return None;
+        }
+        let shlex = match sh.get("within") {
+            None | Some(JsonValue::Null) => Shlex::new(allow),
+            Some(JsonValue::String(root)) => Shlex::with_within(allow, root.clone()).ok()?,
+            Some(_) => return None,
+        };
+        return Some(Constraint::Shlex(shlex));
     }
     None
 }
@@ -347,18 +356,11 @@ fn parse_approval_gates_json(val: &serde_json::Value) -> Option<ApprovalGateMap>
                     if ag_val.as_str() == Some("all") {
                         args.insert(arg.clone(), ArgApprovalGate::All);
                     } else if let Some(inner) = ag_val.as_object().and_then(|o| o.get("exempt")) {
-                        // If the inner constraint is unrecognised or rejected by ArgApprovalGate::exempt
-                        // (e.g. Wildcard, Any, Not, Cel, Unknown), the gate is silently skipped and
-                        // the argument is left ungated. This is intentional for the WASM builder path:
-                        // invalid exempt constraints are caught here at warrant-creation time rather than
-                        // propagating a broken gate to the enforcer. The Python binding raises ValueError
-                        // for the same invalid inner constraint types.
-                        if let Some(c) = json_to_constraint(inner) {
-                            if let Ok(gate) = ArgApprovalGate::exempt(c) {
-                                args.insert(arg.clone(), gate);
-                            }
-                        }
-                    } else if let Some(c) = json_to_constraint(ag_val) {
+                        let c = json_to_constraint(inner)?;
+                        let gate = ArgApprovalGate::exempt(c).ok()?;
+                        args.insert(arg.clone(), gate);
+                    } else {
+                        let c = json_to_constraint(ag_val)?;
                         args.insert(arg.clone(), ArgApprovalGate::Constraint(c));
                     }
                 }
@@ -1924,31 +1926,37 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                     }
                     // Shlex constraint (shell command safety)
                     else if obj.contains_key("shlex") {
-                        let shlex_obj = obj.get("shlex");
-                        if let Some(inner) = shlex_obj.and_then(|v| v.as_object()) {
-                            // Accept both "allow" (canonical) and "allowed" (openclaw SDK alias)
-                            let allow_arr = inner.get("allow")
-                                .or_else(|| inner.get("allowed"))
-                                .and_then(|v| v.as_array());
-                            if let Some(arr) = allow_arr {
-                                let allow: Vec<String> = arr.iter()
-                                    .filter_map(|a| a.as_str().map(|s| s.to_string()))
-                                    .collect();
-                                let within = inner
-                                    .get("within")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
-                                if !allow.is_empty() {
-                                    let sh = match within {
-                                        Some(root) => Shlex::with_within(allow, root).ok(),
-                                        None => Some(Shlex::new(allow)),
-                                    };
-                                    if let Some(sh) = sh {
-                                        constraint_set.insert(field.clone(), Constraint::Shlex(sh));
-                                    }
-                                }
-                            }
+                        let inner = obj
+                            .get("shlex")
+                            .and_then(|v| v.as_object())
+                            .ok_or_else(|| format!("shlex constraint for field '{field}' must be an object"))?;
+                        // Accept both "allow" (canonical) and "allowed" (openclaw SDK alias)
+                        let arr = inner
+                            .get("allow")
+                            .or_else(|| inner.get("allowed"))
+                            .and_then(|v| v.as_array())
+                            .ok_or_else(|| format!("shlex constraint for field '{field}' requires an 'allow' array"))?;
+                        let mut allow = Vec::with_capacity(arr.len());
+                        for item in arr {
+                            let s = item
+                                .as_str()
+                                .ok_or_else(|| format!("shlex allow entries for field '{field}' must be strings"))?;
+                            allow.push(s.to_string());
                         }
+                        if allow.is_empty() {
+                            return Err(format!(
+                                "shlex constraint for field '{field}' requires at least one allowed command"
+                            ));
+                        }
+                        let sh = match inner.get("within") {
+                            None | Some(JsonValue::Null) => Shlex::new(allow),
+                            Some(JsonValue::String(root)) => Shlex::with_within(allow, root.clone())
+                                .map_err(|e| format!("invalid shlex 'within' for field '{field}': {e}"))?,
+                            Some(_) => {
+                                return Err(format!("shlex 'within' for field '{field}' must be a string"));
+                            }
+                        };
+                        constraint_set.insert(field.clone(), Constraint::Shlex(sh));
                     }
                     // Type-keyed dispatch: handles { "type": "Shlex", "allowed": [...] } etc.
                     // Accepts the openclaw SDK's typed format directly (camelCase and snake_case).
@@ -2052,30 +2060,32 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                             }
                             "Shlex" => {
                                 // Accepts both "allowed" (openclaw) and "allow" (canonical)
-                                let allow_arr = obj.get("allowed")
+                                let arr = obj
+                                    .get("allowed")
                                     .or_else(|| obj.get("allow"))
-                                    .and_then(|v| v.as_array());
-                                if let Some(arr) = allow_arr {
-                                    let cmds: Vec<String> = arr.iter()
-                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                        .collect();
-                                    let within = obj
-                                        .get("within")
-                                        .and_then(|v| v.as_str())
-                                        .map(|s| s.to_string());
-                                    if !cmds.is_empty() {
-                                        let sh = match within {
-                                            Some(root) => Shlex::with_within(cmds, root).ok(),
-                                            None => Some(Shlex::new(cmds)),
-                                        };
-                                        if let Some(sh) = sh {
-                                            constraint_set.insert(
-                                                field.clone(),
-                                                Constraint::Shlex(sh),
-                                            );
-                                        }
-                                    }
+                                    .and_then(|v| v.as_array())
+                                    .ok_or_else(|| format!("Shlex constraint for field '{field}' requires an 'allow' array"))?;
+                                let mut cmds = Vec::with_capacity(arr.len());
+                                for item in arr {
+                                    let s = item
+                                        .as_str()
+                                        .ok_or_else(|| format!("Shlex allow entries for field '{field}' must be strings"))?;
+                                    cmds.push(s.to_string());
                                 }
+                                if cmds.is_empty() {
+                                    return Err(format!(
+                                        "Shlex constraint for field '{field}' requires at least one allowed command"
+                                    ));
+                                }
+                                let sh = match obj.get("within") {
+                                    None | Some(JsonValue::Null) => Shlex::new(cmds),
+                                    Some(JsonValue::String(root)) => Shlex::with_within(cmds, root.clone())
+                                        .map_err(|e| format!("invalid Shlex 'within' for field '{field}': {e}"))?,
+                                    Some(_) => {
+                                        return Err(format!("Shlex 'within' for field '{field}' must be a string"));
+                                    }
+                                };
+                                constraint_set.insert(field.clone(), Constraint::Shlex(sh));
                             }
                             "UrlSafe" => {
                                 let mut us = UrlSafe::new();
@@ -2254,8 +2264,8 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
 
     // Wire approval gates into extensions
     if let Some(gates_json) = &config.approval_gates {
-        if let Some(gm) = parse_approval_gates_json(gates_json) {
-            match approval_gate::encode_approval_gate_map(&gm) {
+        match parse_approval_gates_json(gates_json) {
+            Some(gm) => match approval_gate::encode_approval_gate_map(&gm) {
                 Ok(encoded) => {
                     builder = builder.extension(
                         approval_gate::APPROVAL_GATE_EXTENSION_KEY,
@@ -2274,6 +2284,18 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                     })
                     .unwrap();
                 }
+            },
+            None => {
+                return serde_wasm_bindgen::to_value(&BuilderWarrantResult {
+                    warrant_b64: String::new(),
+                    issuer_public_key_hex: String::new(),
+                    issuer_private_key_hex: String::new(),
+                    holder_public_key_hex: String::new(),
+                    holder_private_key_hex: String::new(),
+                    tools: tool_names,
+                    error: Some("Invalid approval_gates configuration".to_string()),
+                })
+                .unwrap();
             }
         }
     }
@@ -2969,6 +2991,27 @@ mod tests {
     fn parse_invalid_json_returns_none() {
         let input = json!("not an object");
         assert!(parse_approval_gates_json(&input).is_none());
+    }
+
+    #[test]
+    fn parse_malformed_shlex_within_in_approval_gate_fails_closed() {
+        let bad_type = json!({
+            "exec": {
+                "args": {
+                    "cmd": { "exempt": { "shlex": { "allow": ["cat"], "within": ["/work"] } } }
+                }
+            }
+        });
+        assert!(parse_approval_gates_json(&bad_type).is_none());
+
+        let relative = json!({
+            "exec": {
+                "args": {
+                    "cmd": { "exempt": { "shlex": { "allow": ["cat"], "within": "relative" } } }
+                }
+            }
+        });
+        assert!(parse_approval_gates_json(&relative).is_none());
     }
 
     // --- approval_gate_map_to_json round-trip ---
