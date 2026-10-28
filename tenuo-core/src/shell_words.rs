@@ -257,6 +257,7 @@ fn path_within_root(root_comps: &[&str], token: &str) -> bool {
         || token.starts_with('~')
         || token.contains(":~")
         || token.contains("=~")
+        || token.contains(['*', '?', '[', ']', '{', '}'])
     {
         return false;
     }
@@ -328,7 +329,7 @@ fn argument_within_root(root_comps: &[&str], arg: &str) -> bool {
             return path_within_root(root_comps, val);
         }
     }
-    if arg.contains('~') || arg.contains('\\') {
+    if arg.contains(['~', '\\', '*', '?', '[', ']', '{', '}']) {
         return false;
     }
     if !arg.contains('/') && !arg.contains("..") {
@@ -684,6 +685,7 @@ mod tests {
             within,
             "cat 'a\\b/../../etc/passwd'"
         ));
+        assert!(!command_allowed_within(&allow, within, "cat .[.]/secret"));
         assert!(!command_allowed_within(
             &allow,
             within,
