@@ -5,7 +5,9 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
 from langchain_core.messages import ToolMessage
+from tenuo.langgraph import WRAP_TOOL_CALL_SUPPORTED
 
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "langchain" / "langgraph_parallel_workers.py"
@@ -20,6 +22,7 @@ def load_example():
     return module
 
 
+@pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="langgraph-prebuilt >= 1.0.2 required for TenuoToolNode")
 async def test_parallel_workers_enforce_separate_warrants():
     example = load_example()
     arrived = []
